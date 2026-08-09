@@ -11,6 +11,7 @@ release si sa in dieci secondi se una di quelle è tornata a rompersi.
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -480,9 +481,52 @@ def main():
         prova("/api/search torna le tre chiavi, non una lista",
               isinstance(ric, dict) and {"turni", "progetti", "schede"} <= set(ric),
               str(type(ric)))
+        # Ogni rotta che una vista chiama, chiamata almeno una volta. Prima ne
+        # erano coperte cinque su diciassette: una qualsiasi delle altre poteva
+        # rispondere 500 e la vista restare bianca senza che niente lo dicesse.
+        # E' la stessa classe di difetto della palette, trovata a mano.
+        # `/api/briefing` risponde testo, non JSON: e' il file che l'hook infila
+        # in ogni sessione, e va letto come tale.
+        ROTTE = [
+            ("/api/briefing", "testo"), ("/api/projects", "json"),
+            ("/api/tasks", "json"), ("/api/posts", "json"),
+            ("/api/sessions?limit=3", "json"), ("/api/events?limit=3", "json"),
+            ("/api/knowledge", "json"), ("/api/agents", "json"),
+            ("/api/capabilities", "json"), ("/api/status", "json"),
+            ("/api/voice/status", "json"), ("/api/recap?solo_cache=1", "json"),
+        ]
+        rotti = []
+        for rotta, forma in ROTTE:
+            try:
+                with urllib.request.urlopen(
+                        f"http://127.0.0.1:{porta}{rotta}", timeout=15) as risposta:
+                    corpo = risposta.read()
+                    if risposta.status != 200:
+                        raise RuntimeError(f"HTTP {risposta.status}")
+                    if forma == "json":
+                        json.loads(corpo)
+            except Exception as errore:    # noqa: BLE001
+                rotti.append(f"{rotta}: {type(errore).__name__}")
+        prova("ogni rotta di lettura risponde", not rotti, "; ".join(rotti))
+
         with urllib.request.urlopen(f"http://127.0.0.1:{porta}/", timeout=10) as r:
             pagina = r.read().decode()
         prova("la pagina si serve", "<title>" in pagina)
+
+        # Le viste del front chiamano rotte scritte a mano nel JS: se una sparisce
+        # dall'API il collaudo qui sopra non se ne accorge, perche' controlla la
+        # lista che ho scritto io. Questo confronta le due liste.
+        js = (RADICE / "web" / "app.js").read_text(encoding="utf-8")
+        api_py = (RADICE / "plancia" / "api.py").read_text(encoding="utf-8")
+        # Le rotte con un id il front le costruisce concatenando: `/api/tasks/`
+        # piu' il numero. Della stringa nel JS resta la barra finale, che qui si
+        # toglie per confrontarla con la rotta di lista.
+        chiamate = {m.split("?")[0].rstrip("/") for m in re.findall(r"/api/[a-z/_]+", js)}
+        serve = set(re.findall(r'path == "(/api/[a-z_/]+)"', api_py))
+        serve |= {m.rstrip("/") for m in re.findall(r'\^(/api/[a-z_/]+)/', api_py)}
+        fantasma = sorted(chiamate - serve - {"/api"})
+        prova("il front non chiama rotte che non esistono",
+              not fantasma, ", ".join(fantasma))
     except Exception as errore:            # noqa: BLE001
         prova("il server HTTP risponde", False, str(errore))
 
