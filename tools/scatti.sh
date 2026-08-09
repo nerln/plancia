@@ -80,4 +80,15 @@ scatta progetti projects.png
 # passa nell'indirizzo, che e' la stessa cosa che serve per salvarsi una ricerca.
 scatta 'cerca?q=incremental%20rebuild' cerca.png
 
-echo "==> fatto, in docs/"
+# Il sito usa le stesse immagini a meta' risoluzione. Farlo qui e non a mano e' il
+# motivo per cui le sue erano rimaste indietro di una settimana e senza la voce
+# Cerca nella barra laterale.
+echo "==> copie per il sito, a 1600 px"
+mkdir -p "$RADICE/site/img"
+for coppia in dashboard.png:today.png board.png:board.png projects.png:projects.png cerca.png:cerca.png; do
+  da="${coppia%%:*}"; a="${coppia##*:}"
+  sips -Z 1600 "$FUORI/$da" --out "$RADICE/site/img/$a" >/dev/null
+  echo "    site/img/$a"
+done
+
+echo "==> fatto, in docs/ e in site/img/"
