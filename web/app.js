@@ -85,6 +85,13 @@ const EN = {
   'sessione aperta': 'session opened', 'sessione chiusa': 'session closed',
   'Agenti': 'Agents', 'scambio': 'handoff', 'scambi': 'handoffs',
   'Archivio': 'Archive', 'turni': 'turns',
+  'Cerca': 'Search', 'riga': 'line', 'tu': 'you',
+  'dentro quello che è stato detto, non solo nei titoli':
+    'inside what was actually said, not just the titles',
+  'una frase, un nome di file, un numero…': 'a phrase, a file name, a number…',
+  'Scrivi qualcosa che ricordi di aver detto, o letto.':
+    'Type something you remember saying, or reading.',
+  'nessun turno contiene quelle parole': 'no turn contains those words',
   'Lavagna': 'Board', 'Guida': 'Guide', 'tutti': 'all', 'tutte': 'all', 'dettaglio': 'detail', 'esito': 'outcome', 'tutti i task aperti, di tutti gli agenti': 'every open task, every agent',
   'fonte': 'source', 'manda': 'dispatch', 'Manda a un agente': 'Dispatch to an agent',
   'Come lo voglio fatto': 'How I want it done', 'proposta': 'plan only', 'esegui': 'do it',
@@ -685,6 +692,58 @@ views.archivio = async () => {
   <div data-in="1">${corpo}</div>`;
 };
 
+
+
+/* ------------------------------------------------------------------- cerca */
+/* La ragione per aprire quest'app, che prima non c'era. Fino al 9 agosto 2026 la
+   ricerca vedeva il solo primo prompt di ogni sessione, lo 0,08% del materiale,
+   e infatti non trovava niente. Adesso guarda dentro dodicimila turni: quello
+   che è stato detto davvero, con la riga esatta da cui viene. */
+
+/* Il frammento arriva con i termini fra « » perché SQLite non sa niente di HTML.
+   Si scappa prima e si marca dopo, o un turno che parla di uno script diventa
+   uno script. */
+const marca = (frammento) => esc(frammento || '')
+  .split('«').join('<mark>').split('»').join('</mark>');
+
+const RUOLO = { assistant: 'Claude', user: 'tu' };
+
+function rigaTurno(t) {
+  const file = (t.percorso || '').split('/').pop();
+  return `
+  <article class="trovato">
+    <div class="trovato-testa">
+      <span class="tag${t.ruolo === 'user' ? ' tu' : ''}">${T(RUOLO[t.ruolo] || t.ruolo)}</span>
+      <span class="mono muted">${esc((t.progetto || '').split('/').pop())}</span>
+      <span class="spacer"></span>
+      <span class="mono faint">${ago(t.ts)}</span>
+    </div>
+    <p class="trovato-testo">${marca(t.frammento)}</p>
+    <div class="trovato-piede mono faint">${esc(file)} · ${T('riga')} ${t.riga}</div>
+  </article>`;
+}
+
+views.cerca = async () => {
+  const f = state.filters.cerca || (state.filters.cerca = { q: '' });
+  let corpo;
+  if ((f.q || '').trim()) {
+    const d = await api('/api/search?q=' + encodeURIComponent(f.q));
+    const trovati = d.turni || [];
+    corpo = trovati.length
+      ? `<div class="trovati">${trovati.map(rigaTurno).join('')}</div>`
+      : `<div class="empty">${T('nessun turno contiene quelle parole')}</div>`;
+  } else {
+    corpo = `<div class="empty">${T('Scrivi qualcosa che ricordi di aver detto, o letto.')}</div>`;
+  }
+  return `
+  <div class="view-head">
+    <h1>${T('Cerca')}</h1><p>${T('dentro quello che è stato detto, non solo nei titoli')}</p>
+  </div>
+  <input class="cercabox" type="search" autocomplete="off" data-filter-input="cerca.q"
+         placeholder="${T('una frase, un nome di file, un numero…')}"
+         value="${esc(f.q || '')}">
+  <div data-in="1">${corpo}</div>`;
+};
 
 
 /* ---------------------------------------------------------------- benvenuto */
@@ -1439,7 +1498,18 @@ function choosePalette(hit) {
   else toast(hit.title || '');
 }
 
+/* Lo slash apre la ricerca, come in mezzo mondo. Solo se non stai gia' scrivendo
+   da qualche parte, altrimenti chi scrive una data si ritrova altrove. */
+const SCRIVE = (el) => el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA'
+                              || el.isContentEditable);
+
 document.addEventListener('keydown', (ev) => {
+  if (ev.key === '/' && !SCRIVE(document.activeElement) && palette.hidden) {
+    ev.preventDefault();
+    if (state.view === 'cerca') { const c = $('.cercabox'); if (c) c.focus(); }
+    else location.hash = '#/cerca';
+    return;
+  }
   if ((ev.metaKey || ev.ctrlKey) && ev.key.toLowerCase() === 'k') { ev.preventDefault(); openPalette(); return; }
   if (palette.hidden) return;
   if (ev.key === 'Escape') closePalette();

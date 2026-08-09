@@ -383,7 +383,18 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json([dict(r) for r in conn.execute(
                     "SELECT * FROM capabilities ORDER BY kind, name").fetchall()])
             if path == "/api/search":
-                return self._json(store.search(conn, first("q", ""), int(first("limit", 40))))
+                # Due indici, e l'ordine dice quale conta. Nei turni c'e' quello
+                # che e' stato detto davvero; nelle schede ci sono i titoli. Fino
+                # al 9 agosto 2026 esisteva solo il secondo, che indicizzava lo
+                # 0,08% del materiale, ed e' il motivo per cui questa ricerca non
+                # trovava mai niente.
+                from . import turni
+                q = first("q", "")
+                return self._json({
+                    "turni": turni.cerca(conn, q, int(first("limit", 30)),
+                                         first("progetto") or None),
+                    "schede": store.search(conn, q, int(first("limit", 20))),
+                })
             if path == "/api/recap":
                 if first("solo_cache"):
                     return self._json(recap.solo_cache(conn, first("lang")))

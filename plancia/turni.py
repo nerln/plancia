@@ -188,15 +188,29 @@ def cerca(conn, q: str, limit: int = 12, progetto: str | None = None) -> list:
     if progetto:
         sql += " AND progetto LIKE ?"
         args.append(f"%{progetto}%")
+    # Si pesca largo e si stringe dopo: lo stesso testo compare in piu' file
+    # perche' ogni sottoagente si porta dietro la sua copia del prompt, e senza
+    # questo la prima pagina di risultati e' fatta di doppioni.
     sql += " ORDER BY rank, ts DESC LIMIT ?"
-    args.append(limit)
+    args.append(limit * 4)
     try:
         righe = conn.execute(sql, args).fetchall()
     except Exception:
         # FTS5 rifiuta certe query scritte a mano: meglio nessun risultato che
         # un'eccezione in faccia a chi stava solo cercando una parola.
         return []
-    return [dict(r) for r in righe]
+
+    visti, esito = set(), []
+    for r in righe:
+        d = dict(r)
+        impronta = " ".join((d.get("frammento") or "").split())[:140]
+        if impronta in visti:
+            continue
+        visti.add(impronta)
+        esito.append(d)
+        if len(esito) >= limit:
+            break
+    return esito
 
 
 def stato(conn) -> dict:

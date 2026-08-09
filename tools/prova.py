@@ -184,6 +184,16 @@ def main():
     secondo = _t.indicizza(conn, radice=finto.parent)
     prova("il secondo giro salta i file gia' visti",
           secondo["file_saltati"] == 1 and secondo["turni"] == 0, str(secondo))
+
+    # Ogni sottoagente si porta dietro la sua copia del prompt, quindi lo stesso
+    # testo sta in piu' file: senza deduplica la prima pagina e' fatta di
+    # doppioni, ed e' quello che si vedeva al primo giro nel browser.
+    (finto / "sessione2.jsonl").write_text((finto / "sessione1.jsonl").read_text(),
+                                           encoding="utf-8")
+    _t.indicizza(conn, radice=finto.parent)
+    doppi = _t.cerca(conn, "denominatore blending", limit=10)
+    prova("lo stesso testo in due file torna una volta sola",
+          len(doppi) == 1, f"{len(doppi)} risultati")
     shutil.rmtree(finto.parent, ignore_errors=True)
 
     # -------------------------------------------------------------- briefing
