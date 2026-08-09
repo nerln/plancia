@@ -299,7 +299,14 @@ def call_tool(name: str, args: dict) -> str:
             schede = store.search(conn, q, limite)
             if not dai_turni and not schede:
                 return "nessun risultato"
-            return _fmt({"nei_turni": dai_turni, "nelle_schede": schede})
+            esito = {"nei_turni": dai_turni, "nelle_schede": schede}
+            # Il conteggio per progetto sta su tutto l'indice: dice quanto resta
+            # fuori dai dodici mostrati, e da dove, cosi si puo' richiamare con
+            # `project` invece di andare a tentoni.
+            gruppi = turni.raggruppa(conn, q) if dai_turni else []
+            if len(gruppi) > 1:
+                esito["altrove"] = {g["progetto"]: g["turni"] for g in gruppi}
+            return _fmt(esito)
 
         if name == "plancia_projects":
             sql = ("SELECT p.id, p.key, p.name, p.kind, p.status, p.priority, p.pinned, "

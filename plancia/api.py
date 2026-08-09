@@ -393,6 +393,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({
                     "turni": turni.cerca(conn, q, int(first("limit", 30)),
                                          first("progetto") or None),
+                    # Il conteggio è su tutto l'indice, non sulla pagina: dice se
+                    # la cosa cercata sta in un progetto solo o è sparsa.
+                    "progetti": turni.raggruppa(conn, q),
                     "schede": store.search(conn, q, int(first("limit", 20))),
                 })
             if path == "/api/recap":

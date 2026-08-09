@@ -69,13 +69,51 @@ def _testo(msg: dict) -> str:
     return "\n".join(p for p in pezzi if p.strip())
 
 
-def _progetto(percorso: Path) -> str:
-    """Il nome cartella che Claude Code usa per il progetto, reso leggibile."""
-    nome = percorso.parent.name
-    return nome.replace("-Users-eugenionerelli-", "").replace("-", "/").strip("/")
+#: La home scritta come la scrive Claude Code nei nomi cartella: gli slash
+#: diventano trattini.
+CASA = str(Path.home()).replace("/", "-")
 
 
-def _leggi(percorso: Path):
+def _etichetta(nome: str) -> str:
+    """Da nome cartella di Claude Code a etichetta corta.
+
+    Le cartelle sono il percorso vero con gli slash sostituiti da trattini, e i
+    trattini nei nomi veri non si distinguono da quelli aggiunti: la decodifica
+    esatta non esiste. L'etichetta serve a dire dove si stava lavorando e a
+    reggere un filtro, quindi si punta al leggibile.
+    """
+    resto = nome[len(CASA):] if nome.startswith(CASA) else nome
+    resto = resto.strip("-")
+    if resto.startswith("dev-"):
+        # I worktree di Claude finiscono in `--claude-worktrees-<nome>`: sono lo
+        # stesso progetto e vanno sotto la stessa etichetta.
+        return resto[4:].split("--claude-worktrees", 1)[0].strip("-") or "dev"
+    # Prima del Drive: le scratchpad stanno sotto /private/tmp ma si portano
+    # dentro il percorso del Drive, e senza questo controllo finivano etichettate
+    # come lavoro vero con dentro un uuid.
+    if resto.startswith(("private-tmp", "private-var")):
+        return "tmp"
+    if "Il-mio-Drive" in resto:
+        coda = resto.split("Il-mio-Drive", 1)[1].strip("-")
+        return f"Drive/{coda.replace('-', ' ')}" if coda else "Drive"
+    return resto.replace("-", " ") or "casa"
+
+
+def _progetto(percorso: Path, radice: Path) -> str:
+    """Il progetto di un transcript, risalendo dai sottoagenti.
+
+    I transcript dei sottoagenti stanno in `<progetto>/subagents/workflows/<id>/`,
+    quindi la cartella che li contiene è l'id del workflow e non dice niente.
+    Quella buona è la prima sotto la radice.
+    """
+    try:
+        parti = percorso.relative_to(radice).parts
+    except ValueError:
+        return _etichetta(percorso.parent.name)
+    return _etichetta(parti[0]) if len(parti) > 1 else "casa"
+
+
+def _leggi(percorso: Path, radice: Path):
     """I turni di un file, con il numero di riga a cui stanno."""
     sessione = percorso.stem
     with percorso.open(encoding="utf-8", errors="replace") as fh:
@@ -95,7 +133,7 @@ def _leggi(percorso: Path):
                 "sessione": sessione,
                 "ruolo": msg["role"],
                 "ts": d.get("timestamp") or "",
-                "progetto": _progetto(percorso),
+                "progetto": _progetto(percorso, radice),
                 "percorso": str(percorso),
                 "riga": n,
             }
@@ -134,7 +172,7 @@ def indicizza(conn, completo: bool = False, radice: Path | None = None) -> dict:
         else:
             esito["file_nuovi"] += 1
 
-        righe = list(_leggi(percorso))
+        righe = list(_leggi(percorso, radice))
         if righe:
             conn.executemany(
                 "INSERT INTO turni_fts(testo, sessione, ruolo, ts, progetto, percorso, riga) "
@@ -149,6 +187,15 @@ def indicizza(conn, completo: bool = False, radice: Path | None = None) -> dict:
     conn.commit()
     return esito
 
+
+#: Il progetto vero, quando Plancia lo conosce. La cartella da cui parte una
+#: sessione dice poco: il 94% dei turni sta sotto una sola cartella, il Drive,
+#: perché è da lì che si lavora. Ma l'ingest ha già legato ogni sessione al suo
+#: progetto, quindi il nome buono si prende con una giuntura e la cartella resta
+#: come ripiego per le sessioni che l'ingest non ha ancora visto.
+GIUNTURA = ("LEFT JOIN sessions ON sessions.session_id = turni_fts.sessione "
+            "LEFT JOIN projects ON projects.id = sessions.project_id")
+ETICHETTA = "COALESCE(NULLIF(projects.name, ''), turni_fts.progetto)"
 
 #: Gli operatori che FTS5 riconosce. Se ce n'è uno, la domanda è scritta apposta
 #: e va lasciata stare.
@@ -181,12 +228,15 @@ def cerca(conn, q: str, limit: int = 12, progetto: str | None = None) -> list:
     domanda = _domanda(q)
     if not domanda:
         return []
-    sql = ("SELECT sessione, ruolo, ts, progetto, percorso, riga, "
+    sql = (f"SELECT turni_fts.sessione, turni_fts.ruolo, turni_fts.ts, {ETICHETTA} AS progetto, "
+           "turni_fts.percorso, turni_fts.riga, "
            "snippet(turni_fts, 0, '«', '»', '…', 24) AS frammento "
-           "FROM turni_fts WHERE turni_fts MATCH ?")
+           f"FROM turni_fts {GIUNTURA} WHERE turni_fts MATCH ?")
     args = [domanda]
     if progetto:
-        sql += " AND progetto LIKE ?"
+        # L'espressione va ripetuta: SQLite non lascia usare l'alias del SELECT
+        # dentro il WHERE.
+        sql += f" AND {ETICHETTA} LIKE ?"
         args.append(f"%{progetto}%")
     # Si pesca largo e si stringe dopo: lo stesso testo compare in piu' file
     # perche' ogni sottoagente si porta dietro la sua copia del prompt, e senza
@@ -211,6 +261,41 @@ def cerca(conn, q: str, limit: int = 12, progetto: str | None = None) -> list:
         if len(esito) >= limit:
             break
     return esito
+
+
+def raggruppa(conn, q: str, tetto: int = 8) -> list:
+    """Da quali progetti vengono i risultati di una domanda, e quanti per uno.
+
+    Una pagina di risultati ne mostra dodici e non dice niente sugli altri
+    trecento. Questo conta su tutto l'indice, quindi si vede subito se la cosa
+    cercata sta in un progetto solo o è sparsa, e si può stringere.
+    """
+    prepara(conn)
+    domanda = _domanda(q)
+    if not domanda:
+        return []
+    try:
+        righe = conn.execute(
+            f"SELECT {ETICHETTA} e, COUNT(*) n FROM turni_fts {GIUNTURA} "
+            "WHERE turni_fts MATCH ? GROUP BY e ORDER BY n DESC LIMIT ?",
+            (domanda, tetto)).fetchall()
+    except Exception:
+        return []
+    return [{"progetto": r[0] or "?", "turni": r[1]} for r in righe]
+
+
+def progetti(conn) -> list:
+    """Le etichette presenti nell'indice, dalla più battuta alla meno.
+
+    Serve a rendere il filtro usabile: senza questo elenco `--project` è un
+    campo in cui indovinare, e un filtro che non matcha torna vuoto senza dire
+    perché.
+    """
+    prepara(conn)
+    righe = conn.execute(
+        f"SELECT {ETICHETTA} e, COUNT(*) n FROM turni_fts {GIUNTURA} "
+        "WHERE e <> '' GROUP BY e ORDER BY n DESC").fetchall()
+    return [{"progetto": r[0], "turni": r[1]} for r in righe]
 
 
 def stato(conn) -> dict:

@@ -723,12 +723,24 @@ function rigaTurno(t) {
   </article>`;
 }
 
+/* I progetti da cui vengono i risultati, con quanti per uno. Il conto è su tutto
+   l'indice e non sulla pagina, quindi dice davvero se la cosa cercata sta in un
+   posto solo. Cliccare stringe, ricliccare allarga. */
+function chipProgetti(gruppi, attivo) {
+  if (!gruppi || gruppi.length < 2) return '';
+  const uno = (g) => `<button class="chip${g.progetto === attivo ? ' on' : ''}"
+      data-progetto="${esc(g.progetto)}">${esc(g.progetto)} <em>${g.turni}</em></button>`;
+  return `<div class="chips">${gruppi.map(uno).join('')}</div>`;
+}
+
 views.cerca = async () => {
-  const f = state.filters.cerca || (state.filters.cerca = { q: '' });
-  let corpo;
+  const f = state.filters.cerca || (state.filters.cerca = { q: '', progetto: '' });
+  let corpo = '', chips = '';
   if ((f.q || '').trim()) {
-    const d = await api('/api/search?q=' + encodeURIComponent(f.q));
+    const d = await api('/api/search?q=' + encodeURIComponent(f.q)
+      + (f.progetto ? '&progetto=' + encodeURIComponent(f.progetto) : ''));
     const trovati = d.turni || [];
+    chips = chipProgetti(d.progetti, f.progetto);
     corpo = trovati.length
       ? `<div class="trovati">${trovati.map(rigaTurno).join('')}</div>`
       : `<div class="empty">${T('nessun turno contiene quelle parole')}</div>`;
@@ -742,6 +754,7 @@ views.cerca = async () => {
   <input class="cercabox" type="search" autocomplete="off" data-filter-input="cerca.q"
          placeholder="${T('una frase, un nome di file, un numero…')}"
          value="${esc(f.q || '')}">
+  ${chips}
   <div data-in="1">${corpo}</div>`;
 };
 
@@ -1390,6 +1403,17 @@ document.addEventListener('click', async (ev) => {
     const [view, key] = chip.dataset.filter.split('.');
     state.filters[view][key] = chip.dataset.value;
     await route();
+    return;
+  }
+
+  // I chip della ricerca fanno interruttore: lo stesso progetto due volte
+  // riallarga, altrimenti per tornare a vedere tutto bisognerebbe ricancellare
+  // la domanda.
+  const prog = ev.target.closest('[data-progetto]');
+  if (prog) {
+    const f = state.filters.cerca || (state.filters.cerca = { q: '', progetto: '' });
+    f.progetto = f.progetto === prog.dataset.progetto ? '' : prog.dataset.progetto;
+    await route();
   }
 });
 
@@ -1471,7 +1495,16 @@ pinput.addEventListener('input', () => {
     const q = pinput.value.trim();
     if (q.length < 2) { presults.innerHTML = ''; return; }
     try {
-      const hits = await api('/api/search?q=' + encodeURIComponent(q));
+      /* Dal 9 agosto /api/search torna un oggetto e non piu' un array: qui c'era
+         un `hits.length` su un oggetto, quindi la palette diceva sempre niente
+         senza sbagliare rumorosamente. I turni entrano come prima riga, perche'
+         e' li' che sta quello che si cerca; le schede restano sotto. */
+      const d = await api('/api/search?q=' + encodeURIComponent(q));
+      const dai_turni = (d.turni || []).slice(0, 5).map((t) => ({
+        kind: 'turno', title: (t.frammento || '').split('«').join('').split('»').join(''),
+        snip: '', project: t.progetto, turno: t,
+      }));
+      const hits = dai_turni.concat(d.schede || []);
       state.paletteHits = hits; state.paletteIndex = 0;
       presults.innerHTML = hits.length ? hits.map((h, i) => `
         <div class="pres ${i === 0 ? 'sel' : ''}" data-i="${i}">
@@ -1491,7 +1524,15 @@ presults.addEventListener('click', (ev) => {
 function choosePalette(hit) {
   if (!hit) return;
   closePalette();
-  if (hit.kind === 'memoria') openMemory(hit.title);
+  // Scegliere un turno porta nella vista Cerca con la stessa domanda: li' c'e'
+  // il testo intero e il file da cui viene, che nella palette non ci starebbero.
+  if (hit.kind === 'turno') {
+    state.filters.cerca = { q: pinput.value.trim(), progetto: '' };
+    // Se ci si e' gia' dentro l'hash non cambia e hashchange non scatta: senza
+    // questo, cercare dalla palette stando in Cerca non faceva niente.
+    if (location.hash === '#/cerca') route(); else location.hash = '#/cerca';
+  }
+  else if (hit.kind === 'memoria') openMemory(hit.title);
   else if (hit.kind === 'sessione') { state.filters.sessioni = { q: hit.title || '', project: '' }; location.hash = '#/sessioni'; }
   else if (hit.kind === 'task') location.hash = '#/task';
   else if (hit.kind === 'post') location.hash = '#/social';

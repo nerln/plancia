@@ -194,6 +194,48 @@ def main():
     doppi = _t.cerca(conn, "denominatore blending", limit=10)
     prova("lo stesso testo in due file torna una volta sola",
           len(doppi) == 1, f"{len(doppi)} risultati")
+
+    # I transcript dei sottoagenti stanno in subagents/workflows/<id>/, e la
+    # cartella che li contiene e' l'id del workflow: senza risalire alla prima
+    # cartella sotto la radice l'etichetta era un identificativo a caso.
+    sotto = finto / "subagents" / "workflows" / "wf_abc123"
+    sotto.mkdir(parents=True)
+    (sotto / "agent-1.jsonl").write_text((finto / "sessione1.jsonl").read_text(),
+                                         encoding="utf-8")
+    _t.indicizza(conn, completo=True, radice=finto.parent)
+    prova("un turno di sottoagente prende l'etichetta del progetto, non del workflow",
+          all("wf_" not in (r["progetto"] or "")
+              for r in _t.cerca(conn, "inkfloor", limit=10)))
+
+    # La cartella dice poco: il 94 per cento dei turni sta sotto il Drive perche'
+    # e' da li' che si lavora. Il nome buono lo sa gia' l'ingest, sessione per
+    # sessione, e si prende con una giuntura.
+    conn.execute("INSERT INTO projects(key, name, kind, status) VALUES(?,?,?,?)",
+                 ("provaproj", "Progetto Vero", "codice", "attivo"))
+    pid = conn.execute("SELECT id FROM projects WHERE key='provaproj'").fetchone()[0]
+    conn.execute("INSERT INTO sessions(session_id, project_id, file) VALUES(?,?,?)",
+                 ("sessione1", pid, "x"))
+    conn.commit()
+    prova("il progetto vero vince sulla cartella",
+          any(r["progetto"] == "Progetto Vero"
+              for r in _t.cerca(conn, "inkfloor", limit=10)))
+    # Va chiesto col filtro: la deduplica tiene un risultato solo per testo, e
+    # quello sopravvissuto e' gia' quello col progetto vero.
+    dalla_cartella = _t.cerca(conn, "inkfloor", limit=10, progetto="progetto x")
+    prova("e le sessioni che l'ingest non ha visto tengono la cartella",
+          bool(dalla_cartella)
+          and all(r["progetto"] == "progetto x" for r in dalla_cartella),
+          f"{len(dalla_cartella)} risultati")
+    gruppi = {g["progetto"]: g["turni"] for g in _t.raggruppa(conn, "inkfloor")}
+    prova("il conteggio per progetto copre tutto l'indice, non la pagina",
+          gruppi.get("Progetto Vero") == 1 and gruppi.get("progetto x") == 2, str(gruppi))
+    prova("e il filtro sul progetto usa lo stesso nome",
+          len(_t.cerca(conn, "inkfloor", limit=10, progetto="Progetto Vero")) == 1)
+    prova("una scratchpad sotto /private/tmp non diventa lavoro vero",
+          _t._etichetta("-private-tmp-claude-501-Users-eugenionerelli-Library-"
+                        "CloudStorage-GoogleDrive-x-Il-mio-Drive-abc-scratchpad") == "tmp")
+    prova("e un worktree di Claude resta il suo progetto",
+          _t._etichetta(_t.CASA + "-dev-scriba--claude-worktrees-stoic-mayer") == "scriba")
     shutil.rmtree(finto.parent, ignore_errors=True)
 
     # -------------------------------------------------------------- briefing
@@ -399,6 +441,13 @@ def main():
         prova("/api/runs risponde", isinstance(prendi("/api/runs?limite=3"), list))
         prova("/api/eventi risponde", isinstance(prendi("/api/eventi").get("eventi"), list))
         prova("/api/proposte risponde", isinstance(prendi("/api/proposte?lang=it"), list))
+        # Il 9 agosto questa risposta e' passata da lista a oggetto, e la palette
+        # continuava a fare `hits.length` su un oggetto: niente errore, zero
+        # risultati per sempre. Il contratto va scritto da qualche parte.
+        ric = prendi("/api/search?q=plancia")
+        prova("/api/search torna le tre chiavi, non una lista",
+              isinstance(ric, dict) and {"turni", "progetti", "schede"} <= set(ric),
+              str(type(ric)))
         with urllib.request.urlopen(f"http://127.0.0.1:{porta}/", timeout=10) as r:
             pagina = r.read().decode()
         prova("la pagina si serve", "<title>" in pagina)
@@ -424,6 +473,12 @@ def main():
     app_js = (RADICE / "web" / "app.js").read_text(encoding="utf-8")
     prova("app.js non legge il riepilogo prima di averlo",
           app_js.index("const d = r.data;") > app_js.index("solo_cache=1"))
+    # L'altra meta' del contratto qui sopra: chi chiama /api/search deve aprire
+    # l'oggetto. Due punti di chiamata, la vista Cerca e la palette, e uno dei
+    # due era rimasto indietro.
+    chiamate = app_js.count("'/api/search?q='")
+    prova("ogni chiamata a /api/search apre l'oggetto",
+          chiamate == 2 and app_js.count("d.turni || []") == 2, f"{chiamate} chiamate")
     if shutil.which("node"):
         esito = subprocess.run(["node", "--check", str(RADICE / "web" / "app.js")],
                                capture_output=True)

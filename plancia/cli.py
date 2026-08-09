@@ -215,14 +215,58 @@ def cmd_projects(args):
         conn.close()
 
 
+def _colora(frammento: str, tinta: bool) -> str:
+    """I marcatori di FTS5 diventano grassetto, o spariscono se non c'è un tty."""
+    frammento = " ".join((frammento or "").split())
+    if not tinta:
+        return frammento.replace("«", "").replace("»", "")
+    return frammento.replace("«", "\033[1;33m").replace("»", "\033[0m")
+
+
 def cmd_search(args):
+    """Cerca nei turni prima che nelle schede, e stampa dove riaprire.
+
+    Il percorso e la riga escono nel formato `file:riga` di proposito: si
+    incollano in un editor e si apre il punto esatto, che è la differenza fra
+    una ricerca e un riassunto.
+    """
+    from . import turni
     conn = store.connect()
     store.init_db(conn)
+    tinta = sys.stdout.isatty()
+    q = " ".join(args.query)
     try:
-        for hit in store.search(conn, " ".join(args.query), 25):
-            print(f"{hit['kind']:<10} {(hit['title'] or '')[:70]}")
-            if hit.get("snip"):
-                print(f"           {hit['snip'][:100]}")
+        trovati = turni.cerca(conn, q, limit=args.limit, progetto=args.project)
+        for t in trovati:
+            chi = "tu" if t["ruolo"] == "user" else "claude"
+            testa = f"{chi:<7} {t['progetto'] or '-'}"
+            if tinta:
+                testa = f"\033[2m{testa}\033[0m"
+            print(testa)
+            print(f"        {_colora(t['frammento'], tinta)}")
+            dove = f"{t['percorso']}:{t['riga']}"
+            print(f"        \033[2m{dove}\033[0m" if tinta else f"        {dove}")
+            print()
+
+        if args.project and not trovati:
+            noti = ", ".join(p["progetto"] for p in turni.progetti(conn)[:8])
+            print(f"nessun turno in «{args.project}». Etichette note: {noti}")
+            return
+
+        # Le schede (task, commit, memorie) non sanno del filtro progetto, e
+        # stamparle lo stesso farebbe sembrare che il filtro non abbia funzionato.
+        if args.project:
+            return
+        schede = store.search(conn, q, 5)
+        if schede:
+            if trovati:
+                print("nelle schede:")
+            for hit in schede:
+                print(f"{hit['kind']:<10} {(hit['title'] or '')[:70]}")
+                if hit.get("snip"):
+                    print(f"           {_colora(hit['snip'], tinta)[:100]}")
+        elif not trovati:
+            print("nessun risultato")
     finally:
         conn.close()
 
@@ -433,9 +477,14 @@ def build_parser():
     s.add_argument("--limite", type=int, default=30)
     s.set_defaults(func=cmd_eventi)
 
-    s = sub.add_parser("search", help="cerca in tutto")
-    s.add_argument("query", nargs="+")
-    s.set_defaults(func=cmd_search)
+    # `cerca` è l'alias italiano, come il resto dei comandi; `search` resta
+    # perché sta negli script e negli alias già scritti.
+    for nome in ("cerca", "search"):
+        s = sub.add_parser(nome, help="cerca in quello che è stato detto")
+        s.add_argument("query", nargs="+")
+        s.add_argument("--limit", type=int, default=10)
+        s.add_argument("--project", help="restringe a un progetto")
+        s.set_defaults(func=cmd_search)
 
     s = sub.add_parser("init", help="costruisce la mappa dei progetti dai tuoi dati")
     s.add_argument("--force", action="store_true", help="riscrive il seed esistente")
