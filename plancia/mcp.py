@@ -194,10 +194,11 @@ _TUTTI = [
 # cosa viene esposto, e perche' solo questo
 #
 # Gli schemi dei tool stanno nel contesto di OGNI sessione, sempre, che vengano
-# usati o no. Misurato il 9 agosto 2026 su 1269 sessioni vere: i venti tool
-# pesavano 2170 token a sessione, 2,75 milioni in tutto, per 158 chiamate. E
-# quattro di loro (speak, sync, lavagna, eventi) non erano stati chiamati mai,
-# nemmeno una volta.
+# usati o no. Misurato il 9 agosto 2026: i venti tool pesavano 2170 token a
+# sessione, e le sessioni che li hanno davvero caricati sono 696, cioe quelle
+# dal 2 agosto, giorno del primo commit di questo file. Fanno 1,5 milioni di
+# token per 158 chiamate in tutto. E quattro di loro (speak, sync, lavagna,
+# eventi) non erano stati chiamati mai, nemmeno una volta.
 #
 # Quindi restano di prima classe i cinque che portano l'uso vero, piu' search,
 # che e' la ragione per cui l'archivio esiste: senza, 427 sessioni e 41 memorie

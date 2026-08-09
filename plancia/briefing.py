@@ -49,7 +49,8 @@ def build(conn=None, project=None, limit_projects=6, esteso=True) -> str:
 
     `esteso=False` e' quello che entra in ogni sessione di Claude Code e di
     Codex, e li' ogni riga si paga 1269 volte. Misurato il 9 agosto 2026: la
-    versione lunga costava ~700 token a sessione, 0,89 milioni in tutto, e la
+    versione lunga costava ~700 token in ognuna delle 696 sessioni che l hanno
+    ricevuta, cioe 0,49 milioni, e la
     riga piu' cara era un `next_action` da 430 caratteri sul paper che nel 99%
     delle sessioni non c'entrava niente.
 
