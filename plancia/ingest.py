@@ -833,6 +833,17 @@ def sync(full=False, progress=None, skip_git=False, modo="tutto") -> dict:
         log("indice di ricerca", progress)
         store.rebuild_search(conn)
 
+    # L'indice sui turni: e' incrementale, un file gia' visto e non cambiato
+    # costa una stat. Il primo giro su 1283 transcript ha preso 3,8 secondi.
+    # Sta fuori dal blocco freddo perche' e' la cosa che rende la ricerca utile,
+    # e va aggiornata anche nei sync leggeri.
+    try:
+        from . import turni
+        esito = turni.indicizza(conn, completo=(modo == "full"))
+        result["turni_indicizzati"] = esito["turni"]
+    except Exception as exc:  # un indice mancato non deve far fallire il sync
+        result["turni_errore"] = f"{type(exc).__name__}: {exc}"
+
     store.set_meta(conn, "last_sync", inizio)
     store.set_meta(conn, "last_sync_end", store.now())
     store.set_meta(conn, f"last_sync_{modo}", store.now())

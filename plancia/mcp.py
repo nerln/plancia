@@ -10,7 +10,8 @@ import json
 import sys
 import traceback
 
-from . import actions, briefing, cantiere, config, eventi, lavagna, recap, store, voice
+from . import (actions, briefing, cantiere, config, eventi, lavagna, recap, store,
+               turni, voice)
 
 PROTOCOL = "2025-06-18"
 SUPPORTED = {"2024-11-05", "2025-03-26", "2025-06-18"}
@@ -50,9 +51,10 @@ _TUTTI = [
     {
         "name": "plancia_search",
         "description": (
-            "Full-text search across everything Plancia knows: past Claude Code sessions, "
-            "memory notes, tasks, social posts, commits. Use it before asking the user "
-            "'did we already do X?'."),
+            "Search what was actually said in past sessions, verbatim, plus tasks, "
+            "memory notes, posts and commits. Every hit carries the file and the line "
+            "it came from, so it can be reopened rather than paraphrased. Use it "
+            "before asking 'did we already do X?' and before redoing something."),
         "inputSchema": _s("", query=STR, limit=INT),
     },
     {
@@ -286,8 +288,18 @@ def call_tool(name: str, args: dict) -> str:
             return briefing.build(conn, args.get("project"))
 
         if name == "plancia_search":
-            hits = store.search(conn, args.get("query", ""), int(args.get("limit") or 25))
-            return _fmt(hits) if hits else "nessun risultato"
+            q = args.get("query", "")
+            limite = int(args.get("limit") or 25)
+            # Prima i turni, perche' e' li' che sta quello che si vuole
+            # ritrovare: fino al 9 agosto 2026 questa ricerca vedeva solo il
+            # primo prompt di ogni sessione, lo 0,08% del materiale, ed e' il
+            # motivo per cui e' stata chiamata cinque volte in tutto.
+            dai_turni = turni.cerca(conn, q, limit=min(limite, 12),
+                                    progetto=args.get("project"))
+            schede = store.search(conn, q, limite)
+            if not dai_turni and not schede:
+                return "nessun risultato"
+            return _fmt({"nei_turni": dai_turni, "nelle_schede": schede})
 
         if name == "plancia_projects":
             sql = ("SELECT p.id, p.key, p.name, p.kind, p.status, p.priority, p.pinned, "

@@ -143,6 +143,49 @@ def main():
           recap.solo_cache(conn, "it").get("testo") is None,
           "la cache tiene una lingua sola")
 
+    # -------------------------------------------------------- indice dei turni
+    # Fino al 9 agosto 2026 la ricerca vedeva il solo primo prompt di ogni
+    # sessione: 0,80 MB su 979 di transcript, cioe' lo 0,08%, ed e' il motivo per
+    # cui era stata chiamata cinque volte in tutto.
+    from plancia import turni as _t  # noqa: E402
+    _t.prepara(conn)
+    finto = Path(tempfile.mkdtemp()) / "progetto-x"
+    finto.mkdir(parents=True)
+    (finto / "sessione1.jsonl").write_text("\n".join(json.dumps(r) for r in [
+        {"type": "assistant", "timestamp": "2026-08-09T10:00:00Z",
+         "message": {"role": "assistant", "content": [
+             {"type": "text", "text": "Il pavimento di riproducibilita' misurato con inkfloor "
+                                      "sta al 92,8 per cento e la soglia regge."}]}},
+        {"type": "user", "timestamp": "2026-08-09T10:01:00Z",
+         "message": {"role": "user", "content": "ok"}},
+        {"type": "assistant", "timestamp": "2026-08-09T10:02:00Z",
+         "message": {"role": "assistant", "content": [
+             {"type": "text", "text": "Ho trovato che il denominatore del blending era a uno "
+                                      "invece che gaussiano, con attenuazione del 27 per cento."}]}},
+    ]), encoding="utf-8")
+
+    esito = _t.indicizza(conn, completo=True, radice=finto.parent)
+    prova("l'indice legge i turni dai transcript", esito["turni"] == 2, str(esito))
+    prova("e scarta i turni troppo corti per essere cercati",
+          esito["turni"] == 2, "il turno 'ok' non deve entrare")
+    prova("ritrova una frase detta a meta' sessione",
+          bool(_t.cerca(conn, "denominatore blending")))
+    prova("e dice da quale riga di quale file viene",
+          all(r["riga"] > 0 and r["percorso"].endswith(".jsonl")
+              for r in _t.cerca(conn, "inkfloor")))
+    prova("il frammento e' verbatim, non un riassunto",
+          "92,8" in (_t.cerca(conn, "pavimento riproducibilita")[0]["frammento"] or ""))
+    # FTS5 mette AND fra le parole: tre parole che non stanno mai insieme nello
+    # stesso turno davano zero risultati, ed e' il caso che si incontra subito.
+    prova("tre parole sparse trovano lo stesso",
+          bool(_t.cerca(conn, "inkfloor blending soglia")))
+    prova("una domanda scritta con gli operatori resta com'e'",
+          _t._domanda('"frase esatta"') == '"frase esatta"')
+    secondo = _t.indicizza(conn, radice=finto.parent)
+    prova("il secondo giro salta i file gia' visti",
+          secondo["file_saltati"] == 1 and secondo["turni"] == 0, str(secondo))
+    shutil.rmtree(finto.parent, ignore_errors=True)
+
     # -------------------------------------------------------------- briefing
     # Il file che l'hook infila in ogni sessione: ogni riga si paga una volta
     # per sessione. La versione lunga resta, ma a un tool di distanza.
