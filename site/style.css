@@ -13,12 +13,12 @@
   --line-strong: #2b3441;
   --text: #e7ebf2;
   --text-2: #9aa4b4;
-  --text-3: #626d7e;
+  --text-3: #808a9a;
   --amber: #e8934e;
   --amber-soft: rgba(232, 147, 78, .12);
   --amber-line: rgba(232, 147, 78, .3);
   --codex: #8fb8d9;
-  --nominal: #5bb89b;
+  --nominal: #5cb87f;
 
   --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 24px;
   --s6: 32px; --s7: 48px; --s8: 64px; --s9: 96px; --s10: 144px;
@@ -64,13 +64,6 @@ h1, h2, h3 { font-family: var(--serif); font-weight: 500; letter-spacing: -.02em
 
 .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
 
-.etichetta {
-  font: 500 11px/1 var(--mono);
-  letter-spacing: .14em;
-  text-transform: uppercase;
-  color: var(--text-3);
-}
-
 /* --------------------------------------------------------------- barra */
 
 header.barra {
@@ -114,7 +107,7 @@ nav.menu a:hover { color: var(--text); }
   border-color: transparent; color: #170d05; font-weight: 600;
 }
 .btn.primo:hover { filter: brightness(1.06); }
-.btn small { font: 400 12px/1 var(--mono); opacity: .68; }
+.btn small { font: 400 12px/1 var(--mono); color: #3d2512; }
 
 /* --------------------------------------------------------------- apertura */
 
@@ -123,18 +116,18 @@ nav.menu a:hover { color: var(--text); }
   display: inline-flex; align-items: center; gap: 8px;
   border: 1px solid var(--line); border-radius: var(--r-pill);
   padding: 6px 14px 6px 8px; margin-bottom: var(--s6);
-  font: 400 12px/1 var(--sans); color: var(--text-2);
+  font: 400 12px/1.4 var(--sans); color: var(--text-2);
 }
 .occhiello .punto { width: 6px; height: 6px; border-radius: 50%; background: var(--nominal); }
 
-.apertura h1 { font-size: clamp(40px, 6.4vw, 74px); max-width: 15ch; }
+.apertura h1 { font-size: clamp(38px, 5.2vw, 60px); max-width: 17ch; }
 .apertura h1 em { font-style: normal; color: var(--amber); }
 .apertura .sotto {
   font-size: clamp(17px, 2.1vw, 20px); color: var(--text-2);
   max-width: 56ch; margin-top: var(--s5); line-height: 1.55;
 }
 .azioni { display: flex; flex-wrap: wrap; gap: var(--s3); margin-top: var(--s6); align-items: center; }
-.postilla { font-size: 13px; color: var(--text-3); margin-top: var(--s4); }
+.postilla { font-size: 13px; color: var(--text-3); margin-top: var(--s4); max-width: 62ch; }
 .postilla code { font-family: var(--mono); color: var(--text-2); }
 
 /* --------------------------------------------------------------- prove */
@@ -155,7 +148,10 @@ nav.menu a:hover { color: var(--text); }
 .telaio {
   border: 1px solid var(--line); border-radius: var(--r-panel);
   background: var(--ink-1); overflow: hidden;
-  box-shadow: 0 2px 4px rgba(0,0,0,.34), 0 24px 70px rgba(0,0,0,.5);
+  /* Un bordo netto oppure un rilievo morbido, non tutti e due. Il bordo qui
+     serve, perche' dentro ci sono scatti su fondo chiaro. Resta l'ombra corta,
+     che si legge come uno spessore e non come un alone. */
+  box-shadow: 0 2px 6px rgba(0,0,0,.4);
 }
 .telaio .cima {
   display: flex; align-items: center; gap: 6px;
@@ -170,9 +166,8 @@ nav.menu a:hover { color: var(--text); }
 /* --------------------------------------------------------------- sezioni */
 
 section { padding: var(--s9) 0; }
-section > .wrap > .etichetta { margin-bottom: var(--s4); }
 section h2 { font-size: clamp(28px, 3.6vw, 40px); max-width: 20ch; }
-section .guida { color: var(--text-2); max-width: 62ch; margin-top: var(--s4); font-size: 17px; }
+section .guida { color: var(--text-2); max-width: 54ch; margin-top: var(--s4); font-size: 17px; }
 
 .doppia { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s8); align-items: center; }
 .doppia.rovescia > *:first-child { order: 2; }
@@ -197,7 +192,7 @@ section .guida { color: var(--text-2); max-width: 62ch; margin-top: var(--s4); f
 }
 .provenienza td { padding: var(--s3) var(--s4) var(--s3) 0; border-bottom: 1px solid var(--line); vertical-align: top; }
 .provenienza td.percorso { font-family: var(--mono); font-size: 12.5px; color: var(--text-2); white-space: nowrap; }
-.provenienza td.verso { color: var(--text-3); }
+.provenienza td.verso { color: var(--text-3); max-width: 44ch; }
 .provenienza tr td:last-child { color: var(--text-2); }
 
 /* --------------------------------------------------------------- prezzo */
@@ -207,7 +202,7 @@ section .guida { color: var(--text-2); max-width: 62ch; margin-top: var(--s4); f
   border: 1px solid var(--line); border-radius: var(--r-panel);
   padding: var(--s6); background: var(--ink-1); display: flex; flex-direction: column;
 }
-.prezzo.scelto { border-color: var(--amber-line); background: linear-gradient(180deg, var(--amber-soft), transparent 60%), var(--ink-1); }
+.prezzo.scelto { border-color: var(--amber-line); background: linear-gradient(180deg, #28211f, var(--ink-1) 60%); }
 .prezzo h3 { font-size: 22px; }
 .prezzo .cifra { font: 500 40px/1 var(--mono); letter-spacing: -.03em; margin: var(--s4) 0 var(--s2); }
 .prezzo .cifra small { font-size: 15px; color: var(--text-3); letter-spacing: 0; }
@@ -231,7 +226,7 @@ section .guida { color: var(--text-2); max-width: 62ch; margin-top: var(--s4); f
 .domanda summary > span { flex: 1; }
 .domanda summary::after { content: "+"; color: var(--text-3); font-family: var(--mono); }
 .domanda[open] summary::after { content: "–"; }
-.domanda p { color: var(--text-2); padding-bottom: var(--s5); max-width: 70ch; font-size: 15px; }
+.domanda p { color: var(--text-2); padding-bottom: var(--s5); max-width: 56ch; font-size: 15px; }
 .domanda p + p { margin-top: var(--s3); }
 .domanda code { font-family: var(--mono); font-size: 13px; color: var(--text); background: var(--ink-2); padding: 1px 5px; border-radius: var(--r-tag); }
 
@@ -254,11 +249,15 @@ html[lang="it"] [data-lingua="en"] { display: none !important; }
 
 /* --------------------------------------------------------------- entrata */
 
-[data-sale] { opacity: 0; transform: translateY(14px); }
-.visto[data-sale] { opacity: 1; transform: none; transition: opacity 620ms cubic-bezier(.16,1,.3,1), transform 620ms cubic-bezier(.16,1,.3,1); }
+/* Il nascondino vale solo se c'e' qualcuno che possa riaccendere: la classe
+   `anima` la mette lo script prima di mettersi a osservare. Senza JS, o con un
+   motore che non scorre la pagina (un crawler, la stampa, uno scatto headless),
+   il contenuto resta visibile invece di sparire per sempre. */
+.anima [data-sale] { opacity: 0; transform: translateY(14px); }
+.anima .visto[data-sale] { opacity: 1; transform: none; transition: opacity 620ms cubic-bezier(.16,1,.3,1), transform 620ms cubic-bezier(.16,1,.3,1); }
 
 @media (prefers-reduced-motion: reduce) {
-  [data-sale], .visto[data-sale] { opacity: 1; transform: none; transition: none; }
+  .anima [data-sale], .anima .visto[data-sale] { opacity: 1; transform: none; transition: none; }
   html { scroll-behavior: auto; }
 }
 

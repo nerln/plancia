@@ -109,8 +109,6 @@
 <!-- ------------------------------------------------------------- il problema -->
 <section id="cosa-fa">
   <div class="wrap">
-    <p class="etichetta" data-lingua="en">the problem</p>
-    <p class="etichetta" data-lingua="it">il problema</p>
     <h2 data-lingua="en">The work is there. It is just scattered.</h2>
     <h2 data-lingua="it">Il lavoro c'è. È solo sparpagliato.</h2>
     <p class="guida" data-lingua="en">
@@ -132,8 +130,6 @@
 <section>
   <div class="wrap doppia">
     <div>
-      <p class="etichetta" data-lingua="en">the board</p>
-      <p class="etichetta" data-lingua="it">la lavagna</p>
       <h2 data-lingua="en">Every open task, whoever opened it</h2>
       <h2 data-lingua="it">Tutti i task aperti, chiunque li abbia aperti</h2>
       <ul class="elenco">
@@ -177,8 +173,6 @@
 <section>
   <div class="wrap doppia rovescia">
     <div>
-      <p class="etichetta" data-lingua="en">the recap</p>
-      <p class="etichetta" data-lingua="it">il riepilogo</p>
       <h2 data-lingua="en">A recap that ends with a decision</h2>
       <h2 data-lingua="it">Un riepilogo che finisce con una decisione</h2>
       <ul class="elenco">
@@ -224,8 +218,6 @@
 <section>
   <div class="wrap doppia">
     <div>
-      <p class="etichetta" data-lingua="en">search</p>
-      <p class="etichetta" data-lingua="it">la ricerca</p>
       <h2 data-lingua="en">Find what was actually said</h2>
       <h2 data-lingua="it">Ritrovare quello che è stato detto davvero</h2>
       <ul class="elenco">
@@ -268,8 +260,6 @@
 <!-- ------------------------------------------------------------- dati -->
 <section id="dati">
   <div class="wrap">
-    <p class="etichetta" data-lingua="en">your data</p>
-    <p class="etichetta" data-lingua="it">i tuoi dati</p>
     <h2 data-lingua="en">Everything it knows, and where it read it</h2>
     <h2 data-lingua="it">Tutto quello che sa, e dove l'ha letto</h2>
     <p class="guida" data-lingua="en">
@@ -349,8 +339,6 @@
 <!-- ------------------------------------------------------------- prezzo -->
 <section id="prezzo">
   <div class="wrap">
-    <p class="etichetta" data-lingua="en">price</p>
-    <p class="etichetta" data-lingua="it">prezzo</p>
     <h2 data-lingua="en">Free if you build it. Pay if you want it built.</h2>
     <h2 data-lingua="it">Gratis se te lo compili. A pagamento se lo vuoi già pronto.</h2>
     <p class="guida" data-lingua="en">
@@ -413,8 +401,6 @@
 <!-- ------------------------------------------------------------- domande -->
 <section>
   <div class="wrap">
-    <p class="etichetta" data-lingua="en">questions</p>
-    <p class="etichetta" data-lingua="it">domande</p>
     <h2 data-lingua="en">The obvious ones</h2>
     <h2 data-lingua="it">Quelle ovvie</h2>
 
@@ -506,9 +492,10 @@ const PAGAMENTO = "";
   if (PAGAMENTO) {
     bottone.href = PAGAMENTO;
   } else {
-    bottone.parentElement.querySelectorAll('.cifra, .nota').forEach(function (n) {
-      n.style.opacity = '.45';
-    });
+    // Il prezzo non si sbiadisce. Sbiadirlo era il modo di dire "non ancora in
+    // vendita" senza dirlo, e costava caro: la nota scendeva a 2,5:1 di
+    // contrasto, e la velatura ambra della carta scelta la abbassava ancora
+    // invece di alzarla. Che non sia in vendita lo dice il bottone, a parole.
     bottone.innerHTML = '<span data-lingua="en">Not on sale yet, watch the repo</span>'
                       + '<span data-lingua="it">Non è ancora in vendita, segui il repo</span>';
   }
@@ -545,6 +532,9 @@ const PAGAMENTO = "";
       if (v.isIntersecting) { v.target.classList.add('visto'); osservatore.unobserve(v.target); }
     });
   }, { rootMargin: '0px 0px -12% 0px' });
+  // Da qui in poi il contenuto puo' partire nascosto, perche' da qui in poi c'e'
+  // chi lo riaccende.
+  document.documentElement.classList.add('anima');
   document.querySelectorAll('[data-sale]').forEach(function (n) { osservatore.observe(n); });
 })();
 </script>
