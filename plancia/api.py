@@ -123,6 +123,14 @@ def overview(conn, lang=None) -> dict:
     except Exception:
         pass
 
+    # Quanto e' grande l'indice dei turni: e' il numero che dice se cercare qui
+    # ha senso, e la guida lo mostra invece di prometterlo.
+    try:
+        from . import turni as _turni
+        stats["indice"] = _turni.stato(conn)
+    except Exception:
+        pass
+
     from . import proposte as _prop
     try:
         prop = _prop.calcola(conn, lang or config.load_config().get("lingua", "it"))

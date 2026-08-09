@@ -770,6 +770,14 @@ const PASSI = [
     prova: null,
   },
   {
+    t: { it: "Ritrovare una cosa detta sei settimane fa", en: "Finding something said six weeks ago" },
+    c: {
+      it: "Cerca guarda dentro i turni: il testo com'era, di Claude e tuo. Non i titoli delle sessioni, quello che è stato scritto davvero. Ogni risultato dice da quale riga di quale file viene, quindi si riapre invece di essere riassunto, e i chip sopra dicono da quali progetti arriva e quanti per uno. Lo slash apre la ricerca da qualsiasi vista.",
+      en: "Search looks inside the turns: the text as it was, Claude's and yours. Not session titles, what was actually written. Every result says which line of which file it comes from, so you reopen it instead of reading a summary, and the chips above tell you which projects it came from and how many from each. Slash opens search from any view.",
+    },
+    prova: { etichetta: { it: "Apri la ricerca", en: "Open search" }, vista: "cerca" },
+  },
+  {
     t: { it: "La lavagna: tutti i task, di tutti", en: "The board: every task, every agent" },
     c: {
       it: "Claude Code tiene la sua lista di task in una cartella, Codex i suoi obiettivi in un database, Plancia i suoi. Nessuno dei tre sa degli altri. La lavagna li mette insieme e ti dice cosa è aperto davvero, adesso.",
@@ -821,6 +829,9 @@ views.benvenuto = async () => {
     [[o.progetti_attivi, L === 'en' ? 'projects read' : 'progetti letti'],
      [(state.overview.agenti || []).length || 2, L === 'en' ? 'agents' : 'agenti'],
      [0, L === 'en' ? 'bytes sent out' : 'byte usciti']],
+    [[(o.indice || {}).turni || 0, L === 'en' ? 'turns indexed' : 'turni indicizzati'],
+     [(o.indice || {}).file || 0, L === 'en' ? 'transcripts read' : 'transcript letti'],
+     [(o.indice || {}).testo_mb || 0, L === 'en' ? 'MB of prose' : 'MB di prosa']],
     [[(c.claude || {}).aperti || 0, 'claude'], [(c.codex || {}).aperti || 0, 'codex'],
      [(c.plancia || {}).aperti || 0, 'plancia']],
     null, null, null,
