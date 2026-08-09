@@ -54,12 +54,45 @@ sola. `plancia://recap`, `plancia://jarvis`, `plancia://ask?q=…`, `plancia://o
 `plancia://pdf` sono azioni da legare a una scorciatoia di sistema, a
 Raycast o a Comandi rapidi.
 
-**Claude Code e Codex.** Sedici tool `plancia_*` in ogni sessione di tutti e due, un hook `SessionStart`
-che passa a Claude il tuo stato attuale come contesto iniziale, e due skill che
-gli dicono quando leggere da Plancia e quando scriverci.
+**Claude Code e Codex.** Sette tool `plancia_*` in ogni sessione di tutti e due,
+un hook `SessionStart` che passa a Claude il tuo stato attuale come contesto
+iniziale, e due skill che gli dicono quando leggere da Plancia e quando
+scriverci. Sette e non venti: restano esposti i sei che vengono usati davvero,
+gli altri stanno dietro a un tool solo, `plancia`, che si chiama con `azione`.
+Gli schemi dei tool si pagano a ogni richiesta di una sessione, quindi la
+superficie è il conto. Misurato: 1195 token per sessione di Claude Code e 1020
+per una di Codex, contro 2870 e 2196.
 
 **Il terminale.** `plancia recap --speak`, `plancia ask "cosa ho spedito questa
-settimana?"`, `plancia task add`, `plancia search`, `plancia projects`.
+settimana?"`, `plancia task add`, `plancia cerca "una frase che ricordi"`,
+`plancia projects`.
+
+## Cercare dentro quello che è stato detto
+
+I transcript sono la cosa più grossa che hai e la più difficile da riaprire. Il
+titolo di una sessione non dice niente sei settimane dopo, e la frase che stai
+cercando sta in mezzo a una conversazione.
+
+Plancia tiene un indice FTS5 sulla prosa di ogni turno, tuoi e dell'agente, di
+Claude Code e di Codex. I risultati dei tool restano fuori di proposito: sono il
+grosso dei byte e quasi mai la cosa che si ricorda. Su questa macchina fanno
+13.000 turni da 1.287 transcript, 20 MB indicizzati su 979 di disco, ricostruiti
+da zero in 5 secondi e tenuti aggiornati in modo incrementale, che costa una
+`stat` per file non cambiato.
+
+Ogni risultato torna com'era scritto, con il file e la riga da cui viene, così si
+riapre il momento invece di leggerne un riassunto.
+
+![La ricerca](docs/cerca.png)
+
+```bash
+plancia cerca "il denominatore del blending"
+plancia cerca "cookie" --project molo
+```
+
+Nella dashboard `/` apre la ricerca da qualsiasi vista, e i chip sopra i
+risultati contano quanti ne vengono da ogni progetto su tutto l'indice, non sulla
+pagina. In Claude Code e in Codex è `plancia_search`.
 
 ## Il riepilogo giornaliero
 
@@ -173,7 +206,7 @@ e ruota a 5 MB.
 
 Plancia legge le sessioni di Codex da `~/.codex/sessions` insieme a quelle di
 Claude Code, e registra il proprio server MCP dentro `~/.codex/config.toml`. I due
-agenti vedono gli stessi progetti, gli stessi task, gli stessi venti tool. La
+agenti vedono gli stessi progetti, gli stessi task, gli stessi tool. La
 sezione Agenti dell'Archivio mostra chi ha lavorato su cosa e quando si sono
 passati il lavoro.
 
@@ -207,10 +240,18 @@ fonti ──▶ sync ──▶ SQLite ──▶ briefing.md · riepilogo · REST
 Due ritmi, perché rileggere venti repo per sapere che hai appena aperto una
 sessione è tempo buttato:
 
-- **caldo**, ogni due minuti, ~0,01 s: la coda degli hook e la coda nuova dei
+- **caldo**, ogni due minuti, ~40 ms: la coda degli hook e la coda nuova dei
   transcript. Quello che stai facendo adesso.
-- **freddo**, ogni trenta minuti, ~1,3 s: memoria, skill, repo, git locale,
-  manutenzione dei progetti, indice di ricerca, riepilogo.
+- **freddo**, ogni trenta minuti, ~1,5 s: memoria, skill, repo, git locale,
+  manutenzione dei progetti, i due indici di ricerca, riepilogo.
+
+Il giro freddo ci metteva quaranta secondi, e venti erano una cartella sola.
+`git status` dentro una cartella sincronizzata deve far verificare ogni file
+tracciato al file provider: misurato a freddo su un repo da 681 file, due minuti
+e 51 secondi, contro dieci millisecondi per un repo sul disco. Adesso le cartelle
+si leggono otto alla volta, una che non risponde entro quattro secondi viene
+ricordata e lasciata stare per sei ore, e uno stato mai arrivato si scrive come
+ignoto invece che come pulito.
 
 `plancia flusso` stampa ogni fonte, da dove arriva, quale giro la legge e quanto
 è fresca.
@@ -239,7 +280,8 @@ parole.
 **I transcript si leggono a byte, non a righe.** Sono centinaia di megabyte e
 crescono. Plancia tiene l'offset di ogni file e rilegge solo la coda nuova; le
 righe sopra 256 KB (i risultati dei tool) non vengono mai parsate, solo sondate.
-Una rilettura completa di 60 sessioni costa sette secondi.
+Una rilettura completa di 430 sessioni costa 1,5 secondi, e rifare da zero
+l'indice dei turni sopra ci mette altri 5.
 
 **Il tipo di un record si cerca per intero.** Dentro `message.content` ci sono
 altri campi `type` (`text`, `tool_use`, `tool_result`) che vengono prima di quello
@@ -254,6 +296,7 @@ bin/plancia-mcp        server MCP (stdio)
 bin/plancia-hook       hook di sessione, 20 ms
 plancia/store.py       schema e accesso ai dati
 plancia/ingest.py      lettura delle fonti
+plancia/turni.py       l'indice sul testo di quello che e' stato detto
 plancia/recap.py       il riepilogo
 plancia/voice.py       sintesi, riproduzione, ascolto
 plancia/briefing.py    quello che vede Claude
@@ -273,11 +316,12 @@ Dati in `~/.plancia/`: `plancia.db` (SQLite), `seed.json`, `token`,
 `briefing.md`, `audio/`. Tienili fuori da qualsiasi cartella sincronizzata: un
 file SQLite dentro Drive o Dropbox si corrompe.
 
-## Cinque superfici
+## Sei superfici
 
-Oggi (il riepilogo, il ritmo, le proposte, i task), Lavagna, Progetti, Social,
+Oggi (il riepilogo, il ritmo, le proposte, i task), Cerca, Lavagna, Progetti,
+Social,
 Archivio (sessioni, agenti, memoria, capacità). Tutto il resto passa da ⌘K. Al
-primo avvio una guida in cinque passi spiega le parti non ovvie, e resta lì sotto
+primo avvio una guida in sei passi spiega le parti non ovvie, e resta lì sotto
 "Guida".
 
 ## Cosa serve
@@ -299,7 +343,7 @@ git config core.hooksPath .githooks
 ```
 
 Accende il gancio che fa girare `python3 tools/prova.py` prima di ogni push:
-ottantadue controlli in una decina di secondi, su un archivio finto che non tocca
+137 controlli in una ventina di secondi, su un archivio finto che non tocca
 il tuo.
 
 ## Licenza

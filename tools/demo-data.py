@@ -10,6 +10,7 @@ com'è fatta l'interfaccia quando c'è dentro qualcosa.
 
 import os
 import random
+import shutil
 import sys
 from datetime import datetime, timedelta, timezone
 
@@ -107,6 +108,62 @@ POST = [
      "commit a91f004"),
 ]
 
+# I turni finti, per la vista Cerca. Vengono scritti come veri transcript JSONL e
+# indicizzati dal codice vero: uno screenshot della ricerca fatto su righe infilate
+# a mano nell'indice mostrerebbe una cosa che il programma non sa fare.
+# (sessione, ruolo, testo)
+TURNI = [
+    ("demo-000", "user",
+     "The search index rebuilds the whole corpus on every save and it takes 19 "
+     "seconds. Make it incremental, but do not break the case where a file is "
+     "renamed rather than edited."),
+    ("demo-000", "assistant",
+     "Found it. The rebuild was keyed on the file path, so a rename looked like a "
+     "new document and the old entry stayed behind as a ghost. Keying on the "
+     "content hash instead makes renames free and drops the rebuild to 0.8 s."),
+    ("demo-000", "assistant",
+     "One thing worth knowing: the incremental path now trusts mtime, so a restore "
+     "from backup that preserves timestamps will not be picked up. There is a "
+     "--full flag for that, and it is in the readme."),
+    ("demo-001", "user",
+     "Two headings with the same text generate the same anchor, so the second link "
+     "always jumps to the first one."),
+    ("demo-001", "assistant",
+     "Appending a counter is what most generators do, but it makes every link "
+     "fragile: insert a heading above and all the numbers shift. I disambiguated "
+     "with the parent heading instead, which is stable under insertion."),
+    ("demo-002", "user",
+     "Budgets have to be enforced at the gateway, not in each client. A client that "
+     "forgets to check is not a client that gets to spend more."),
+    ("demo-002", "assistant",
+     "The ceiling is per project and per window, and the counter is written before "
+     "the request goes out rather than after it comes back, so a crash mid-request "
+     "cannot lose the spend. It costs one extra write per call."),
+    ("demo-003", "assistant",
+     "The retry loop was firing on 400s. A 400 means the server understood and "
+     "refused, so retrying it is guaranteed to fail three more times and delay the "
+     "error the caller needed to see two seconds ago. Retries now only cover 429 "
+     "and 5xx."),
+    ("demo-004", "user",
+     "Rerun the ablation on the small split before we say anything about the "
+     "second baseline collapsing."),
+    ("demo-004", "assistant",
+     "It reproduces. The second baseline loses 31 points on the small split and "
+     "stays flat on the large one, which rules out the sampling explanation and "
+     "points at the tokeniser. The full grid is in results/ablation-small.csv."),
+    ("demo-006", "assistant",
+     "One config file, three environments, and the difference between them is nine "
+     "lines. The previous setup had the same nine lines spread over three files of "
+     "two hundred, which is why nobody could tell what staging actually did."),
+    ("demo-007", "user",
+     "Rollback is four commands and I always get the order wrong under pressure. "
+     "It has to be one."),
+    ("demo-008", "assistant",
+     "The ticket corpus had 2,000 documents and 214 of them were duplicates, mostly "
+     "autoresponders. Dropping them moved every model's score, so the earlier "
+     "comparison was measuring the duplicate rate as much as the embeddings."),
+]
+
 MEMORIA = [
     ("lumen-architecture", "How Lumen is put together and why the index is a single file",
      "project", "lumen"),
@@ -152,6 +209,40 @@ LANCI = [
     ("claude", "proposta", "Rerun the ablation with the larger split", "field-notes", "fallito",
      "the model process exited before returning a result", 800, 0.02, 6),
 ]
+
+
+def scrivi_turni(conn):
+    """Transcript finti su disco, poi indicizzati dal codice vero.
+
+    Passare dal file invece che infilare righe nell'indice a mano serve a una
+    cosa sola: quello che si vede nella vista Cerca deve essere quello che il
+    programma sa fare, compreso il percorso e la riga sotto ogni risultato.
+    """
+    import json
+    from pathlib import Path
+
+    from plancia import turni
+
+    radice = Path(store.config.DB_PATH).parent / "demo-transcripts"
+    if radice.exists():
+        shutil.rmtree(radice)
+    cartella = radice / "esempio"
+    cartella.mkdir(parents=True)
+
+    per_sessione = {}
+    for sessione, ruolo, testo in TURNI:
+        per_sessione.setdefault(sessione, []).append((ruolo, testo))
+    for sessione, righe in per_sessione.items():
+        with (cartella / f"{sessione}.jsonl").open("w", encoding="utf-8") as fh:
+            for i, (ruolo, testo) in enumerate(righe):
+                fh.write(json.dumps({
+                    "type": ruolo,
+                    "timestamp": quando(i % 4, 10 + i),
+                    "message": {"role": ruolo,
+                                "content": [{"type": "text", "text": testo}]},
+                }) + "\n")
+    esito = turni.indicizza(conn, completo=True, radice=radice)
+    print(f"turni indicizzati: {esito['turni']}")
 
 
 def main():
@@ -284,6 +375,7 @@ def main():
     store.set_meta(conn, "last_sync_end", store.now())
     store.rebuild_search(conn)
     conn.commit()
+    scrivi_turni(conn)
 
     # Il riepilogo lo scrive il motore a modello sui dati finti, così quello che
     # si vede negli screenshot è davvero quello che l'app produce.

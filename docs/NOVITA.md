@@ -10,6 +10,42 @@ una lavagna con tutto quello che è aperto, di tutti gli agenti; da ogni riga pu
 mandare il lavoro a Claude o a Codex; il riepilogo finisce con la cosa che
 conviene fare, e a voce dici "fallo".
 
+## Cercare dentro quello che è stato detto (1.0)
+
+`#/cerca` nell'app o lo slash da qualsiasi vista, `plancia cerca` da terminale,
+`plancia_search` dentro Claude Code e Codex.
+
+Fino alla 0.3 l'indice teneva, di ogni sessione, il solo primo prompt: 0,80 MB su
+979 di transcript, lo 0,08% del materiale. Ed è il motivo per cui quel tool era
+stato chiamato cinque volte in tutto, non perché fosse nascosto ma perché non
+trovava.
+
+Adesso l'indice sta sulla prosa di ogni turno, tuoi e dell'agente, di tutti e due
+gli agenti. I risultati dei tool restano fuori di proposito: sono il grosso dei
+byte e quasi mai la cosa che si ricorda.
+
+Due cose da sapere:
+
+- **Ogni risultato dice da quale riga di quale file viene.** Un risultato che non
+  si può riaprire vale la metà: quello che si vuole è tornare al momento, non
+  leggerne un riassunto.
+- **I chip contano su tutto l'indice, non sulla pagina.** Trenta risultati
+  mostrati non dicono niente sui trecento che restano fuori. I chip dicono quanti
+  ne vengono da ogni progetto, e cliccarli stringe.
+
+## Meno token, a ogni richiesta (1.0)
+
+Gli schemi dei tool non si pagano una volta per sessione: stanno nel contesto di
+ogni singola richiesta. Venti tool erano venti schemi, sempre.
+
+Adesso ne restano esposti sei, quelli che vengono usati davvero, e gli altri
+stanno dietro a un tool solo, `plancia`, che si chiama con `azione`. I nomi
+vecchi rispondono ancora, per i client già avviati.
+
+Misurato: 1195 token per sessione di Claude Code contro 2870, e 1020 per una di
+Codex contro 2196. È lo stesso binario per tutti e due, quindi il risparmio è lo
+stesso risparmio.
+
 ## La lavagna
 
 `#/lavagna` nell'app, `plancia lavagna` da terminale.

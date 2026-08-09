@@ -98,8 +98,8 @@ password del tuo account.
 ## Tagliare una release
 
 ```bash
-python3 tools/prova.py          # 69 controlli, una decina di secondi
-./tools/rilascia.sh 0.3.0       # versione, build, firma, DMG, notarizzazione
+python3 tools/prova.py          # 137 controlli, una ventina di secondi
+./tools/rilascia.sh 1.0.0       # versione, build, firma, DMG, notarizzazione
 ```
 
 Se il collaudo non passa, lo script si ferma: una release che esce con i
@@ -121,17 +121,18 @@ provarlo, non per venderlo.
 Poi:
 
 ```bash
-git tag v0.3.0 && git push origin v0.3.0
-gh release create v0.3.0 dist/Plancia-0.3.0.dmg dist/Plancia-0.3.0.dmg.sha256 \
-  --notes-file docs/note-0.3.0.md
+git tag v1.0.0 && git push origin v1.0.0
+gh release create v1.0.0 dist/Plancia-1.0.0.dmg dist/Plancia-1.0.0.dmg.sha256 \
+  --notes-file docs/note-1.0.0.md
 ```
 
 ## La lista prima di pubblicare
 
 - [ ] `python3 tools/prova.py` verde (lo script lo fa da sé e si ferma se non lo è)
-- [ ] gli screenshot sono rigenerati con i dati finti, non con i tuoi
-      (`PLANCIA_HOME=/tmp/plancia-demo python3 tools/demo-data.py`, poi
-      `PLANCIA_HOME=/tmp/plancia-demo ./bin/plancia serve --port 7799 --no-sync`)
+- [ ] gli screenshot sono rigenerati: `./tools/scatti.sh` rifà l'archivio finto,
+      apre il server, scatta le quattro immagini in inglese a 2400x1830 e chiude
+      tutto. Fino alla 1.0 si facevano a mano, e si vedeva: tagli diversi a ogni
+      giro, e uno mostrava ancora una barra laterale senza la voce Cerca.
 - [ ] i README dicono le funzioni che ci sono davvero
 - [ ] niente em dash nei testi pubblici (lo controlla il collaudo)
 - [ ] `~/.plancia/seed.json` non è finito nel repo
@@ -162,16 +163,17 @@ Le due lingue stanno nella stessa pagina, marcate con `data-lingua`, e si accend
 quella giusta con l'attributo `lang` sull'elemento radice. La lingua si sceglie
 da quella salvata, se no da quella del browser, se no inglese.
 
-Gli screenshot del sito sono gli stessi del README, ridotti a 1600 px. Si
-rifanno con l'app puntata sull'archivio dimostrativo:
+Gli screenshot del sito sono gli stessi del README, ridotti a 1600 px.
 
 ```bash
-PLANCIA_HOME=/tmp/plancia-demo python3 tools/demo-data.py
-PLANCIA_HOME=/tmp/plancia-demo ./bin/plancia serve --port 7799 --no-sync &
-# poi in ~/.plancia/config.json metti "port": 7799 e riavvia l'app
-open "plancia://open?view=lavagna&ui=en" && open "plancia://pdf"
-# i PDF escono in ~/.plancia/shots, si convertono con
-# sips -s format png --resampleWidth 2400 <file>.pdf --out shot.png
+./tools/scatti.sh
 ```
 
-Ricordati di rimettere la porta vera in `config.json` quando hai finito.
+Rifà l'archivio dimostrativo, apre il server su una porta sua, scatta le quattro
+immagini con Chrome a schermo spento e chiude tutto. Non tocca la tua
+configurazione: prima bisognava cambiare la porta in `config.json`, riavviare
+l'app e ricordarsi di rimetterla a posto dopo.
+
+La lingua è forzata a inglese (`PLANCIA_DEMO_LANG` per cambiarla): senza,
+l'interfaccia segue quella del sistema e gli scatti cambiano da macchina a
+macchina.

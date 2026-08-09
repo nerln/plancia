@@ -56,12 +56,44 @@ backend, so there is nothing to start by hand. `plancia://recap`,
 `plancia://pdf` are
 URL actions you can bind to a system shortcut, Raycast or Shortcuts.
 
-**Claude Code and Codex.** Twenty `plancia_*` MCP tools in every session of both, a `SessionStart`
-hook that hands Claude your current state as opening context, and two skills that
-tell it when to read from Plancia and when to write back.
+**Claude Code and Codex.** Seven `plancia_*` MCP tools in every session of both, a
+`SessionStart` hook that hands Claude your current state as opening context, and
+two skills that tell it when to read from Plancia and when to write back. Seven
+and not twenty: the six that get used stay exposed, the rest sit behind one
+`plancia` tool you call with `azione`. Tool schemas are paid for in every single
+request of a session, so the surface is the bill. Measured: 1195 tokens per
+Claude Code session and 1020 per Codex session, down from 2870 and 2196.
 
 **The terminal.** `plancia recap --speak`, `plancia ask "what did I ship this
-week?"`, `plancia task add`, `plancia search`, `plancia projects`.
+week?"`, `plancia task add`, `plancia cerca "a phrase you remember"`,
+`plancia projects`.
+
+## Search: inside what was said
+
+Transcripts are the largest thing you own and the hardest to get back into. A
+session title tells you nothing six weeks later; the sentence you are trying to
+find is somewhere in the middle of a conversation.
+
+Plancia keeps an FTS5 index over the prose of every turn, yours and the agent's,
+from Claude Code and Codex. Tool results stay out on purpose: they are most of
+the bytes and almost never the thing you remember. On this machine that is 13,000
+turns from 1,287 transcripts, 20 MB indexed out of 979 MB on disk, rebuilt from
+scratch in 7 seconds and kept current incrementally, which costs one `stat` per
+unchanged file.
+
+Every hit comes back verbatim with the file and the line it came from, so you
+reopen the moment instead of reading a summary of it.
+
+![Search](docs/cerca.png)
+
+```bash
+plancia cerca "the blending denominator"
+plancia cerca "cookies" --project molo
+```
+
+In the dashboard, `/` opens search from any view; chips above the results count
+the hits per project across the whole index, not just the page. In Claude Code
+and Codex it is `plancia_search`.
 
 ## The daily recap
 
@@ -174,7 +206,7 @@ rotates at 5 MB.
 
 Plancia reads Codex sessions from `~/.codex/sessions` alongside Claude Code's,
 and registers its own MCP server inside `~/.codex/config.toml`. Both agents see
-the same projects, the same tasks, the same twenty tools. The Agents view shows
+the same projects, the same tasks, the same tools. The Agents view shows
 who worked on what and when the two handed work to each other, inside the
 Archive.
 
@@ -208,10 +240,17 @@ sources ──▶ sync ──▶ SQLite ──▶ briefing.md · recap · REST �
 Two rhythms, because reading twenty repos to find out you just opened a session
 is a waste:
 
-- **hot**, every two minutes, ~0.01 s: the hook queue and the new tail of the
+- **hot**, every two minutes, ~40 ms: the hook queue and the new tail of the
   transcripts. What you are doing right now.
-- **cold**, every thirty minutes, ~1.3 s: memory, skills, repos, local git,
-  project housekeeping, search index, recap.
+- **cold**, every thirty minutes, ~1.5 s: memory, skills, repos, local git,
+  project housekeeping, both search indexes, recap.
+
+The cold pass used to take 40 seconds, and 20 of those were one folder. `git
+status` inside a cloud-synced folder has to check every tracked file with the
+file provider: measured cold on a 681 file repo, 2 minutes 51 seconds, against
+10 ms for a repo on disk. Folders are now read eight at a time, a folder that
+does not answer within four seconds is remembered and left alone for six hours,
+and a status that never arrived is stored as unknown rather than as clean.
 
 `plancia flusso` prints every source, where it comes from, which pass reads it
 and how fresh it is.
@@ -239,7 +278,8 @@ keyword, and re-attributed on every sync as you refine the keywords.
 **Transcripts are read by byte offset, not by line.** They are hundreds of
 megabytes and they grow. Plancia keeps the offset of every file and only reads
 the new tail; lines over 256 KB (tool results) are never parsed, only probed. A
-full re-read of 60 sessions costs about seven seconds.
+full re-read of 430 sessions costs 1.5 seconds, and rebuilding the turn index
+from scratch on top of it another 5.
 
 **A record's type is matched in full.** Inside `message.content` there are other
 `type` fields (`text`, `tool_use`, `tool_result`) that come before the real one,
@@ -254,6 +294,7 @@ bin/plancia-mcp        MCP server (stdio)
 bin/plancia-hook       session hook, 20 ms
 plancia/store.py       schema and data access
 plancia/ingest.py      reading the sources
+plancia/turni.py       the full text index over what was said
 plancia/recap.py       the daily recap
 plancia/voice.py       speech, playback, listening
 plancia/briefing.py    what Claude sees
@@ -273,12 +314,12 @@ Data lives in `~/.plancia/`: `plancia.db` (SQLite), `seed.json`, `token`,
 `briefing.md`, `audio/`. Keep it out of any synced folder: a SQLite file inside
 Dropbox or Drive will corrupt.
 
-## Five surfaces
+## Six surfaces
 
-Today (the recap, the rhythm, the proposals, the tasks), Board, Projects, Social,
-Archive (sessions, agents, memory, skills). Everything else goes through ⌘K. On
-first run a five step guide explains the parts that are not obvious, and it stays
-available under "Guide".
+Today (the recap, the rhythm, the proposals, the tasks), Search, Board, Projects,
+Social, Archive (sessions, agents, memory, skills). Everything else goes through
+⌘K. On first run a six step guide explains the parts that are not obvious, and it
+stays available under "Guide".
 
 ## Requirements
 
@@ -297,9 +338,11 @@ Reads are open: it is your data, already on your disk.
 git config core.hooksPath .githooks
 ```
 
-Turns on the hook that runs `python3 tools/prova.py` before every push: eighty
-two checks in about ten seconds, against a throwaway archive that never touches
-yours.
+Turns on the hook that runs `python3 tools/prova.py` before every push: 137
+checks in about twenty seconds, against a throwaway archive that never touches
+yours. They cover the schema, the board, the proposals, the search index, the
+recap, the MCP surface and its token budget, every read route of the HTTP API,
+the hook, the skills and a full install and uninstall into a fake home.
 
 ## Licence and price
 

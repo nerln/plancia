@@ -41,6 +41,9 @@ const EN = {
   'Nuova bozza': 'New draft', 'Il testo del post': 'The post text',
   'fonte: commit, repo, sessione': 'source: commit, repo, session',
   'Salva bozza': 'Save draft', 'fonte': 'source', 'apri': 'open', 'vuoto': 'empty',
+  // Il motore che ha scritto il riepilogo: "modello" vuol dire il testo a
+  // modelli, senza chiamare nessun modello linguistico.
+  'modello': 'template', 'cache': 'cache',
   'conversazioni con Claude Code': 'conversations with Claude Code',
   'cerca nel primo messaggio…': 'search the opening message…',
   'tutti i progetti': 'all projects', 'quando': 'when', 'di cosa': 'about',
@@ -465,7 +468,7 @@ async function bloccoRiepilogo(soloCorpo) {
   <div class="recap">
     <div class="panel">
       <header><h3>${T('Riepilogo')}</h3><span class="spacer"></span>
-        ${d ? `<span class="tag ${d.fonte === 'claude' ? 'accent' : ''}">${esc(d.fonte)}</span>` : ''}
+        ${d ? `<span class="tag ${d.fonte === 'claude' ? 'accent' : ''}">${esc(T(d.fonte))}</span>` : ''}
       </header>
       <div class="panel-body">
         <div class="recap-testo ${d ? '' : 'attesa'}" id="recap-testo">${
@@ -1290,6 +1293,16 @@ const REDIREZIONI = { riepilogo: 'oggi', task: 'oggi', sessioni: 'archivio',
 async function route() {
   const hash = location.hash.replace(/^#\//, '') || 'oggi';
   let [name] = hash.split('/');
+  // `#/cerca?q=...&progetto=...`: una ricerca diventa un indirizzo che si salva
+  // e si riapre, invece di una cosa da riscrivere ogni volta.
+  const dom = name.indexOf('?');
+  if (dom >= 0) {
+    const p = new URLSearchParams(name.slice(dom + 1));
+    name = name.slice(0, dom);
+    if (name === 'cerca') {
+      state.filters.cerca = { q: p.get('q') || '', progetto: p.get('progetto') || '' };
+    }
+  }
   if (REDIREZIONI[name]) {
     if (name !== 'riepilogo' && name !== 'task') {
       state.filters.archivio = { seg: name === 'agenti' ? 'agenti'
