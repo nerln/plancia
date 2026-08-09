@@ -143,6 +143,21 @@ def main():
           recap.solo_cache(conn, "it").get("testo") is None,
           "la cache tiene una lingua sola")
 
+    # -------------------------------------------------------------- briefing
+    # Il file che l'hook infila in ogni sessione: ogni riga si paga una volta
+    # per sessione. La versione lunga resta, ma a un tool di distanza.
+    from plancia import briefing as _b  # noqa: E402
+    corto = _b.build(conn, esteso=False)
+    lungo = _b.build(conn)
+    prova("il briefing corto e' molto piu' corto di quello esteso",
+          len(corto) < len(lungo) * 0.55, f"{len(corto)} contro {len(lungo)}")
+    prova("e sta sotto il tetto di token",
+          len(corto) // 4 <= 320, f"~{len(corto)//4} token, tetto 320")
+    prova("l'hook riceve la versione corta, non quella lunga",
+          _b.write_cache() == _b.build(esteso=False))
+    prova("il taglio non spezza le parole a meta'",
+          not any(r.rstrip("…").endswith((" ", "-")) for r in corto.splitlines()))
+
     # ------------------------------------------------------------------ lanci
     from plancia import cantiere  # noqa: E402
     conn.execute("INSERT INTO runs(agente, modo, prompt, cwd, stato, inizio, pid) "
@@ -456,15 +471,37 @@ def main():
               avvio.get("result", {}).get("serverInfo", {}).get("name") == "plancia")
         elenco_tool = [t["name"] for t in
                        mcp_chiama(server, "tools/list", {}, 2).get("result", {}).get("tools", [])]
-        prova("espone i venti tool", len(elenco_tool) >= 20, str(len(elenco_tool)))
-        mancanti = [t for t in ("plancia_lavagna", "plancia_manda", "plancia_lanci",
-                                "plancia_eventi", "plancia_briefing")
-                    if t not in elenco_tool]
-        prova("ci sono anche quelli nuovi", not mancanti, str(mancanti))
+        # La superficie esposta e' piccola apposta: gli schemi stanno nel
+        # contesto di ogni sessione, usati o no. Misurato il 9 agosto 2026 su
+        # 1269 sessioni vere, i venti tool costavano 2,75 milioni di token per
+        # 158 chiamate, e quattro non erano stati chiamati mai.
+        from plancia import mcp as _m  # noqa: E402
+        prova("la superficie esposta resta piccola",
+              len(elenco_tool) <= 8, f"{len(elenco_tool)} tool")
+        prova("e il dispatcher c'e'", "plancia" in elenco_tool)
+        prova("ogni azione della coda ha il suo indizio",
+              not (set(_m.CODA) - set(_m.INDIZI)),
+              str(set(_m.CODA) - set(_m.INDIZI)))
+        prova("nessun indizio punta a un'azione che non esiste",
+              not (set(_m.INDIZI) - set(_m.CODA)),
+              str(set(_m.INDIZI) - set(_m.CODA)))
+        prova("niente e' sparito: primi piu coda fanno il totale di prima",
+              len(_m.PRIMI) + len(_m.CODA) == len(_m._TUTTI))
+
+        # La guardia vera: se qualcuno riaggiunge tool di prima classe, questo
+        # collaudo diventa rosso prima che la spesa torni dov'era.
+        peso = len(json.dumps(_m.TOOLS)) // 4
+        prova("gli schemi stanno sotto il tetto di token",
+              peso <= 1200, f"~{peso} token, tetto 1200")
+
         risposta = mcp_chiama(server, "tools/call",
-                              {"name": "plancia_lavagna", "arguments": {}}, 3)
-        prova("un tool risponde davvero",
+                              {"name": "plancia", "arguments": {"azione": "lavagna"}}, 3)
+        prova("il dispatcher raggiunge un'azione della coda",
               bool(risposta.get("result", {}).get("content")))
+        vecchio = mcp_chiama(server, "tools/call",
+                             {"name": "plancia_lavagna", "arguments": {}}, 4)
+        prova("e i nomi vecchi rispondono ancora, per i client gia' avviati",
+              bool(vecchio.get("result", {}).get("content")))
     finally:
         server.terminate()
 

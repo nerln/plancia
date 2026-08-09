@@ -32,7 +32,32 @@ def _ago(ts: str) -> str:
     return ts[:10]
 
 
-def build(conn=None, project=None, limit_projects=6) -> str:
+def _corto(testo: str, quanti: int) -> str:
+    """Taglia a fine parola, non a meta'.
+
+    Il briefing tagliava a carattere fisso e produceva righe che finivano in
+    "sectio" e "messa": costavano i token per intero e si leggevano male.
+    """
+    testo = " ".join((testo or "").split())
+    if len(testo) <= quanti:
+        return testo
+    return testo[:quanti].rsplit(" ", 1)[0] + "…"
+
+
+def build(conn=None, project=None, limit_projects=6, esteso=True) -> str:
+    """Il quadro della situazione.
+
+    `esteso=False` e' quello che entra in ogni sessione di Claude Code e di
+    Codex, e li' ogni riga si paga 1269 volte. Misurato il 9 agosto 2026: la
+    versione lunga costava ~700 token a sessione, 0,89 milioni in tutto, e la
+    riga piu' cara era un `next_action` da 430 caratteri sul paper che nel 99%
+    delle sessioni non c'entrava niente.
+
+    Quindi la versione corta dice quel che serve a orientarsi e si ferma. Chi ha
+    bisogno del resto lo chiede, e lo paga una volta sola.
+    """
+    if not esteso:
+        return _sintesi(conn, project, limit_projects)
     close = False
     if conn is None:
         conn = store.connect()
@@ -114,8 +139,72 @@ def build(conn=None, project=None, limit_projects=6) -> str:
             conn.close()
 
 
+def _sintesi(conn=None, project=None, limit_projects=4) -> str:
+    """Il briefing che entra in ogni sessione. Tetti duri su tutto."""
+    close = False
+    if conn is None:
+        conn = store.connect()
+        store.init_db(conn)
+        close = True
+    try:
+        righe = [f"# Plancia · {datetime.now().strftime('%d/%m/%Y')}"]
+
+        dove = "WHERE p.status='attivo' AND p.hidden=0"
+        params = []
+        if project:
+            riga = store.get_project(conn, project)
+            if riga:
+                dove, params = "WHERE p.id=?", [riga["id"]]
+        progetti = conn.execute(
+            f"SELECT p.name, p.key, p.last_activity, p.next_action, "
+            f"(SELECT COUNT(*) FROM tasks t WHERE t.project_id=p.id AND "
+            f"t.status IN ('aperto','in corso','bloccato')) AS aperti "
+            f"FROM projects p {dove} "
+            f"ORDER BY p.pinned DESC, p.priority ASC, p.last_activity DESC LIMIT ?",
+            # Il tetto lo mette questa funzione, non chi la chiama: e' l'unica
+            # ragione per cui esiste.
+            params + [min(limit_projects, 4)],
+        ).fetchall()
+        for p in progetti:
+            coda = f", {p['aperti']} task" if p["aperti"] else ""
+            righe.append(f"- {p['name']} ({p['key']}) · {_ago(p['last_activity'])}{coda}")
+            if p["next_action"]:
+                righe.append(f"  → {_corto(p['next_action'], 110)}")
+
+        task = conn.execute(
+            "SELECT t.id, t.title, t.due, p.name AS pname FROM tasks t "
+            "LEFT JOIN projects p ON p.id=t.project_id "
+            "WHERE t.status IN ('in corso','aperto','bloccato') "
+            "ORDER BY CASE t.status WHEN 'in corso' THEN 0 WHEN 'bloccato' THEN 1 ELSE 2 END, "
+            "t.priority ASC, t.due IS NULL, t.due ASC LIMIT 4"
+        ).fetchall()
+        aperti = conn.execute(
+            "SELECT COUNT(*) FROM tasks WHERE status IN ('in corso','aperto','bloccato')"
+        ).fetchone()[0]
+        if task:
+            resto = f", altri {aperti - len(task)}" if aperti > len(task) else ""
+            righe.append(f"\nTask ({aperti}{resto}):")
+            for t in task:
+                tag = f" [{t['pname']}]" if t["pname"] else ""
+                scade = f" · scade {t['due']}" if t["due"] else ""
+                righe.append(f"- #{t['id']} {_corto(t['title'], 62)}{tag}{scade}")
+
+        righe.append("\nIl resto: tool `plancia`, azione=briefing.")
+        return "\n".join(righe)
+    finally:
+        if close:
+            conn.close()
+
+
 def write_cache() -> str:
-    text = build()
+    """Scrive il file che l'hook di SessionStart infila in ogni sessione.
+
+    Qui va la versione corta, e il motivo e' aritmetico: questo file entra nel
+    contesto di ogni sessione di Claude Code e di Codex, quindi ogni riga si paga
+    tante volte quante sessioni apri. La versione lunga resta a un tool di
+    distanza per chi la vuole davvero.
+    """
+    text = build(esteso=False)
     config.ensure_dirs()
     config.BRIEFING_FILE.write_text(text, "utf-8")
     return text

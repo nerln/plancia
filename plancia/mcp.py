@@ -38,7 +38,7 @@ def _s(desc, **props):
 STR = {"type": "string"}
 INT = {"type": "integer"}
 
-TOOLS = [
+_TUTTI = [
     {
         "name": "plancia_briefing",
         "description": (
@@ -191,6 +191,66 @@ TOOLS = [
 
 
 # --------------------------------------------------------------------------
+# cosa viene esposto, e perche' solo questo
+#
+# Gli schemi dei tool stanno nel contesto di OGNI sessione, sempre, che vengano
+# usati o no. Misurato il 9 agosto 2026 su 1269 sessioni vere: i venti tool
+# pesavano 2170 token a sessione, 2,75 milioni in tutto, per 158 chiamate. E
+# quattro di loro (speak, sync, lavagna, eventi) non erano stati chiamati mai,
+# nemmeno una volta.
+#
+# Quindi restano di prima classe i cinque che portano l'uso vero, piu' search,
+# che e' la ragione per cui l'archivio esiste: senza, 427 sessioni e 41 memorie
+# non servono a niente. Tutto il resto continua a funzionare identico, ma dietro
+# un tool solo, e paga un solo schema invece di quattordici.
+# --------------------------------------------------------------------------
+
+PRIMI = ("plancia_search", "plancia_task_add", "plancia_task_update",
+         "plancia_log", "plancia_project_update", "plancia_post_add")
+
+#: nome dell'azione -> definizione completa, per chi chiede aiuto al dispatcher
+CODA = {t["name"].removeprefix("plancia_"): t for t in _TUTTI if t["name"] not in PRIMI}
+
+
+#: Un indizio per azione, corto quanto basta a sceglierla. Il manuale completo
+#: costa quattordici schemi, ed e' esattamente la spesa che questo tool evita:
+#: chi ha bisogno degli argomenti chiede azione='aiuto' e li paga una volta sola.
+INDIZI = {
+    "briefing": "state of his work now",
+    "projects": "list projects",
+    "tasks": "list tasks",
+    "posts": "list social drafts",
+    "post_update": "change a post, mark it published",
+    "sessions": "past sessions, where something was done",
+    "memory": "the memory notes",
+    "recap": "spoken daily recap",
+    "speak": "read text aloud",
+    "lavagna": "open tasks across Claude, Codex and Plancia",
+    "manda": "dispatch work to an agent",
+    "lanci": "state of dispatched runs",
+    "eventi": "append-only event log, what shipped since",
+    "sync": "re-scan sessions, memory, repos",
+}
+
+TOOLS = [t for t in _TUTTI if t["name"] in PRIMI] + [{
+    "name": "plancia",
+    "description": (
+        "The rest of the archive, behind one tool: pass azione plus that action's "
+        "own arguments, or azione='aiuto' with di='<action>' for its arguments.\n"
+        + " | ".join(f"{n}: {h}" for n, h in INDIZI.items())),
+    "inputSchema": {
+        "type": "object",
+        "properties": {"azione": {"type": "string", "enum": sorted(CODA) + ["aiuto"]}},
+        "required": ["azione"],
+        # Gli argomenti veri sono quelli dell'azione scelta, e stanno in CODA.
+        # Ripeterli qui vorrebbe dire ripagare i quattordici schemi che questo
+        # tool esiste per non pagare.
+        "additionalProperties": True,
+    },
+}]
+
+
+# --------------------------------------------------------------------------
 # esecuzione
 # --------------------------------------------------------------------------
 
@@ -201,6 +261,23 @@ def _fmt(data) -> str:
 
 
 def call_tool(name: str, args: dict) -> str:
+    # Il dispatcher: `plancia` con un'azione diventa il tool di prima che aveva
+    # quel nome, e da li' in giu' non cambia niente. Tenere una catena sola vuol
+    # dire che i due modi di chiamare non possono divergere.
+    if name == "plancia":
+        args = dict(args)
+        azione = str(args.pop("azione", "")).strip()
+        if azione == "aiuto":
+            quale = str(args.get("di") or args.get("azione_richiesta") or "").strip()
+            if quale in CODA:
+                return _fmt({"azione": quale, "argomenti": CODA[quale]["inputSchema"],
+                             "descrizione": CODA[quale]["description"]})
+            return _fmt({"azioni": {n: CODA[n]["description"] for n in sorted(CODA)}})
+        if azione not in CODA:
+            return (f"azione sconosciuta: {azione!r}. "
+                    f"Quelle valide sono: {', '.join(sorted(CODA))}")
+        name = f"plancia_{azione}"
+
     conn = store.connect()
     store.init_db(conn)
     try:
