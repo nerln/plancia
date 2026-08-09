@@ -98,7 +98,7 @@ password del tuo account.
 ## Tagliare una release
 
 ```bash
-python3 tools/prova.py          # 137 controlli, una ventina di secondi
+python3 tools/prova.py          # 138 controlli, una ventina di secondi
 ./tools/rilascia.sh 1.0.0       # versione, build, firma, DMG, notarizzazione
 ```
 

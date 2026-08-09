@@ -686,6 +686,16 @@ def main():
                              {"name": "plancia_lavagna", "arguments": {}}, 4)
         prova("e i nomi vecchi rispondono ancora, per i client gia' avviati",
               bool(vecchio.get("result", {}).get("content")))
+
+        # La ricerca e' il motivo per cui questo server vale la spesa: se torna
+        # solo le schede vuol dire che l'indice sui turni non e' arrivato fin
+        # qui, e da dentro una sessione non si vedrebbe la differenza.
+        ric = mcp_chiama(server, "tools/call",
+                         {"name": "plancia_search", "arguments": {"query": "plancia"}}, 5)
+        testo = "".join(c.get("text", "") for c in
+                        ric.get("result", {}).get("content", []))
+        prova("plancia_search risponde dai turni, non solo dalle schede",
+              "nei_turni" in testo, testo[:120])
     finally:
         server.terminate()
 

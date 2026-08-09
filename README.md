@@ -78,7 +78,7 @@ Plancia keeps an FTS5 index over the prose of every turn, yours and the agent's,
 from Claude Code and Codex. Tool results stay out on purpose: they are most of
 the bytes and almost never the thing you remember. On this machine that is 13,000
 turns from 1,287 transcripts, 20 MB indexed out of 979 MB on disk, rebuilt from
-scratch in 7 seconds and kept current incrementally, which costs one `stat` per
+scratch in 5 seconds and kept current incrementally, which costs one `stat` per
 unchanged file.
 
 Every hit comes back verbatim with the file and the line it came from, so you
@@ -338,7 +338,7 @@ Reads are open: it is your data, already on your disk.
 git config core.hooksPath .githooks
 ```
 
-Turns on the hook that runs `python3 tools/prova.py` before every push: 137
+Turns on the hook that runs `python3 tools/prova.py` before every push: 138
 checks in about twenty seconds, against a throwaway archive that never touches
 yours. They cover the schema, the board, the proposals, the search index, the
 recap, the MCP surface and its token budget, every read route of the HTTP API,

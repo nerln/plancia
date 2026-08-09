@@ -55,7 +55,7 @@ Hot pass ~40 ms, cold pass ~1.5 s.
 
 ## Tested enough to put a 1 on it
 
-137 checks, about twenty seconds, run against a throwaway archive that never
+138 checks, about twenty seconds, run against a throwaway archive that never
 touches yours. They cover the schema, the board, the proposals, the search index,
 the recap, the MCP surface and a hard ceiling on its token cost, every read route
 of the HTTP API, the session hook, the skills, and a full install and uninstall
