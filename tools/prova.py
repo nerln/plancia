@@ -391,6 +391,38 @@ def main():
     prova("nessun commit finisce nella sessione di un altro progetto",
           sbagliati == 0, f"sbagliati: {sbagliati}")
 
+    # --------------------------------------------------------- git delle cartelle
+    # `git status` dentro il Drive puo' prendere minuti: ogni file tracciato e' un
+    # segnaposto che il file provider deve verificare. Misurato il 9 agosto 2026
+    # su una cartella da 681 file: due minuti e 51 secondi, contro dieci
+    # millisecondi per un repo sul disco, ed erano venti dei quaranta secondi di
+    # ogni sync.
+    prova("dal ramo con upstream si prende solo il nome",
+          ingest._leggi_stato("## main...origin/main [ahead 1]\n M a.py\n?? b.py")
+          == ("main", 2))
+    prova("e regge un ramo senza upstream",
+          ingest._leggi_stato("## feature/x") == ("feature/x", 0))
+    prova("e la testa staccata non diventa un ramo vero",
+          ingest._leggi_stato("## HEAD (no branch)")[0] == "HEAD (no branch)")
+    # Il caso che conta: lo stato non arrivato non deve diventare "pulito".
+    prova("lo stato mancante resta ignoto, non zero",
+          ingest._leggi_stato(None) == (None, None))
+    prima = conn.execute("SELECT COUNT(*) FROM repos WHERE dirty IS NULL").fetchone()[0]
+    conn.execute("INSERT INTO repos(name, local_path, branch, dirty) VALUES(?,?,?,?)",
+                 ("repo-lento", "/tmp/repo-lento", "main", 7))
+    conn.execute(
+        "INSERT INTO repos(name, local_path, branch, dirty) VALUES(?,?,?,?) "
+        "ON CONFLICT(name) DO UPDATE SET branch=COALESCE(excluded.branch, repos.branch), "
+        "dirty=COALESCE(excluded.dirty, repos.dirty)",
+        ("repo-lento", "/tmp/repo-lento", None, None))
+    tenuto = conn.execute("SELECT branch, dirty FROM repos WHERE name='repo-lento'").fetchone()
+    prova("una cartella troppo lenta tiene i valori di prima",
+          tuple(tenuto) == ("main", 7), str(tuple(tenuto)))
+    conn.execute("DELETE FROM repos WHERE name='repo-lento'")
+    conn.commit()
+    prova("e non lascia righe senza stato in giro",
+          conn.execute("SELECT COUNT(*) FROM repos WHERE dirty IS NULL").fetchone()[0] == prima)
+
     # ---------------------------------------------------------------- eventi
     e = eventi.scrivi("lavoro.completato", "prova", progetto="lumen",
                       dati={"agente": "claude"})

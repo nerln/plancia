@@ -624,13 +624,61 @@ def sync_repos(conn, progress=None) -> int:
     return len(repos)
 
 
+#: Quanto si aspetta `git status` prima di lasciar perdere. Dentro il Drive ogni
+#: file tracciato e' un segnaposto che il file provider deve verificare: misurato
+#: il 9 agosto 2026 su Voicebox-Fish, 681 file, due minuti e 51 secondi anche
+#: saltando gli untracked, contro dieci millisecondi per un repo sul disco. Era
+#: da solo i venti secondi di ogni sync.
+STATO_TIMEOUT = 4.0
+#: Per quanto si ricorda che una cartella e' lenta prima di riprovarci.
+STATO_RIPROVA_ORE = 6
+
+
+def _leggi_stato(out):
+    """Ramo e numero di file modificati da `git status --porcelain --branch`.
+
+    La prima riga e' `## main...origin/main [ahead 1]`, oppure `## main` senza
+    upstream, oppure `## HEAD (no branch)` a testa staccata. Le altre sono i
+    file. Torna (None, None) se lo stato non e' arrivato, e chi scrive deve
+    distinguerlo da "nessun file modificato".
+    """
+    if out is None:
+        return None, None
+    righe = out.splitlines()
+    ramo = None
+    if righe and righe[0].startswith("##"):
+        ramo = righe[0][2:].strip().split("...")[0].strip()
+        righe = righe[1:]
+    return ramo, len(righe)
+
+
+def _git_stato(percorso: str, chiedi_stato: bool):
+    """Ultimo commit, ramo e file modificati di una cartella git.
+
+    Due processi invece di tre: `status --branch` porta anche il ramo, quindi la
+    chiamata a `branch --show-current` non serve.
+
+    Torna `ramo` e `sporchi` a None quando lo stato non e' stato chiesto o non e'
+    arrivato in tempo: chi scrive nel database deve tenere il valore di prima
+    invece di scrivere zero, o una cartella lenta risulterebbe pulita.
+    """
+    head = run(["git", "-C", percorso, "log", "-1", "--format=%H\x1f%cI\x1f%s"], timeout=8)
+    ramo = sporchi = None
+    if chiedi_stato:
+        ramo, sporchi = _leggi_stato(run(
+            ["git", "-C", percorso, "status", "--porcelain", "--branch"],
+            timeout=STATO_TIMEOUT))
+    return head, ramo, sporchi
+
+
 def sync_local_git(conn, progress=None) -> int:
     cfg = config.load_config()
     roots = [expand(r) for r in cfg.get("code_roots", [])]
     drive = drive_root()
     if drive:
         roots.append(drive)
-    seen = 0
+
+    cartelle = []
     for root in roots:
         if not root or not os.path.isdir(root):
             continue
@@ -639,37 +687,56 @@ def sync_local_git(conn, progress=None) -> int:
         except OSError:
             continue
         for entry in entries:
-            if not entry.is_dir() or entry.name.startswith("."):
-                continue
-            if not os.path.isdir(os.path.join(entry.path, ".git")):
-                continue
-            head = run(["git", "-C", entry.path, "log", "-1", "--format=%H\x1f%cI\x1f%s"], timeout=12)
-            branch = run(["git", "-C", entry.path, "branch", "--show-current"], timeout=12)
-            dirty = run(["git", "-C", entry.path, "status", "--porcelain"], timeout=20)
-            pid = resolve_path_project(conn, entry.path)
-            if pid is None:
-                pid = store.upsert_project(conn, entry.name, entry.name.replace("-", " "),
-                                           kind="progetto")
-                store.link_project(conn, pid, "path", entry.path)
+            if (entry.is_dir() and not entry.name.startswith(".")
+                    and os.path.isdir(os.path.join(entry.path, ".git"))):
+                cartelle.append((entry.name, entry.path))
+
+    limite = (datetime.now(timezone.utc)
+              - timedelta(hours=STATO_RIPROVA_ORE)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    chiedi = {}
+    for nome, percorso in cartelle:
+        visto = store.get_meta(conn, f"git_lento:{percorso}") or ""
+        chiedi[percorso] = visto < limite
+
+    # I processi git aspettano il disco, non la CPU: in parallelo il giro dura
+    # quanto la cartella piu' lenta invece della somma di tutte.
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        esiti = list(pool.map(
+            lambda c: _git_stato(c[1], chiedi[c[1]]), cartelle))
+
+    lenti = 0
+    for (nome, percorso), (head, ramo, sporchi) in zip(cartelle, esiti):
+        if chiedi[percorso] and sporchi is None:
+            store.set_meta(conn, f"git_lento:{percorso}", store.now())
+            lenti += 1
+        elif sporchi is not None:
+            store.set_meta(conn, f"git_lento:{percorso}", "")
+
+        pid = resolve_path_project(conn, percorso)
+        if pid is None:
+            pid = store.upsert_project(conn, nome, nome.replace("-", " "), kind="progetto")
+            store.link_project(conn, pid, "path", percorso)
+        conn.execute(
+            "INSERT INTO repos(name, local_path, branch, dirty, project_id, updated_at) "
+            "VALUES(?,?,?,?,?,?) ON CONFLICT(name) DO UPDATE SET local_path=excluded.local_path, "
+            "branch=COALESCE(excluded.branch, repos.branch), "
+            "dirty=COALESCE(excluded.dirty, repos.dirty), "
+            "project_id=COALESCE(repos.project_id, excluded.project_id)",
+            (nome, percorso, ramo, sporchi, pid, store.now()),
+        )
+        if head:
+            sha, date, msg = (head.split("\x1f") + ["", "", ""])[:3]
+            date = to_utc(date)
             conn.execute(
-                "INSERT INTO repos(name, local_path, branch, dirty, project_id, updated_at) "
-                "VALUES(?,?,?,?,?,?) ON CONFLICT(name) DO UPDATE SET local_path=excluded.local_path, "
-                "branch=excluded.branch, dirty=excluded.dirty, "
-                "project_id=COALESCE(repos.project_id, excluded.project_id)",
-                (entry.name, entry.path, branch or "", len((dirty or "").splitlines()),
-                 pid, store.now()),
-            )
-            if head:
-                sha, date, msg = (head.split("\x1f") + ["", "", ""])[:3]
-                date = to_utc(date)
-                conn.execute(
-                    "INSERT INTO commits(repo, sha, message, date, url) VALUES(?,?,?,?,?) "
-                    "ON CONFLICT(sha) DO NOTHING", (entry.name, sha, msg, date, ""))
-                store.touch_project(conn, pid, date)
-            seen += 1
+                "INSERT INTO commits(repo, sha, message, date, url) VALUES(?,?,?,?,?) "
+                "ON CONFLICT(sha) DO NOTHING", (nome, sha, msg, date, ""))
+            store.touch_project(conn, pid, date)
     conn.commit()
-    log(f"cartelle git locali: {seen}", progress)
-    return seen
+    if lenti:
+        log(f"cartelle troppo lente per lo stato: {lenti}", progress)
+    log(f"cartelle git locali: {len(cartelle)}", progress)
+    return len(cartelle)
 
 
 # --------------------------------------------------------------------------
@@ -839,7 +906,11 @@ def sync(full=False, progress=None, skip_git=False, modo="tutto") -> dict:
     # e va aggiornata anche nei sync leggeri.
     try:
         from . import turni
-        esito = turni.indicizza(conn, completo=(modo == "full"))
+        # `full` e' il parametro che chiede di rileggere tutto: prima qui c'era
+        # un confronto con la stringa "full", che `modo` non vale mai (tutto,
+        # caldo, freddo), quindi la rilettura completa non partiva nemmeno con
+        # `plancia sync --full`.
+        esito = turni.indicizza(conn, completo=full)
         result["turni_indicizzati"] = esito["turni"]
     except Exception as exc:  # un indice mancato non deve far fallire il sync
         result["turni_errore"] = f"{type(exc).__name__}: {exc}"
