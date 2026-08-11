@@ -13,7 +13,71 @@ import time
 DATA = os.environ.get("PLANCIA_HOME") or os.path.join(os.path.expanduser("~"), ".plancia")
 QUEUE = os.path.join(DATA, "queue", "hooks.jsonl")
 BRIEFING = os.path.join(DATA, "briefing.md")
+DB = os.path.join(DATA, "plancia.db")
 MAX_CONTEXT = 2600
+
+# Le cartelle che contengono progetti ma non sono progetti. Una sessione aperta
+# qui dentro lavora a distanza dentro le cartelle figlie senza esserci mai
+# entrata: e' cosi' che si perdono le tracce, ed e' cosi' che il contenitore
+# "Senza progetto" era arrivato a 162 sessioni.
+CONTENITORI = [
+    os.path.expanduser("~/Library/CloudStorage/GoogleDrive-eugenio.nerelli99@gmail.com/Il mio Drive"),
+    os.path.expanduser("~/dev"),
+    os.path.expanduser("~/Siti"),
+    "/Volumes/AppsAndFiles/dev",
+]
+
+
+def ancoraggio(cwd):
+    """Dice a Claude se la sessione e' ancorata a un progetto o no.
+
+    Non tocca il filesystem: i percorsi noti li chiede al database, perche'
+    elencare le cartelle dentro il Drive sveglia la sincronizzazione e
+    l'avvio deve restare istantaneo.
+    """
+    if not cwd:
+        return ""
+    cwd = cwd.rstrip("/")
+
+    import sqlite3
+    noti = {}
+    con = sqlite3.connect(f"file:{DB}?mode=ro", uri=True, timeout=1.0)
+    try:
+        # Due fonti, non una: un progetto puo' essere legato a una cartella da un
+        # repo con local_path oppure da un collegamento di tipo 'path'. Leggerne
+        # una sola fa dire "cartella sconosciuta" su progetti che invece ci sono.
+        righe = con.execute(
+            "select r.local_path, p.key from repos r join projects p on p.id = r.project_id "
+            "where r.local_path is not null and r.local_path != '' "
+            "union "
+            "select l.value, p.key from project_links l join projects p on p.id = l.project_id "
+            "where l.kind = 'path'"
+        ).fetchall()
+        for percorso, chiave in righe:
+            noti[percorso.rstrip("/")] = chiave
+    finally:
+        con.close()
+
+    for percorso, chiave in noti.items():
+        if cwd == percorso or cwd.startswith(percorso + "/"):
+            return f"\n\nSessione ancorata al progetto `{chiave}` ({percorso})."
+
+    if cwd in [c.rstrip("/") for c in CONTENITORI]:
+        figli = sorted({v for k, v in noti.items() if k.startswith(cwd + "/")})
+        elenco = ("  Progetti registrati qui dentro: " + ", ".join(figli)) if figli else ""
+        return (
+            "\n\nATTENZIONE: questa sessione e' aperta in una cartella contenitore, "
+            f"non dentro un progetto ({cwd}).\n"
+            "  Da qui si finisce a scrivere dentro cartelle di progetto senza esserci "
+            "mai entrati, e la sessione si perde. Prima di scrivere qualsiasi cosa: "
+            "chiedigli su quale progetto sta lavorando e digli di riaprire la sessione "
+            "in quella cartella.\n" + elenco
+        )
+
+    return (
+        f"\n\nQuesta cartella non risulta legata a nessun progetto di Plancia ({cwd}). "
+        "Prima di scrivere, cerca la scheda con `plancia` azione=projects; se non c'e', creala."
+    )
 
 
 def run():
@@ -56,9 +120,15 @@ def run():
                 text = fh.read().strip()
         except Exception:
             text = ""
-        if text:
-            if len(text) > MAX_CONTEXT:
-                text = text[:MAX_CONTEXT].rsplit("\n", 1)[0] + "\n…"
+        if len(text) > MAX_CONTEXT:
+            text = text[:MAX_CONTEXT].rsplit("\n", 1)[0] + "\n…"
+        # L'avviso si aggiunge dopo il taglio: e' la riga che non deve mai
+        # sparire, ed e' proprio quella che un briefing lungo mangerebbe.
+        try:
+            text += ancoraggio(record["cwd"])
+        except Exception:
+            pass
+        if text.strip():
             sys.stdout.write(json.dumps({"hookSpecificOutput": {
                 "hookEventName": "SessionStart",
                 "additionalContext": text,
