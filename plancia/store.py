@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 
 from . import config
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -67,6 +67,10 @@ CREATE TABLE IF NOT EXISTS sessions (
   out_tokens INTEGER DEFAULT 0,
   agent TEXT DEFAULT 'claude',
   scambi INTEGER DEFAULT 0,
+  dir_dedotta TEXT,
+  dedotto_da TEXT,
+  n_percorsi INTEGER DEFAULT 0,
+  radici_toccate TEXT,
   updated_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_started ON sessions(started_at DESC);
@@ -244,10 +248,23 @@ def has_fts(conn: sqlite3.Connection) -> bool:
 
 
 AGGIUNTE = {
-    "sessions": (("agent", "TEXT DEFAULT 'claude'"), ("scambi", "INTEGER DEFAULT 0")),
-    # un task non è solo una nota: può dire a chi tocca, come farlo e dove
+    # su quale cartella ha davvero lavorato la sessione, e come si e' deciso:
+    # la cartella da cui e' stata aperta quasi sempre non lo dice
+    "sessions": (("agent", "TEXT DEFAULT 'claude'"), ("scambi", "INTEGER DEFAULT 0"),
+                 ("dir_dedotta", "TEXT"), ("dedotto_da", "TEXT"),
+                 ("n_percorsi", "INTEGER DEFAULT 0"), ("radici_toccate", "TEXT")),
+    # un task non è solo una nota: può dire a chi tocca, come farlo e dove.
+    # "host" dice da quale macchina è nato (Mac o Windows, nel sistema a due
+    # assistenti): riprendi.stato() lo confronta con la macchina di adesso per
+    # decidere fra viva/chiusa/persa (verdetto §B), e mostra "creato su
+    # <host>" come motivo quando la sessione è persa
     "tasks": (("agent", "TEXT DEFAULT ''"), ("prompt", "TEXT DEFAULT ''"),
-              ("cwd", "TEXT DEFAULT ''"), ("run_id", "INTEGER")),
+              ("cwd", "TEXT DEFAULT ''"), ("run_id", "INTEGER"),
+              ("host", "TEXT DEFAULT ''")),
+    # un progetto può avere un padre (una piattaforma sotto tanti studi):
+    # project_links ha UNIQUE(kind, value) e non regge due figli con lo
+    # stesso padre, quindi il padre è una colonna, non un link
+    "projects": (("parent_id", "INTEGER"),),
     # da quale conversazione è uscito questo commit
     "commits": (("session_id", "TEXT DEFAULT ''"),),
     # il testo di una skill: è roba che ha scritto lui, e sta in un posto solo

@@ -1,0 +1,62 @@
+#!/usr/bin/env python3
+"""Hook UserPromptSubmit: porta in contesto la memoria scritta altrove.
+
+Gira a ogni messaggio, quindi vale la stessa disciplina dell'hook di sessione:
+deve essere veloce e non deve mai fallire. Qualunque cosa vada storta esce zero
+e in silenzio — un hook rotto qui non rompe una sessione, le rompe tutte.
+
+Il silenzio è anche il comportamento normale, non solo quello di emergenza:
+sulla maggior parte dei messaggi non c'è niente da richiamare, e va bene così.
+"""
+import json
+import os
+import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+sys.path.insert(0, ROOT)
+
+
+def run() -> int:
+    try:
+        raw = sys.stdin.read() if not sys.stdin.isatty() else ""
+        payload = json.loads(raw) if raw.strip() else {}
+    except Exception:
+        return 0
+
+    prompt = (payload.get("prompt") or "").strip()
+    if not prompt or len(prompt) < 12:
+        return 0
+    # Un comando slash è un'istruzione alla macchina, non una frase da capire:
+    # le sue parole non dicono di cosa si sta parlando.
+    if prompt.startswith("/"):
+        return 0
+
+    try:
+        from plancia import richiamo
+        trovati = richiamo.richiama(
+            prompt,
+            cwd=payload.get("cwd") or "",
+            session_id=payload.get("session_id") or "",
+        )
+        testo = richiamo.blocco(trovati)
+    except Exception:
+        return 0
+
+    if not testo:
+        return 0
+    out = {"hookSpecificOutput": {
+        "hookEventName": "UserPromptSubmit",
+        "additionalContext": testo,
+    }}
+    try:
+        sys.stdout.write(json.dumps(out, ensure_ascii=False))
+    except Exception:
+        pass
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(run())
+    except Exception:
+        sys.exit(0)

@@ -34,7 +34,9 @@ DMG="$FUORI/Plancia-$VERSIONE.dmg"
 
 echo "==> versione $VERSIONE"
 
-# 1. la versione sta in un posto solo: qui la si propaga
+# 1. la versione sta scritta in tre file (mac/build.sh, plancia/__init__.py,
+#    pyproject.toml, controllati insieme da tools/prove/sito.py): qui si
+#    propaga a tutti e tre, cosi' non resta mai un numero indietro.
 sed -i '' "s/^VERSIONE=\".*\"/VERSIONE=\"$VERSIONE\"/" mac/build.sh
 python3 - "$VERSIONE" <<'PY'
 import io, re, sys
@@ -48,6 +50,11 @@ if "__version__" in s:
     s = re.sub(r'__version__ = ".*"', f'__version__ = "{v}"', s)
 else:
     s = (s.rstrip() + f'\n\n__version__ = "{v}"\n').lstrip()
+io.open(p, "w", encoding="utf-8").write(s)
+
+p = "pyproject.toml"
+s = io.open(p, encoding="utf-8").read()
+s = re.sub(r'(?m)^version\s*=\s*".*"', f'version = "{v}"', s, count=1)
 io.open(p, "w", encoding="utf-8").write(s)
 print(f"    plancia/__init__.py -> {v}")
 PY

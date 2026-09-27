@@ -119,9 +119,13 @@ def da_codex(esito=None) -> list:
 
 
 def da_plancia(conn) -> list:
+    # `sessione` viene da `tasks.session_id` (L0-SESSIONE, poi il backfill di
+    # L2-RIPRENDI per i task più vecchi): prima era sempre "", e riprendi.py
+    # non aveva niente da leggere per calcolare lo stato di un task della
+    # lavagna, nemmeno per i task che una sessione ce l'hanno per davvero.
     righe = conn.execute(
-        "SELECT id, title, body, status, project_id, created_at, updated_at, agent "
-        "FROM tasks").fetchall()
+        "SELECT id, title, body, status, project_id, created_at, updated_at, agent, "
+        "session_id FROM tasks").fetchall()
     return [{
         "fonte": "plancia",
         "chiave": str(r["id"]),
@@ -130,7 +134,7 @@ def da_plancia(conn) -> list:
         "stato": STATI_PLANCIA.get(r["status"], "aperto"),
         "stato_origine": r["status"],
         "agente": r["agent"] or "",
-        "sessione": "",
+        "sessione": r["session_id"] or "",
         "project_id": r["project_id"],
         "task_id": r["id"],
         "creato_at": r["created_at"],
@@ -186,6 +190,7 @@ def sync(conn, progress=None) -> int:
             "ON CONFLICT(fonte, chiave) DO UPDATE SET titolo=excluded.titolo, "
             "dettaglio=excluded.dettaglio, stato=excluded.stato, "
             "stato_origine=excluded.stato_origine, agente=excluded.agente, "
+            "sessione=excluded.sessione, "
             "project_id=COALESCE(excluded.project_id, agenda.project_id), "
             "task_id=COALESCE(excluded.task_id, agenda.task_id), "
             "aggiornato_at=excluded.aggiornato_at, visto_at=excluded.visto_at",

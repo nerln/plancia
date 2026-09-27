@@ -33,7 +33,10 @@ from . import config, eventi, recap, store
 LOG_DIR = config.DATA_DIR / "cantiere"
 
 AGENTI = ("claude", "codex")
-MODI = ("proposta", "esegui")
+# "proposta"/"esegui" restano le due stringhe scritte in runs.modo e lette
+# dalla testata del prompt (`TESTATA`, sotto): la scelta vera fra le due,
+# però, ora la fa il booleano `scrive` (vedi `_scrive_da`), non più un
+# controllo di appartenenza a un elenco di modi validi.
 
 # Cosa può toccare l'agente nei due modi.
 TOOL_LETTURA = ["Read", "Glob", "Grep", "WebSearch", "WebFetch",
@@ -88,7 +91,20 @@ CHIUSURA = (
 
 
 def componi_prompt(conn, titolo, dettaglio="", progetto=None, istruzioni="",
-                   modo="proposta", lingua="it") -> str:
+                   modo="proposta", lingua="it", task_id=None, sessione=None) -> str:
+    if sessione:
+        # La sessione ripresa (`--resume`/`exec resume`, vedi _comando) ha già
+        # tutto il contesto del progetto: rifarglielo da capo (titolo,
+        # summary, cartelle, memoria...) è lavoro sprecato e rischia pure di
+        # contraddire quello che la conversazione sa già. Il task_id serve
+        # solo a farsi riconoscere ("il task N di Plancia"), non a
+        # ricomporre altro: senza task_id la frase diventa più generica.
+        pezzi = [f"riprendi il task {task_id} di Plancia: {titolo}."] if task_id else \
+            [f"riprendi da Plancia: {titolo}."]
+        if istruzioni:
+            pezzi.append(istruzioni)
+        return " ".join(pezzi)
+
     pezzi = [TESTATA.get(modo, TESTATA["proposta"]), "", f"## Il lavoro\n{titolo}"]
     if dettaglio:
         pezzi.append(dettaglio)
@@ -152,21 +168,58 @@ def cartella_per(conn, progetto=None) -> str:
 # l'esecuzione
 # --------------------------------------------------------------------------
 
-def _comando(agente: str, modo: str, cwd: str) -> list:
+def _comando(agente: str, scrive=False, cwd: str = "", sessione=None, modo=None) -> list:
+    """L'argv del lancio. `scrive` sceglie i permessi (letto sotto);
+    `sessione`, se data, riprende quella conversazione invece di aprirne una
+    da zero (verdetto §B, "In background": il fork dà un id nuovo, cosi'
+    ogni riga di `runs` che questo lancio scrive continua a portare un
+    `sessione` diverso da quello della conversazione ripresa, che è quanto
+    serve a `riconcilia()` per non confondere i due — non che la colonna
+    porti un vincolo UNIQUE, che non ha).
+    `modo`/`scrive` stringa: vedi `_scrive_da`, chiamata qui per prima cosa
+    così anche chi passa ancora `_comando(agente, "proposta", cwd)` alla
+    vecchia maniera (posizionale, nello slot che oggi si chiama `scrive`)
+    ottiene il booleano giusto invece di un `bool("proposta")` sempre vero.
+    """
+    scrive = _scrive_da(modo, scrive)
     if agente == "codex":
         exe = codex_bin()
         if not exe:
             raise RuntimeError("Codex non è installato")
-        sandbox = "read-only" if modo == "proposta" else "workspace-write"
-        return [exe, "exec", "--cd", cwd, "--sandbox", sandbox,
+        sandbox = "workspace-write" if scrive else "read-only"
+        # Letto `codex exec resume --help` (mai lanciato un agente vero, solo
+        # --help) con /Applications/ChatGPT.app/Contents/Resources/codex,
+        # codex-cli 0.154.0-alpha.6.2: il sottocomando `resume` NON elenca
+        # `--cd`/`--sandbox`/`--color` fra le sue opzioni (ha solo
+        # --skip-git-repo-check, -c, --last, --all, -m, --json...), quindi
+        # vanno prima di lui, sul comando padre `exec`. Verificato che
+        # `codex exec --cd /tmp --sandbox read-only --skip-git-repo-check
+        # --color never resume <id> --help` viene accettato dal parser
+        # (l'ordine opposto, con le opzioni dopo `resume`, dà "error:
+        # unexpected argument --cd found"); non verificato dal vivo se una
+        # sessione ripresa onora davvero il `--sandbox` del padre (nessun
+        # agente lanciato per controllarlo). L'id resta posizionale; il
+        # prompt in coda è '-', perché l'help di `exec resume` dice che con
+        # '-' il prompt si legge da stdin, ed `_esegui` scrive il messaggio
+        # su stdin invece che come argomento (vedi sotto).
+        base = [exe, "exec", "--cd", cwd, "--sandbox", sandbox,
                 "--skip-git-repo-check", "--color", "never"]
+        if sessione:
+            base += ["resume", sessione, "-"]
+        return base
     exe = recap.claude_bin()
     if not exe:
         raise RuntimeError("Claude Code non è installato")
     cfg = config.load_config()
     cmd = [exe, "-p", "--model", cfg.get("modello_cantiere", "sonnet"),
            "--output-format", "stream-json", "--verbose"]
-    if modo == "esegui":
+    if sessione:
+        # --fork-session va sempre insieme a --resume (RICOGNIZIONE riga 91):
+        # senza, un lancio headless su una sessione magari ancora aperta
+        # nell'app scriverebbe nello stesso jsonl da due processi (verdetto,
+        # punto 6 dei "punti ciechi").
+        cmd += ["--resume", sessione, "--fork-session"]
+    if scrive:
         cmd += ["--permission-mode", "acceptEdits", "--allowedTools"] + TOOL_SCRITTURA
     else:
         cmd += ["--allowedTools"] + TOOL_LETTURA
@@ -195,13 +248,56 @@ def _leggi_claude(riga: str, acc: dict):
         })
 
 
+def _scrive_da(modo=None, scrive=False) -> bool:
+    """Il booleano vero dietro `modo` ("proposta"/"esegui") o `scrive`.
+
+    Funzione a parte (invece di stare dentro `avvia`) perché è l'unico pezzo
+    di questa traduzione che si può provare senza lanciare un agente vero:
+    `avvia()` in fondo fa partire un processo reale anche con `attendi=False`
+    (il thread parte comunque), quindi le prove passano di qui, non da lì.
+
+    - `modo` dato (non None) vince sempre: è la firma con cui chiama ancora
+      `plancia_manda` in mcp.py (uno dei "sei tool primi", non toccato da
+      LOTTO-L3-RITOCCO), per parola chiave o per posizione (nello slot dove
+      prima stava `modo`, che ora si chiama `scrive`: una stringa lì dentro è
+      quindi il segno di una chiamata vecchio stile, non un errore). Da
+      LOTTO-L3-RITOCCO (punto 13), /api/cantiere (api.py) e
+      `jarvis._esegui_proposta` passano `scrive` (bool) come tutto il resto:
+      questo alias resta solo per chi non è stato ancora toccato.
+    - senza `modo`, una stringa in `scrive` viene letta allo stesso modo (lo
+      stesso slot posizionale di `plancia_manda`, che passa "proposta"/
+      "esegui" senza usare la parola chiave `modo=`).
+    - altrimenti `scrive` è già il booleano che dice.
+    """
+    if modo is not None:
+        return modo == "esegui"
+    if isinstance(scrive, str):
+        return scrive == "esegui"
+    return bool(scrive)
+
+
 def avvia(conn, titolo, dettaglio="", progetto=None, istruzioni="", agente="claude",
-          modo="proposta", cwd=None, task_id=None, lingua="it", attendi=False) -> dict:
-    """Mette in coda un lancio e lo fa partire. Torna subito con l'id."""
+          scrive=False, cwd=None, task_id=None, lingua="it", attendi=False,
+          sessione=None, modo=None) -> dict:
+    """Mette in coda un lancio e lo fa partire. Torna subito con l'id.
+
+    `scrive` (bool) ha preso il posto di `modo` ("proposta"/"esegui") come
+    unico interruttore per i permessi: sceglie fra `TOOL_LETTURA` e
+    `TOOL_SCRITTURA` in `_comando`. `modo` resta come alias di compatibilità
+    per chi lo passa ancora (`plancia_manda` in mcp.py, uno dei "sei tool
+    primi": vedi `_scrive_da`). api.py e jarvis.py sono passati a `scrive` con
+    LOTTO-L3-RITOCCO (punto 13). Il valore stringa ("esegui"/"proposta")
+    resta comunque quello scritto in `runs.modo` e usato per la testata del
+    prompt: non è sparito, è solo derivato da `scrive` invece che essere la
+    fonte di verità.
+    """
     agente = agente if agente in AGENTI else "claude"
-    modo = modo if modo in MODI else "proposta"
+    scrive = _scrive_da(modo, scrive)
+    modo = "esegui" if scrive else "proposta"
+
     cwd = cwd or cartella_per(conn, progetto)
-    prompt = componi_prompt(conn, titolo, dettaglio, progetto, istruzioni, modo, lingua)
+    prompt = componi_prompt(conn, titolo, dettaglio, progetto, istruzioni, modo, lingua,
+                            task_id, sessione)
 
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     cur = conn.execute(
@@ -217,27 +313,30 @@ def avvia(conn, titolo, dettaglio="", progetto=None, istruzioni="", agente="clau
     conn.commit()
 
     eventi.scrivi("lavoro.avviato", titolo=titolo, progetto=progetto,
-                  dati={"run": run_id, "agente": agente, "modo": modo, "cwd": cwd})
+                  dati={"run": run_id, "agente": agente, "modo": modo, "cwd": cwd,
+                        "sessione": sessione})
 
     if attendi:
-        _esegui(run_id, agente, modo, prompt, cwd, str(log), titolo, progetto, task_id)
+        _esegui(run_id, agente, scrive, prompt, cwd, str(log), titolo, progetto, task_id,
+               sessione)
     else:
         threading.Thread(target=_esegui, daemon=True,
-                         args=(run_id, agente, modo, prompt, cwd, str(log), titolo,
-                               progetto, task_id)).start()
+                         args=(run_id, agente, scrive, prompt, cwd, str(log), titolo,
+                               progetto, task_id, sessione)).start()
     return {"run": run_id, "agente": agente, "modo": modo, "cwd": cwd, "log": str(log)}
 
 
-def _esegui(run_id, agente, modo, prompt, cwd, log, titolo, progetto, task_id):
+def _esegui(run_id, agente, scrive, prompt, cwd, log, titolo, progetto, task_id,
+           sessione=None):
     conn = store.connect()
     store.init_db(conn)
     acc = {"sessione": None, "esito": "", "token": 0, "costo": 0, "errore": False,
            "negati": []}
     inizio = time.time()
     try:
-        cmd = _comando(agente, modo, cwd)
+        cmd = _comando(agente, scrive, cwd, sessione)
     except RuntimeError as exc:
-        _chiudi(conn, run_id, "fallito", str(exc), acc, titolo, progetto, task_id, modo)
+        _chiudi(conn, run_id, "fallito", str(exc), acc, titolo, progetto, task_id, scrive)
         conn.close()
         return
 
@@ -283,22 +382,23 @@ def _esegui(run_id, agente, modo, prompt, cwd, log, titolo, progetto, task_id):
         stato, acc["esito"] = "fallito", f"{type(exc).__name__}: {exc}"
 
     acc["durata"] = round(time.time() - inizio)
-    _chiudi(conn, run_id, stato, acc["esito"], acc, titolo, progetto, task_id, modo)
+    _chiudi(conn, run_id, stato, acc["esito"], acc, titolo, progetto, task_id, scrive)
     conn.close()
 
 
-def _chiudi(conn, run_id, stato, esito, acc, titolo, progetto, task_id, modo):
+def _chiudi(conn, run_id, stato, esito, acc, titolo, progetto, task_id, scrive):
     conn.execute(
         "UPDATE runs SET stato=?, fine=?, esito=?, sessione=?, token=?, costo=? WHERE id=?",
         (stato, store.now(), (esito or "")[:4000], acc.get("sessione"),
          acc.get("token") or 0, acc.get("costo") or 0, run_id))
+    modo = "esegui" if scrive else "proposta"
     if task_id:
         # Solo l'esecuzione vera chiude il task: una proposta lo lascia aperto,
         # perché proporre non è fare. E un lancio bloccato resta bloccato anche
         # sul task, altrimenti sparisce dalla lavagna come se fosse a posto.
         if stato == "bloccato":
             nuovo = "bloccato"
-        elif stato == "riuscito" and modo == "esegui":
+        elif stato == "riuscito" and scrive:
             nuovo = "fatto"
         else:
             nuovo = "aperto"

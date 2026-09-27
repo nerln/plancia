@@ -3,12 +3,104 @@
 Onboarding scritto, da leggere una volta. Le stesse cose l'app te le fa provare
 al primo avvio, e restano sotto "Guida".
 
+## 1.1.0: aree, Prossimi, riprendere una conversazione
+
+**Aree.** `plancia riordina` calcola una mappa dei padri (`--proponi`), la fa
+vedere prima di toccare niente (`--mostra`), l'assegna in un batch solo
+(`--applica`) e la disfa esattamente com'era (`--annulla`). Perché: 122
+progetti nati uno alla volta non si riorganizzano a mano, e una mappa che non
+si può disfare non la applica nessuno per paura di romperla.
+
+**Prossimi.** Il pannello di Oggi non elenca più i "task aperti": raggruppa i
+progetti per area e mostra una riga sola per ciascuno, quella che conta. Il
+verdetto del consiglio del 16 settembre lo diceva chiaro: una riga per
+progetto, il resto ripiegato.
+
+**Riprendere una conversazione, non rilanciarla.** Il pulsante di ogni riga
+ora dice lo stato vero di una sessione: viva (copia negli appunti il
+messaggio da incollare nella conversazione che sta già girando: non c'è
+niente da lanciare), chiusa (apre da solo un Terminale visibile, con `claude
+--resume <id>` o `codex resume <id>`, nella cartella del task), persa (lo
+dice, e si riparte da zero con il contesto scritto a mano). Perché: un
+lancio headless senza nessuno davanti non è una ripresa, è un secondo
+processo sullo stesso jsonl. Lo stesso comportamento sta dietro `plancia
+riprendi <id>` da terminale (senza `--apri` stampa solo il comando; con
+`--apri` lo lancia come fa il bottone) e dietro il tool `plancia` con
+`azione="riprendi"` in Claude Code e Codex.
+
+**Vetro su ogni superficie.** Non è più il compromesso del verdetto ("vetro
+sui bordi, contenuto opaco"): decisione di Eugenio del 18/09, con parole sue,
+"deve sembrare tutto vetro". Il materiale nativo (Liquid Glass su macOS 26 e
+successivi, NSVisualEffectView prima) sta adesso dietro l'intera finestra,
+non solo dietro rail e drawer, header del sito incluso, e ogni pannello che
+prima era opaco è vetro leggibile: il contrasto si è misurato, non supposto.
+
+**Font in locale.** Fraunces per i titoli, IBM Plex Sans per il resto, IBM
+Plex Mono per i numeri, vendorizzati come `.woff2` dentro il repo (stessa
+licenza, vedi `web/LICENSE-fonts.txt` e `site/font/LICENSE-fonts.txt`):
+nessuna richiesta a Google né a nessun altro, a runtime, né nella dashboard
+né nel sito.
+
+**La dashboard non è mai vuota.** Ogni vista mostra subito l'ultimo stato
+salvato in locale (`localStorage`, versionato, con un tetto di byte) e resta
+usabile mentre i dati freschi arrivano; quando arrivano, le card cambiate si
+spostano con un'animazione a vortice invece di sparire e ricomparire. Una
+spia dice "aggiornato alle HH:MM" quando i dati sono freschi, o "memoria
+delle HH:MM, server non raggiungibile" quando il server non risponde: non
+più una schermata vuota o "errore: …" al posto di quello che c'era un
+minuto prima.
+
+**Il sito si pubblica solo a mano.** `pages.yml` non parte più a ogni push
+su main: solo su comando (`workflow_dispatch`) o quando si pubblica un tag
+`v*`, così un lotto sul sito fuso a metà non finisce online da solo.
+
+**Il collaudo si scopre da un file, non si scrive a mano in un file solo.**
+Ogni lotto porta le sue prove in `tools/prove/<lotto>.py` e
+`tools/prove-front/<lotto>.py`; `tools/prova.py` e `tools/prova-front.py` le
+trovano da soli, in ordine alfabetico. Perché: un file di collaudo solo,
+posseduto da un lotto alla volta, diventa un collo di bottiglia appena due
+lotti lavorano in parallelo sulla stessa ondata.
+
+**Il collaudo a video.** `bash tools/prova-video.sh` apre ogni vista in Chrome
+headless e legge il DOM dopo il caricamento: un redesign che passa gli altri
+due collaudi (schema e sorgente, nessuno dei due apre davvero la pagina) può
+comunque arrivare rotto a video, un'eccezione JavaScript o un router che ha
+smesso di riempire una vista. Qui si vede.
+
 ## La riga corta
 
 Prima Plancia era un archivio che guardavi. Adesso è un posto da cui lavori: c'è
 una lavagna con tutto quello che è aperto, di tutti gli agenti; da ogni riga puoi
 mandare il lavoro a Claude o a Codex; il riepilogo finisce con la cosa che
 conviene fare, e a voce dici "fallo".
+
+## Il progetto su cui una sessione ha lavorato davvero
+
+`plancia sessioni` da terminale, e la scritta «dedotta dai percorsi» sulle righe
+dell'archivio nella dashboard.
+
+Una sessione finiva nel progetto della cartella da cui era stata aperta. Misurato
+il 3 settembre 2026 su 903 sessioni: 235 aperte dalla radice del Drive, 102 da
+`~/.plancia`, 18 da `~/dev`. Cartelle da cui si lavora a tutto. Il catalogo ne
+usciva con un progetto "dev" da 342 sessioni e un "Senza progetto" da 182.
+
+Adesso conta anche cosa la sessione ha toccato: i file dei `tool_use` e i
+percorsi assoluti dentro i comandi Bash. Tre cose da sapere:
+
+- **La cartella di apertura vince finché vale qualcosa.** Se è già un progetto si
+  tiene, e serve il 70 per cento dei percorsi altrove per scavalcarla. Aprire una
+  sessione in un progetto e leggere due file di un altro non cambia di chi è il
+  lavoro.
+- **Non nascono progetti nuovi.** Se la cartella dedotta non appartiene a nessun
+  progetto la sessione resta dov'era, ma `dir_dedotta` dice comunque dove ha
+  lavorato. Un'attribuzione che non si sa spiegare vale meno di nessuna.
+- **La macchina di Claude non è un progetto.** Le skill e i file di memoria li
+  tocca ogni sessione: tenerle dentro attribuiva a «.claude» trentatré sessioni,
+  fra cui otto controlli quotidiani dell'account X che avevano solo letto la
+  skill.
+
+`plancia sync --riattribuisci` ripassa tutto l'archivio. Rilegge i transcript,
+ma solo i `tool_use`: 470 file e 1,7 GB in tre secondi.
 
 ## Cercare dentro quello che è stato detto (1.0)
 
@@ -269,8 +361,8 @@ La skill `plancia` dice a Claude quando usarli, e una regola in particolare:
 
 ## Il sito e il prezzo
 
-Il sito sta in `site/` e si pubblica da solo su GitHub Pages a ogni push:
-**https://nerln.github.io/plancia/**
+Il sito sta in `site/` e si pubblica su GitHub Pages: **https://nerln.github.io/plancia/**
+(stato della 1.0: a ogni push su main; dalla 1.1.0 solo a mano o su tag `v*`, vedi sopra).
 
 Il modello: sorgente completo e gratuito sotto GPL, build firmata a pagamento
 (quanto vuoi, da 5 euro). È quello di Ardour e Krita. Quello che si paga è il

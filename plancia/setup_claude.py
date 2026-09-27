@@ -17,7 +17,18 @@ from . import config
 BIN = config.ROOT / "bin"
 HOOK_CMD = str(BIN / "plancia-hook")
 MCP_CMD = str(BIN / "plancia-mcp")
+RICHIAMO_CMD = str(BIN / "plancia-richiamo")
 HOOK_EVENTS = ["SessionStart", "SessionEnd"]
+RICHIAMO_EVENTS = ["UserPromptSubmit"]
+
+# Gli agganci a Claude Code: eventi, comando, come riconoscerlo in settings.json,
+# quanto aspettarlo. Il richiamo ha un timeout corto perché gira a ogni
+# messaggio: se un giorno diventa lento, deve arrendersi lui, non far aspettare
+# lui.
+AGGANCI = [
+    (HOOK_EVENTS, HOOK_CMD, "plancia-hook", 5),
+    (RICHIAMO_EVENTS, RICHIAMO_CMD, "plancia-richiamo", 3),
+]
 SKILL_DIR = config.CLAUDE_DIR / "skills" / "plancia"
 
 
@@ -34,8 +45,14 @@ def backup(path: Path) -> Path:
 # hook
 # --------------------------------------------------------------------------
 
-def _hook_entry() -> dict:
-    return {"hooks": [{"type": "command", "command": HOOK_CMD, "timeout": 5}]}
+def _hook_entry(comando: str, timeout: int = 5) -> dict:
+    return {"hooks": [{"type": "command", "command": comando, "timeout": timeout}]}
+
+
+def _senza(entries: list, basename: str) -> list:
+    return [e for e in entries
+            if not any((h.get("command") or "").endswith(basename)
+                       for h in (e.get("hooks") or []))]
 
 
 def install_hooks() -> str:
@@ -52,13 +69,11 @@ def install_hooks() -> str:
     # trovato proprio a chi la faceva per la prima volta.
     path.parent.mkdir(parents=True, exist_ok=True)
     hooks = data.setdefault("hooks", {})
-    for event in HOOK_EVENTS:
-        entries = hooks.setdefault(event, [])
-        entries = [e for e in entries
-                   if not any((h.get("command") or "").endswith("plancia-hook")
-                              for h in (e.get("hooks") or []))]
-        entries.append(_hook_entry())
-        hooks[event] = entries
+    for eventi, comando, basename, timeout in AGGANCI:
+        for event in eventi:
+            entries = _senza(hooks.setdefault(event, []), basename)
+            entries.append(_hook_entry(comando, timeout))
+            hooks[event] = entries
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False), "utf-8")
     return f"hook installati in {path}"
 
@@ -73,30 +88,37 @@ def remove_hooks() -> str:
         return "settings.json illeggibile"
     backup(path)
     hooks = data.get("hooks", {})
-    for event in HOOK_EVENTS:
-        if event in hooks:
-            hooks[event] = [e for e in hooks[event]
-                            if not any((h.get("command") or "").endswith("plancia-hook")
-                                       for h in (e.get("hooks") or []))]
-            if not hooks[event]:
-                del hooks[event]
+    for eventi, _comando, basename, _timeout in AGGANCI:
+        for event in eventi:
+            if event in hooks:
+                hooks[event] = _senza(hooks[event], basename)
+                if not hooks[event]:
+                    del hooks[event]
     if not hooks:
         data.pop("hooks", None)
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False), "utf-8")
     return "hook rimossi"
 
 
-def hooks_installed() -> bool:
+def _agganciato(basename: str, eventi) -> bool:
     try:
         data = json.loads(config.CLAUDE_SETTINGS.read_text("utf-8"))
     except Exception:
         return False
-    for event in HOOK_EVENTS:
+    for event in eventi:
         for entry in data.get("hooks", {}).get(event, []):
             for hook in entry.get("hooks", []):
-                if (hook.get("command") or "").endswith("plancia-hook"):
+                if (hook.get("command") or "").endswith(basename):
                     return True
     return False
+
+
+def hooks_installed() -> bool:
+    return _agganciato("plancia-hook", HOOK_EVENTS)
+
+
+def richiamo_installed() -> bool:
+    return _agganciato("plancia-richiamo", RICHIAMO_EVENTS)
 
 
 # --------------------------------------------------------------------------
@@ -159,7 +181,7 @@ def mcp_installed() -> bool:
 # skill e comando
 # --------------------------------------------------------------------------
 
-SKILL = """---
+SKILL_IT = """---
 name: plancia
 description: >-
   Consulta e aggiorna Plancia, il centro di controllo del lavoro dell'utente con
@@ -174,23 +196,30 @@ description: >-
 
 Plancia è l'archivio unico del suo lavoro con l'IA. Sta in `~/dev/plancia`,
 i dati in `~/.plancia/plancia.db`, la dashboard su http://127.0.0.1:7773.
-I tool `plancia_*` arrivano dal server MCP: se non li vedi, il server non è
-collegato e lo si registra con `plancia install`.
+Il server MCP espone sei tool diretti (`plancia_search`, `plancia_task_add`,
+`plancia_task_update`, `plancia_log`, `plancia_project_update`,
+`plancia_post_add`) e un settimo, `plancia`, dietro cui sta tutto il resto:
+si chiama con `azione="<nome>"` (`azione="aiuto"` per gli argomenti di
+un'azione che non conosci). Se non vedi nessuno di questi tool, il server non
+è collegato e lo si registra con `plancia install`.
 
 ## All'inizio
 
-Se la conversazione riguarda un suo progetto, chiama `plancia_briefing` prima di
-rispondere. Restituisce progetti attivi, task aperti, post in coda e ultima
-attività. Costa poco ed evita di chiedergli cose che sono già scritte.
+Se la conversazione riguarda un suo progetto, chiama `plancia` con
+`azione="briefing"` prima di rispondere. Restituisce progetti attivi, task
+aperti, post in coda e ultima attività. Costa poco ed evita di chiedergli
+cose che sono già scritte.
 
 Se dice "ne avevamo già parlato" o cerchi un lavoro passato, usa `plancia_search`:
 indicizza le sessioni di Claude Code, la memoria, i task, i post e i commit.
-`plancia_sessions` dà l'elenco con il comando per riprendere la conversazione.
+`plancia` con `azione="sessions"` dà l'elenco con il comando per riprendere la
+conversazione.
 
 ## Durante
 
-- Lavoro individuato ma non fatto: `plancia_task_add`. Un task registrato
-  sopravvive alla fine della conversazione, una promessa in chat no.
+- Lavoro individuato ma non fatto: `plancia_task_add`, che ricorda anche da
+  dove è nato. Un task registrato sopravvive alla fine della conversazione,
+  una promessa in chat no.
 - Decisione presa, strada abbandonata, traguardo raggiunto: `plancia_log`.
 - Cambio di stato di un progetto o prossimo passo chiaro:
   `plancia_project_update` con `next_action`. È la prima cosa che leggerà la
@@ -202,32 +231,50 @@ Prima di chiudere un lavoro sostanziale: aggiorna `next_action` del progetto e
 chiudi i task fatti con `plancia_task_update`. Non serve chiedere il permesso per
 scrivere in Plancia: è il suo archivio, non un'azione verso l'esterno.
 
-## La lavagna e i lanci
+## La lavagna
 
-`plancia_lavagna` è la lista unica di quello che è aperto adesso, di tutti e tre:
-le liste di task di Claude Code, gli obiettivi di Codex, i task di Plancia. Usala
-quando chiede "cosa c'è aperto", "su cosa siamo fermi", "cosa sta facendo Codex".
-Gli stati sono riportati agli stessi cinque: aperto, in corso, bloccato, fatto,
-sparito.
+`plancia` con `azione="lavagna"` è la lista unica di quello che è aperto
+adesso, di tutti e tre: le liste di task di Claude Code, gli obiettivi di
+Codex, i task di Plancia. Usala quando chiede "cosa c'è aperto", "su cosa
+siamo fermi", "cosa sta facendo Codex". Gli stati sono riportati agli stessi
+cinque: aperto, in corso, bloccato, fatto, sparito.
 
-`plancia_manda` fa partire un agente su un lavoro. Due modi, e il predefinito è
-`proposta`: l'agente legge e riferisce senza toccare un file. `esegui` lo lascia
-scrivere, e va scelto esplicitamente ogni volta, mai per iniziativa tua. Se lui
-non ha detto di eseguire, manda in proposta.
+`azione="lanci"` dice com'è andato un lavoro già partito: esito, token, costo.
+`azione="eventi"` legge il registro in append, utile a chi deve reagire a un
+lavoro finito.
 
-`plancia_lanci` dice com'è andata: esito, token, costo. `plancia_eventi` legge il
-registro in append, utile a chi deve reagire a un lavoro finito.
+## Riprendere un task
 
-Se ti chiede di lanciare un lavoro mentre sei già dentro Claude Code, di solito
-conviene farlo tu invece di passare da `plancia_manda`: il lancio serve quando il
-lavoro deve andare a un altro agente o in un'altra cartella.
+Ogni task creato con `plancia_task_add` ricorda da dove è nato: la sessione,
+la cartella, l'agente e la macchina. Chiudere il terminale non lo perde.
+
+Se ti chiede "riprendi il task N", chiama `plancia` con `azione="riprendi"` e
+`id` (il task N): risponde con lo stato, la sessione, la cartella e il comando
+per riaprirla. Poi, secondo lo stato:
+
+- **viva**: la sessione è ancora aperta da qualche parte. Consegna il
+  messaggio "riprendi il task N di Plancia: <titolo>" alla sessione indicata
+  con lo strumento `send_message` dell'app desktop, se lo vedi tra i tuoi
+  tool; se non c'è, digli la cartella e la sessione e dagli da incollare lo
+  stesso messaggio, "riprendi il task N di Plancia: <titolo>", e lascia che
+  la riapra lui.
+- **chiusa**: di' a Eugenio il comando da aprire nel Terminale; richiama
+  `plancia` con `azione="riprendi", apri=true` solo se te lo chiede lui, perché
+  apre un Terminale sul suo Mac, un'azione verso l'esterno.
+- **persa**: spiega il motivo (cartella sparita, macchina diversa, sessione
+  troppo vecchia) e proponi di ripartire da capo invece di inseguirla.
+
+Riprendere vuol dire tornare nella conversazione di prima, non farne partire
+una nuova che scrive da sola: qui non si lancia niente in autonomia.
+In background resta un'opzione secondaria che sceglie lui dalla dashboard,
+non un'azione che decidi tu.
 
 ## Le proposte
 
 Il riepilogo finisce con le cose che converrebbe fare, calcolate dai segnali nei
-dati e mai inventate. Se ti chiede "cosa dovrei fare adesso", `plancia_recap` le
-contiene già: non aggiungerne di tue sopra quelle, semmai spiega perché una è la
-prima.
+dati e mai inventate. Se ti chiede "cosa dovrei fare adesso", `plancia` con
+`azione="recap"` le contiene già: non aggiungerne di tue sopra quelle, semmai
+spiega perché una è la prima.
 
 ## Social
 
@@ -249,15 +296,16 @@ allegarlo, perché uno screenshot porta fuori tutto quello che era sullo schermo
 
 La scrittura resta della skill `social-media-manager`, la pubblicazione della
 skill `x-account`, che chiede approvazione esplicita e sa allegare l'immagine
-dagli appunti di sistema. Plancia tiene il conto: `plancia_posts` per lo stato
-della pipeline, `plancia_post_update` con l'url quando un post è davvero online.
+dagli appunti di sistema. Plancia tiene il conto: `plancia` con
+`azione="posts"` per lo stato della pipeline, `azione="post_update"` con
+l'url quando un post è davvero online.
 
 ## Voce
 
-`plancia_recap` restituisce il riepilogo della giornata scritto per essere
-ascoltato. Con `speak=true` lo legge ad alta voce sul suo Mac. `plancia_speak`
-legge un testo qualsiasi: usalo solo se lo chiede, e scrivi per l'orecchio, non
-per l'occhio.
+`plancia` con `azione="recap"` restituisce il riepilogo della giornata scritto
+per essere ascoltato. Con `speak=true` lo legge ad alta voce sul suo Mac.
+`azione="speak"` legge un testo qualsiasi: usalo solo se lo chiede, e scrivi
+per l'orecchio, non per l'occhio.
 
 Le lingue sono it, en, es, fr, de, pt. Se non la specifica, vale quella in
 `~/.plancia/config.json`.
@@ -294,7 +342,6 @@ quando i due si sono passati il lavoro.
 
 ```bash
 plancia lavagna          # tutto quello che è aperto, di tutti gli agenti
-plancia manda "..." --agente codex --modo proposta
 plancia lanci            # com'è andata
 plancia eventi --dopo <id>
 plancia recap --speak    # riepilogo letto ad alta voce
@@ -311,7 +358,188 @@ plancia doctor           # controlla i collegamenti
 """
 
 
-RIEPILOGO_SKILL = """---
+SKILL_EN = """---
+name: plancia
+description: >-
+  Reads and updates Plancia, the control centre for the user's work with AI:
+  projects, tasks, social posts, past sessions, memory. Use it when he asks
+  "where was I", "what did I leave off", "what should I do today", "where did
+  we do this", when he opens one of his projects, when a piece of work is
+  finished and needs recording, and before writing social posts. Also for
+  "update plancia", "mark this", "open the dashboard".
+---
+
+# Plancia
+
+Plancia is the single archive of his work with AI. It lives in `~/dev/plancia`,
+the data in `~/.plancia/plancia.db`, the dashboard at http://127.0.0.1:7773.
+The MCP server exposes six direct tools (`plancia_search`, `plancia_task_add`,
+`plancia_task_update`, `plancia_log`, `plancia_project_update`,
+`plancia_post_add`) and a seventh, `plancia`, standing in front of everything
+else: call it with `azione="<name>"` (`azione="aiuto"` for an action's
+arguments). If you do not see any of these tools, the server is not
+connected, and you register it with `plancia install`.
+
+## At the start
+
+If the conversation is about one of his projects, call `plancia` with
+`azione="briefing"` before answering. It returns active projects, open
+tasks, queued posts and the latest activity. It costs little and saves
+asking him things that are already written down.
+
+If he says "we already talked about this" or you are looking for past work,
+use `plancia_search`: it indexes Claude Code sessions, memory, tasks, posts
+and commits. `plancia` with `azione="sessions"` gives the list with the
+command to resume the conversation.
+
+## During the work
+
+- Work identified but not done: `plancia_task_add`, which also remembers
+  where it came from. A recorded task survives the end of the conversation;
+  a promise in chat does not.
+- A decision made, a path abandoned, a milestone reached: `plancia_log`.
+- A project's status changes, or the next step becomes clear:
+  `plancia_project_update` with `next_action`. It is the first thing the next
+  session will read.
+
+## At the end
+
+Before closing a substantial piece of work: update the project's
+`next_action` and close finished tasks with `plancia_task_update`. You do not
+need to ask permission to write to Plancia: it is his own archive, not an
+action toward the outside world.
+
+## The board
+
+`plancia` with `azione="lavagna"` is the single list of everything open right
+now, across all three: Claude Code's task lists, Codex's objectives,
+Plancia's own tasks. Use it when he asks "what's open", "what are we stuck
+on", "what is Codex doing". States are reported with the same five words:
+open, in progress, blocked, done, gone.
+
+`azione="lanci"` says how a run that already started went: outcome, tokens,
+cost. `azione="eventi"` reads the append-only log, useful for reacting to a
+piece of work that just finished.
+
+## Resuming a task
+
+Every task created with `plancia_task_add` remembers where it came from: the
+session, the folder, the agent and the machine. Closing the terminal does not
+lose it.
+
+If he asks "resume task N", call `plancia` with `azione="riprendi"` and `id`
+(task N): it answers with the status, the session, the folder and the command
+to reopen it. Then, depending on the status:
+
+- **viva** (alive): the session is still open somewhere. Deliver the message
+  "riprendi il task N di Plancia: <titolo>" to the indicated session with the
+  desktop app's `send_message` tool, if you see it among your tools; if it is
+  not there, tell him the folder and the session and give him the same
+  message, "riprendi il task N di Plancia: <titolo>", to paste, and let him
+  reopen it.
+- **chiusa** (closed): tell Eugenio the command to open in the Terminal; call
+  `plancia` again with `azione="riprendi", apri=true` only if he asks you to,
+  because it opens a Terminal on his Mac, an action toward the outside world.
+- **persa** (lost): explain why (folder gone, different machine, session too
+  old) and propose starting over instead of chasing it.
+
+Resuming means going back to the earlier conversation, not starting a new one
+that writes on its own: nothing gets launched autonomously here. Running it
+in background stays a secondary option he picks from the dashboard, not a
+choice you make on your own.
+
+## The proposals
+
+The daily recap ends with the thing that would be worth doing, computed from
+signals in the data and never invented. If he asks "what should I do now",
+`plancia` with `azione="recap"` already has it: do not add one of your own on
+top, at most explain why one comes first.
+
+## Social
+
+`plancia_post_add` saves a draft, it publishes nothing. The `source_ref`
+field must point at the real work behind the post: a commit sha, a repo name,
+a session id. The account's rule is that every post comes from something that
+really happened.
+
+**Every post is born with its own image.** The `media` field is the path of
+the file that goes out with the text, and it is filled in when the draft is
+written, not at publish time: by then the work it came from is no longer at
+hand. A post with no image is the exception, and it needs a reason.
+
+When you close a piece of work worth a post, you usually already have the
+image: a screenshot already in the repo (`docs/img/...`), the Plancia
+dashboard, the site that was just published. If a new one is needed, make it
+before saving the draft. Two rules learned by publishing: under 400 KB, and
+look at it before attaching it, because a screenshot carries out everything
+that was on the screen.
+
+Writing stays the job of the `social-media-manager` skill, publishing the job
+of the `x-account` skill, which asks for explicit approval and knows how to
+attach the image from the system clipboard. Plancia keeps the count:
+`plancia` with `azione="posts"` for the pipeline's status,
+`azione="post_update"` with the url once a post is really live.
+
+## Voice
+
+`plancia` with `azione="recap"` returns the day's recap written to be
+listened to. With `speak=true` it reads it aloud on his Mac. `azione="speak"`
+reads any text: use it only if he asks, and write for the ear, not the eye.
+
+The languages are it, en, es, fr, de, pt. If he does not specify one, the one
+in `~/.plancia/config.json` applies.
+
+## Jarvis
+
+`plancia://jarvis` opens the hands-free voice panel, or ⌥Space from any app.
+It listens continuously, tells from the silence when he has finished
+speaking, acts and answers by voice. The commands it recognizes on its own
+(opening a view, marking a task, closing it, rereading the sources, the
+recap) run right away; everything else reaches Claude Code with the
+`plancia_*` tools open, so it can really act.
+
+You can interrupt it while it speaks: just start talking again, the
+microphone stays open even while it answers. "Cancel" stops a run that
+started, "stop" closes the panel, "repeat" says the last thing again, "slower"
+and "faster" change the voice's speed. When a run finishes it tells him by
+voice even if he was doing something else in the meantime.
+
+`plancia jarvis "sentence"` does the same thing from the terminal, without a
+microphone.
+
+Three paths, in order: commands and questions about the data are resolved in
+a tenth of a second without calling any model; everything else goes to a
+Claude process kept warm, about three seconds. The recap is precomputed, so
+it is immediate.
+
+## The two agents
+
+Plancia also reads Codex's sessions from `~/.codex/sessions` and registers
+its own MCP server inside `~/.codex/config.toml`: Codex and Claude see the
+same archive and the same tools. The Agents view shows who worked on what and
+when the two handed work to each other.
+
+## Commands
+
+```bash
+plancia lavagna          # everything open, across all agents
+plancia lanci            # how it went
+plancia eventi --dopo <id>
+plancia recap --speak    # recap read aloud
+plancia jarvis "..."     # a voice command written out
+plancia ask "..." --speak
+plancia daily on 08:45   # automatic recap every morning
+plancia flusso           # where the data comes from and how fresh it is
+plancia sync --modo caldo   # sessions and hooks only, a hundredth of a second
+plancia serve --open     # dashboard
+plancia sync             # rereads sessions, memory, repos
+plancia briefing         # the briefing on stdout
+plancia doctor           # checks the connections
+```
+"""
+
+
+RIEPILOGO_SKILL_IT = """---
 name: riepilogo
 description: >-
   Racconta all'utente com'è andata la giornata di lavoro con l'IA, con i dati
@@ -323,17 +551,18 @@ description: >-
 # Riepilogo della giornata
 
 Il riepilogo non si inventa e non si ricostruisce a mano: lo produce Plancia dai
-dati reali, con `plancia_recap`.
+dati reali, con `plancia` e `azione="recap"`.
 
 ## Come farlo
 
-1. Chiama `plancia_recap`. Senza argomenti è la giornata di oggi nella sua
-   lingua. `day` accetta AAAA-MM-GG per un giorno passato, `lang` cambia lingua.
+1. Chiama `plancia` con `azione="recap"`. Senza altri argomenti è la giornata
+   di oggi nella sua lingua. `day` accetta AAAA-MM-GG per un giorno passato,
+   `lang` cambia lingua.
 2. Riporta il testo com'è. È già scritto per essere ascoltato: frasi corte,
    niente elenchi, niente markdown. Non riformattarlo in punti elenco.
 3. Se chiede di sentirlo ("leggimelo", "dimmelo", "a voce"), richiama
-   `plancia_recap` con `speak=true`, oppure `plancia_speak` se vuoi leggere una
-   risposta tua.
+   `plancia` con `azione="recap", speak=true`, oppure `azione="speak"` se
+   vuoi leggere una risposta tua.
 
 Dentro `dati` c'è tutto il dettaglio: sessioni, commit, task chiusi e aperti,
 post, progetti fermi. Usalo per rispondere alle domande che fa dopo, senza
@@ -346,11 +575,12 @@ nasce da un segnale nei dati. Un lancio fallito, un obiettivo di Codex senza
 quota, file non committati da ieri, un post approvato e mai uscito, il prossimo
 passo di un progetto fermo.
 
-Se lui risponde "fallo", "la seconda", "eseguilo", quella frase va passata a
-Plancia così com'è: `plancia_manda` con quello che dice la proposta, oppure
-lasciando fare al pannello vocale. **Non decidere tu di eseguire**: il modo
-predefinito guarda e riferisce, e scrivere sui file è una scelta che fa lui ogni
-volta.
+Se lui risponde "fallo", "la seconda", "eseguilo" su una proposta che riprende
+un task Plancia, chiama `plancia` con `azione="riprendi"` e l'`id` di quel
+task (vedi la skill `plancia`, sezione "Riprendere un task": i tre stati
+viva/chiusa/persa), oppure diglielo a voce se non sai quale id è. **Non
+lanciare niente in autonomia**: il modo predefinito guarda e riferisce, e "In
+background" resta al più un'opzione secondaria che scegli lui, non tu.
 
 Se il segnale non c'è, la proposta non c'è, ed è voluto. Non aggiungerne una tua
 per riempire il finale.
@@ -376,13 +606,119 @@ lo lancia da una scorciatoia di sistema.
 """
 
 
-def install_skill() -> str:
+RIEPILOGO_SKILL_EN = """---
+name: riepilogo
+description: >-
+  Tells the user how his day of work with AI went, from Plancia's real data,
+  and reads it aloud in his language if he asks. Use it for "how did today
+  go", "recap", "what did I get done", "read me the recap", "briefing",
+  "resumen", "riepilogo".
+---
+
+# The day's recap
+
+The recap is never invented or pieced together by hand: Plancia produces it
+from real data, with `plancia` and `azione="recap"`.
+
+## How to do it
+
+1. Call `plancia` with `azione="recap"`. With no other arguments it is
+   today, in his language. `day` takes YYYY-MM-DD for a past day, `lang`
+   changes the language.
+2. Report the text as it is. It is already written to be heard: short
+   sentences, no lists, no markdown. Do not reformat it into bullet points.
+3. If he asks to hear it ("read it to me", "say it", "out loud"), call
+   `plancia` again with `azione="recap", speak=true`, or `azione="speak"`
+   if you want to read back an answer of your own.
+
+Inside `dati` is the whole detail: sessions, commits, tasks closed and open,
+posts, stalled projects. Use it to answer whatever he asks next, without
+regenerating the recap.
+
+## The recap ends with a proposal
+
+After the facts comes the thing that would be worth doing, and it is never
+generic advice: it comes from a signal in the data. A failed run, a Codex
+goal out of quota, files uncommitted since yesterday, an approved post that
+never went out, the next step of a stalled project.
+
+If he answers "do it", "the second one", "run it" on a proposal that resumes
+a Plancia task, call `plancia` with `azione="riprendi"` and that task's `id`
+(see the `plancia` skill, section "Resuming a task": the three states
+alive/closed/lost), or tell him out loud if you do not know which id it is.
+**Never launch anything on your own**: the default mode reads and reports,
+and "In background" stays at most a secondary option he picks, not you.
+
+If there is no signal, there is no proposal, and that is on purpose. Do not
+add one of your own to fill the ending.
+
+## What not to do
+
+Do not add results that are not in the data. If the day was empty, the
+recap says so in one line and that is fine: filling it with encouraging
+phrases makes it useless the next time.
+
+Do not read it aloud without being asked. The audio comes out of his Mac's
+speakers, and he might not be alone.
+
+Do not rewrite the text for speech: Plancia already does that, stripping
+addresses, paths and shas before saying it, because read aloud they sound
+like nonsense.
+
+## Every morning
+
+`plancia daily on 08:45` sets up a launchd agent that prepares it and sends
+the notification. With `--voce` it reads it too. `plancia daily off` removes
+it. The Plancia app has the same thing in its menu bar, and
+`plancia://recap` launches it from a system shortcut.
+"""
+
+
+# Come skill_text() per la skill "plancia": stessa scelta di lingua (solo
+# l'inglese ha un testo scritto a mano, il resto ripiega sull'italiano),
+# cosi' le due skill si comportano allo stesso modo invece che una tradotta e
+# l'altra no.
+def riepilogo_skill_text(lang: str = "it") -> str:
+    return RIEPILOGO_SKILL_EN if lang == "en" else RIEPILOGO_SKILL_IT
+
+
+# Alias per compatibilita' con chi si aspettava un solo testo (sempre
+# italiano, come prima di questo lotto).
+RIEPILOGO_SKILL = RIEPILOGO_SKILL_IT
+
+
+# La skill "plancia" esiste in due lingue scritte a mano (SKILL_IT, SKILL_EN):
+# a differenza delle stringhe della dashboard, che passano da T() a runtime,
+# questo testo lo legge un agente diverso a ogni sessione, prima ancora che
+# Plancia sia connessa, quindi non può scegliere la lingua da un dizionario in
+# memoria. skill_text() sceglie in base alla lingua richiesta (o alla
+# `lingua` salvata in ~/.plancia/config.json, la stessa chiave che legge tutto
+# il resto del programma: recap.py, api.py, voice.py, l'app Mac) e ripiega
+# sull'italiano per qualunque lingua diversa da "en", invece di rompere
+# l'installazione.
+def skill_text(lang: str = "it") -> str:
+    return SKILL_EN if lang == "en" else SKILL_IT
+
+
+def install_skill(lang: str = None) -> str:
+    if lang is None:
+        cfg = config.load_config()
+        # Stessa normalizzazione di recap.py:24. `locale` è un default morto in
+        # config.DEFAULTS che nessun altro punto del programma scrive né legge:
+        # resta come ripiego per chi lo avesse scritto a mano, non come chiave
+        # primaria.
+        lang = (cfg.get("lingua") or cfg.get("locale") or "it").lower()[:2]
+    # skill_text() e riepilogo_skill_text() ripiegano entrambe sull'italiano
+    # per qualunque lingua diversa da "en": il messaggio deve dire quella
+    # scritta davvero, non `lang` cosi' com'e' arrivato, altrimenti un
+    # `lang="fr"` stamperebbe "(fr)" per un file che e' in realta' italiano.
+    scritta = "en" if lang == "en" else "it"
     SKILL_DIR.mkdir(parents=True, exist_ok=True)
-    (SKILL_DIR / "SKILL.md").write_text(SKILL, "utf-8")
+    (SKILL_DIR / "SKILL.md").write_text(skill_text(lang), "utf-8")
     altra = config.CLAUDE_DIR / "skills" / "riepilogo"
     altra.mkdir(parents=True, exist_ok=True)
-    (altra / "SKILL.md").write_text(RIEPILOGO_SKILL, "utf-8")
-    return f"skill plancia e riepilogo scritte in {SKILL_DIR.parent}"
+    (altra / "SKILL.md").write_text(riepilogo_skill_text(lang), "utf-8")
+    return f"skill plancia ({scritta}) e riepilogo ({scritta}) scritte in {SKILL_DIR.parent}"
 
 
 def install_command() -> str:
@@ -591,12 +927,29 @@ def doctor() -> list:
                 if not _cant._vivo(r["pid"])]
             lines.append(f"{ok(not appesi)}lanci appesi: {len(appesi)}"
                          + ("  (si chiudono al prossimo giro freddo)" if appesi else ""))
+
+            # Memorie doppie. Nascono da sole: finché la memoria sta in una
+            # cartella e basta, la stessa cosa la riscrivi da un'altra parte
+            # senza sapere che c'era già. Il richiamo ferma il fenomeno da qui
+            # in avanti, ma i doppioni di prima restano lì e vanno uniti a mano.
+            doppi = conn.execute(
+                "SELECT name, COUNT(DISTINCT scope) AS n FROM knowledge "
+                "GROUP BY name HAVING n > 1 ORDER BY n DESC, name").fetchall()
+            if doppi:
+                elenco = ", ".join(r["name"] for r in doppi[:4])
+                if len(doppi) > 4:
+                    elenco += f", e altre {len(doppi) - 4}"
+                lines.append(f"no  memorie in più cartelle: {len(doppi)}  ({elenco})")
+                lines.append("    la skill consolidate-memory le unisce")
+            else:
+                lines.append("ok  nessuna memoria doppia")
         except Exception as exc:
             lines.append(f"    errore: {exc}")
         finally:
             conn.close()
     lines.append(f"{ok(mcp_installed())}server MCP registrato in ~/.claude.json")
     lines.append(f"{ok(hooks_installed())}hook SessionStart/SessionEnd")
+    lines.append(f"{ok(richiamo_installed())}richiamo della memoria (UserPromptSubmit)")
     from . import codex
     cx = codex.stato()
     lines.append(f"{ok(cx['installato'])}Codex trovato ({cx['sessioni']} sessioni)")

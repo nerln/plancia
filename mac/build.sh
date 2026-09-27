@@ -11,7 +11,7 @@ ROOT="$(pwd)"
 BUILD="$ROOT/mac/build"
 APP="$BUILD/Plancia.app"
 NOME="Plancia"
-VERSIONE="1.0.0"
+VERSIONE="1.1.0"
 BUNDLE_ID="sh.plancia.app"
 
 installa=0

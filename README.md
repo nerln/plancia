@@ -2,10 +2,11 @@
 
 [![collaudo](https://github.com/nerln/plancia/actions/workflows/prova.yml/badge.svg)](https://github.com/nerln/plancia/actions/workflows/prova.yml)
 
-One board for the work you do with AI. Claude Code and Codex already write down
-everything they do, in files on your disk. Nothing reads them together. Plancia
-does: every open task from both on one board, a spoken recap of the day that ends
-with what is worth doing next, and one place to send the work back.
+Claude Code and Codex already write down everything they do, in files on your
+disk. Nothing reads them together. Plancia does: one row per project tells
+you what to do next, Resume reopens the conversation that wrote the task, and
+a spoken recap of the day closes with what is worth doing. The rest stays
+folded, one click away.
 
 Website: [plancia](https://nerln.github.io/plancia/).
 
@@ -95,6 +96,31 @@ In the dashboard, `/` opens search from any view; chips above the results count
 the hits per project across the whole index, not just the page. In Claude Code
 and Codex it is `plancia_search`.
 
+## What a session actually worked on
+
+A session used to land in the project of the folder it was opened from. That
+works for Codex, which is opened inside the project. It does not work for Claude
+Code: measured on this machine, 199 sessions out of 587 were opened from the
+Drive root, from `~/dev` or from the home folder, places you work on everything
+from.
+
+Plancia now also looks at what the session touched: the files in its `tool_use`
+blocks and the absolute paths inside Bash commands, counted per project folder.
+If the folder it was opened from says nothing, the most touched folder wins; if
+that folder is already a project, it is kept unless 70 percent of the paths are
+somewhere else. Every row carries the inferred folder and the reason, so the
+attribution can be checked instead of trusted.
+
+```bash
+plancia sessioni                         # the catalogue, by project
+plancia sessioni --progetto molo --giorni 30
+plancia sync --riattribuisci             # recompute the whole archive
+```
+
+A tilde at the end of a row, and the "inferred from paths" note in the
+dashboard, mark the sessions attributed this way. Plancia's own internal calls
+and throwaway sessions stay out of the way: `--tutte` shows them.
+
 ## The daily recap
 
 Plancia collects the day from real data, sessions and commits and tasks opened
@@ -133,6 +159,14 @@ Proposals only ever come from signals, never from a model's hunch, so a quiet da
 gives you a short recap instead of an invented suggestion. Say "do it", or "the
 second one", and it runs.
 
+## Next up
+
+One row per active project, on Today, next to the recap: its first open task,
+or its declared next step when nothing is open, grouped by area, sorted by
+deadline and then by last activity. Up to seven rows show per group; the rest
+sit behind an "N more". It needs the area map from `plancia riordina` to
+group by anything but a flat list.
+
 ## Jarvis
 
 Hold nothing, press nothing. `⌥Space` anywhere, or `plancia://jarvis`, opens a
@@ -163,26 +197,44 @@ Claude Code has had [voice input since March 2026](https://claudefa.st/blog/guid
 you hold the spacebar and dictate. It is input only, and by design there is no
 hands-free mode. This is the other half: it speaks back, and it acts.
 
-## The board
+## All tasks
 
-![The board](docs/board.png)
+![All tasks](docs/board.png)
 
 Claude Code keeps its task list in one folder, Codex keeps its goals in a
 different database, Plancia has its own. None of the three knows the other two
-exist. The board reads all of them, normalises the states to `open`, `in
+exist. This view reads all of them, normalises the states to `open`, `in
 progress`, `blocked`, `done`, `gone`, and shows one list.
 
-From any row you can write how you want the work done and dispatch it:
+**Resume is the first thing a row offers.** A task carries the id of the
+session that wrote it, so the button on its row does not relaunch anything
+from scratch: it reopens the actual conversation, in one of three states.
+Alive, and Resume copies to the clipboard the message to paste into the
+conversation that is already running (`resume task 42 of Plancia: <title>`):
+there is nothing to launch. Closed, and pressing Resume opens a visible
+Terminal on its own, running `claude --resume <id>` (or `codex resume <id>`)
+in the task's own folder; Plancia never touches a transcript from a second
+process. Lost, because the session was never recorded or has expired, and
+then it says so instead of pretending, and starting over, with the context
+written by hand, is the only option left.
 
 ```bash
-plancia lavagna                          # the board, in the terminal
-plancia manda "rerun the ablation" --agente codex --progetto atlas
-plancia lanci                            # how the runs went
+plancia lavagna                          # every open task, in the terminal
+plancia riprendi 42                      # resume task 42, in its own state
+plancia riprendi 42 --apri               # do it now, exactly what the button does
+plancia lanci                            # how a background dispatch went
 ```
 
-The default mode is `proposta`: the agent reads and reports without touching a
-file. `--modo esegui` lets it write, and that is a choice you make every time.
-Runs are recorded with their outcome, tokens and cost.
+Sending work off in the background is the other, secondary path, for when
+resuming is not what you want: `plancia riprendi 42 --background --scrive
+--istruzioni "rerun the ablation"` runs it unattended, on that task's own
+session, and records the outcome. The default is read-only; `--scrive` lets
+the agent write, and that is a choice you make every time. `plancia manda
+"rerun the ablation" --agente codex --progetto atlas` is the older alias for
+the same thing without a task id: it still works but prints a deprecation
+warning on stderr and is going away in a future release. Inside Claude Code
+and Codex, the same resume lives behind the `plancia` tool with
+`azione="riprendi"` and the task's `id`.
 
 ## The event log
 
@@ -273,6 +325,26 @@ all three. `plancia init` proposes a map from what it finds; you correct it in
 `~/.plancia/seed.json`. Sessions that run from a generic folder get attributed by
 keyword, and re-attributed on every sync as you refine the keywords.
 
+## Areas
+
+A project map is only useful if it can be corrected, and correcting 122
+projects one at a time never happens. `plancia riordina --proponi` computes a
+map of parents for every project (an area like a thesis, or a real repo with
+its worktrees) and writes it to a file instead of the database, so you can
+read it before anything changes.
+
+```bash
+plancia riordina --proponi                    # writes the proposed map to a file
+plancia riordina --mostra <file>              # prints it as a table
+plancia riordina --applica <file>             # assigns every parent in it
+plancia riordina --annulla <batch>            # undoes exactly that application
+```
+
+Applying is one batch, and undoing it restores each project's previous parent,
+not just a blank one. Today (the recap view) and Next up group projects by
+area once this map exists; before it does, they fall back to one flat list, so
+nothing breaks for a fresh install.
+
 ## Two decisions worth knowing about
 
 **Transcripts are read by byte offset, not by line.** They are hundreds of
@@ -314,12 +386,13 @@ Data lives in `~/.plancia/`: `plancia.db` (SQLite), `seed.json`, `token`,
 `briefing.md`, `audio/`. Keep it out of any synced folder: a SQLite file inside
 Dropbox or Drive will corrupt.
 
-## Six surfaces
+## Seven surfaces
 
-Today (the recap, the rhythm, the proposals, the tasks), Search, Board, Projects,
-Social, Archive (sessions, agents, memory, skills). Everything else goes through
-⌘K. On first run a six step guide explains the parts that are not obvious, and it
-stays available under "Guide".
+Today (the recap, the rhythm, the proposals, and Next up: one row per project,
+grouped by area, with what to resume), Search, All tasks, Projects, Social,
+Memory, Archive (sessions, agents, skills). Everything else goes through ⌘K.
+On first run a guide explains the parts that are not obvious, and it stays
+available under "Guide".
 
 ## Requirements
 
@@ -338,7 +411,7 @@ Reads are open: it is your data, already on your disk.
 git config core.hooksPath .githooks
 ```
 
-Turns on the hook that runs `python3 tools/prova.py` before every push: 138
+Turns on the hook that runs `python3 tools/prova.py` before every push: 953
 checks in about twenty seconds, against a throwaway archive that never touches
 yours. They cover the schema, the board, the proposals, the search index, the
 recap, the MCP surface and its token budget, every read route of the HTTP API,

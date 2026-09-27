@@ -89,6 +89,14 @@ MODELLI = {
         r"^(?:done|i did|close (?:the )?task|mark (?:it )?done)\s*(.*?)[.?!]*$",
         r"^(?:hecho|he hecho|cierra la tarea)\s*(.*?)[.?!]*$",
     ],
+    # LOTTO-L3-RIPRENDI-UI punto 4: "riprendi il task N" e' diverso da
+    # "fallo"/"eseguilo" (che scelgono una PROPOSTA calcolata) - qui il numero
+    # e' l'id di un task vero, e la frase decide da sola quale riprendere.
+    "riprendi_task": [
+        r"^riprendi (?:il )?task\s+(\d+)\b.*$",
+        r"^resume task\s+(\d+)\b.*$",
+        r"^retoma(?:r)? (?:la )?tarea\s+(\d+)\b.*$",
+    ],
 }
 
 RISPOSTE = {
@@ -113,6 +121,13 @@ RISPOSTE = {
         "fatto_proposta": "Fatto.",
         "nessun_task": "Non hai task aperti.",
         "non_capito": "Non ho capito.",
+        "riprendi_viva": "È aperta, l'ho copiata negli appunti: incollala nella sessione.",
+        "riprendi_viva_senza_copia": "È aperta, ma non sono riuscito a copiarla negli appunti.",
+        "riprendi_chiusa": "La riprendo.",
+        "riprendi_persa": "Non c'è niente da riprendere, parto da capo: {motivo}.",
+        "riprendi_non_trovato": "Non trovo il task numero {id}.",
+        "riprendi_lancio_errore": "Non sono riuscito a lanciarlo: {errore}.",
+        "aggiorna_no_sync": "Il sync è disattivato in questa sessione (--no-sync).",
     },
     "en": {
         "vai": "Opening {vista}.",
@@ -135,6 +150,13 @@ RISPOSTE = {
         "fatto_proposta": "Done.",
         "nessun_task": "You have no open tasks.",
         "non_capito": "I did not catch that.",
+        "riprendi_viva": "It is open, I copied it to the clipboard: paste it into the session.",
+        "riprendi_viva_senza_copia": "It is open, but I could not copy it to the clipboard.",
+        "riprendi_chiusa": "Resuming it.",
+        "riprendi_persa": "There is nothing to resume, starting from scratch: {motivo}.",
+        "riprendi_non_trovato": "I cannot find task number {id}.",
+        "riprendi_lancio_errore": "I could not launch it: {errore}.",
+        "aggiorna_no_sync": "Sync is disabled for this session (--no-sync).",
     },
     "es": {
         "vai": "Abro {vista}.",
@@ -157,12 +179,119 @@ RISPOSTE = {
         "fatto_proposta": "Hecho.",
         "nessun_task": "No tienes tareas abiertas.",
         "non_capito": "No te he entendido.",
+        "riprendi_viva": "Está abierta, la he copiado al portapapeles: pégala en la sesión.",
+        "riprendi_viva_senza_copia": "Está abierta, pero no he podido copiarla al portapapeles.",
+        "riprendi_chiusa": "La retomo.",
+        "riprendi_persa": "No hay nada que retomar, empiezo de cero: {motivo}.",
+        "riprendi_non_trovato": "No encuentro la tarea número {id}.",
+        "riprendi_lancio_errore": "No he podido lanzarlo: {errore}.",
+        "aggiorna_no_sync": "La sincronización está desactivada en esta sesión (--no-sync).",
     },
 }
 
 
 def _dizionario(lang):
     return RISPOSTE.get(lang, RISPOSTE["en"])
+
+
+# I 9 prefissi di `motivo` che `plancia/riprendi.py` produce in italiano fisso
+# (vedi `stato()` lì): la dashboard li traduce con `Tmot()` in web/app.js, ma
+# quella tabella conosce solo l'inglese. Qui serve anche lo spagnolo perché
+# Jarvis può rispondere in tre lingue, e senza questa traduzione la voce
+# inglese/spagnola pronunciava parole italiane in mezzo alla frase (bug
+# trovato dal critico dell'ondata L3-RIPRENDI-UI-2).
+MOTIVI_PREFISSI = [
+    ("mai registrata", "never recorded", "nunca registrada"),
+    ("sessione scaduta", "session expired", "sesión caducada"),
+    ("aperta in un'altra sessione", "open in another session", "abierta en otra sesión"),
+    ("aperta in ", "open in ", "abierta en "),
+    ("creato su ", "created on ", "creado en "),
+    ("non sono riuscito a interrogare le sessioni aperte",
+     "could not check open sessions", "no he podido consultar las sesiones abiertas"),
+    ("il rollout è stato modificato negli ultimi 10 minuti",
+     "the rollout was touched in the last 10 minutes",
+     "el rollout se modificó en los últimos 10 minutos"),
+    ("la trascrizione c'è, ma il rollout è fermo da più di 10 minuti",
+     "the transcript exists, but the rollout has been idle for over 10 minutes",
+     "la transcripción existe, pero el rollout lleva parado más de 10 minutos"),
+    ("la trascrizione c'è, ma la sessione non risulta più aperta",
+     "the transcript exists, but the session no longer looks open",
+     "la transcripción existe, pero la sesión ya no parece abierta"),
+]
+
+# L3-RIPRENDI-UI-4 (obbligatoria del critico): `riprendi.apri()` scrive
+# `esito["errore"]` in italiano fisso ("il lanciatore non ha risposto entro
+# %ss"), e `riprendi_lancio_errore` lo incollava intatto dentro una frase
+# inglese/spagnola ("I could not launch it: il lanciatore non ha risposto
+# entro 0.3s."): stesso difetto che _tmot()/MOTIVI_PREFISSI chiudono per
+# `motivo`, qui per `errore`. `plancia/riprendi.py` non è file di proprietà
+# di questo lotto (solo un helper nuovo, vedi punto 10): la stringa resta
+# quella, si traduce qui con lo stesso schema a prefisso.
+ERRORI_PREFISSI = [
+    ("il lanciatore non ha risposto entro ",
+     "the launcher did not respond within ",
+     "el lanzador no respondió en "),
+]
+
+
+def _terr(errore: str, lang: str) -> str:
+    """Traduce `esito['errore']` (italiano fisso da riprendi.apri) per la voce."""
+    if lang not in ("en", "es") or not errore:
+        return errore or ""
+    idx = 1 if lang == "en" else 2
+    for prefissi in ERRORI_PREFISSI:
+        it, trad = prefissi[0], prefissi[idx]
+        if errore == it:
+            return trad
+        if errore.startswith(it):
+            return trad + errore[len(it):]
+    return errore
+
+
+def _tmot(motivo: str, lang: str) -> str:
+    """Traduce il `motivo` (italiano fisso da riprendi.stato) per la voce.
+
+    Stessa idea di `Tmot()` in web/app.js, ma con anche lo spagnolo perché
+    Jarvis risponde in tre lingue mentre la dashboard ne mostra solo due.
+    """
+    if lang not in ("en", "es") or not motivo:
+        return motivo or ""
+    idx = 1 if lang == "en" else 2
+    for prefissi in MOTIVI_PREFISSI:
+        it, trad = prefissi[0], prefissi[idx]
+        if motivo == it:
+            return trad
+        if motivo.startswith(it):
+            return trad + motivo[len(it):]
+    return motivo
+
+
+def _copia_appunti(testo: str) -> bool:
+    """Metti `testo` negli appunti di sistema (stato "viva" di "riprendi il
+    task N", LOTTO-L3-RIPRENDI-UI punto 4): la sessione è già aperta da
+    qualche parte, non c'è niente da lanciare, ma il messaggio da incollarci
+    dentro deve arrivare da qualche parte diversa dalla voce.
+
+    `PLANCIA_CLIPBOARD`, quando c'è, sostituisce `pbcopy`: stessa idea di
+    `PLANCIA_TERMINALE` in `riprendi.apri` (le prove non toccano mai gli
+    appunti veri di chi le lancia). Silenzioso se fallisce (niente `pbcopy`
+    su chi non è su un Mac, o in CI): chi ha chiesto "riprendi" ha comunque
+    la risposta parlata, che dice il motivo a prescindere dagli appunti.
+    """
+    import os
+    import subprocess
+    comando = (os.environ.get("PLANCIA_CLIPBOARD") or "pbcopy").split()
+    try:
+        # Consigliata del critico (L3-RIPRENDI-UI-4): `subprocess.run` senza
+        # `check` tornava True anche quando il comando usciva con un codice
+        # diverso da zero (pbcopy fallito, o lo script finto di una prova che
+        # esce 1) - il punto 7 del lotto era soddisfatto alla lettera (la
+        # voce non mente MAI se `_copia_appunti` torna False), non nello
+        # spirito (qui tornava sempre True). Ora conta il codice di uscita.
+        res = subprocess.run(comando, input=testo, text=True, capture_output=True, timeout=5)
+        return res.returncode == 0
+    except Exception:
+        return False
 
 
 def riconosci(testo: str):
@@ -258,8 +387,13 @@ def _esegui_proposta(conn, scelta, d, lang, forza_esecuzione=False) -> dict:
                          (a.get("run"),)).fetchone()
         if not r:
             return {"tipo": "proposta", "risposta": d["niente_proposte"]}
+        # LOTTO-L3-RITOCCO punto 13: `scrive` (bool) invece di `modo`
+        # (stringa) come argomento per cantiere.avvia() - vedi il commento
+        # aggiornato su cantiere.avvia/_scrive_da. `modo` resta locale, serve
+        # solo per decidere la chiave della risposta più sotto.
         modo = "esegui" if forza_esecuzione else r["modo"]
-        esito = cantiere.avvia(conn, r["prompt"][:200], agente=r["agente"], modo=modo,
+        esito = cantiere.avvia(conn, r["prompt"][:200], agente=r["agente"],
+                               scrive=(modo == "esegui"),
                                cwd=r["cwd"], task_id=r["task_id"], lingua=lang)
         return {"tipo": "cantiere",
                 "risposta": d["mandato"].format(chi=r["agente"], cosa=scelta["testo"][:60]),
@@ -268,9 +402,24 @@ def _esegui_proposta(conn, scelta, d, lang, forza_esecuzione=False) -> dict:
     if tipo == "manda":
         modo = "esegui" if forza_esecuzione else a.get("modo", "proposta")
         agente_scelto = a.get("agente", "claude")
+        # Le proposte di tipo "manda" con un task_id sono lo stesso "Riprendi"
+        # del drawer (LOTTO-L3-RIPRENDI-UI punto 2: "le proposte di tipo manda
+        # passano dallo stesso endpoint"): se il task ha già una sessione viva
+        # o chiusa, va forkata invece di far ripartire cantiere.avvia() da un
+        # prompt scritto da capo (stessa logica di api.py/cli.py/mcp.py).
+        sessione = None
+        tid = a.get("task_id")
+        if tid:
+            from . import riprendi as _riprendi
+            task = actions.task_get(conn, tid)
+            if task:
+                s = _riprendi.stato(conn, task)
+                sessione = _riprendi.sessione_da_riprendere(s)
+                agente_scelto = s.get("agent") or agente_scelto
         esito = cantiere.avvia(conn, a.get("titolo", scelta["testo"])[:200],
                                progetto=a.get("progetto"), agente=agente_scelto,
-                               modo=modo, task_id=a.get("task_id"), lingua=lang)
+                               scrive=(modo == "esegui"), task_id=tid, lingua=lang,
+                               sessione=sessione)
         chiave = "mandato_esegui" if modo == "esegui" else "mandato"
         return {"tipo": "cantiere",
                 "risposta": d[chiave].format(chi=agente_scelto,
@@ -352,6 +501,41 @@ def _esegui(testo: str, lang=None, conn=None) -> dict:
                 return {"tipo": "vai", "risposta": d["vai"].format(vista=riga["name"]),
                         "azione": {"tipo": "progetto", "chiave": riga["key"]}}
 
+        if comando == "riprendi_task" and arg:
+            from . import riprendi as _riprendi
+            try:
+                tid = int(arg)
+            except ValueError:
+                tid = None
+            task = actions.task_get(conn, tid) if tid is not None else None
+            if not task:
+                return {"tipo": "riprendi", "risposta": d["riprendi_non_trovato"].format(id=arg)}
+            s = _riprendi.stato(conn, task)
+            if s["stato"] == "viva":
+                # LOTTO-L3-RITOCCO punto 7: prima si diceva sempre "l'ho
+                # copiato negli appunti", anche quando `_copia_appunti`
+                # tornava False (nessun `pbcopy`, o il finto sostituto della
+                # prova assente/rotto): la voce mentiva su una cosa che non
+                # era successa.
+                copiato = _copia_appunti(_riprendi.messaggio(task))
+                chiave = "riprendi_viva" if copiato else "riprendi_viva_senza_copia"
+                return {"tipo": "riprendi", "risposta": d[chiave],
+                        "azione": {"tipo": "vai", "vista": "task"}}
+            # chiusa o persa: in entrambi i casi c'è qualcosa da lanciare
+            # (apri() lo sa già distinguere, vedi plancia/riprendi.py). Se il
+            # lanciatore va in timeout (`apri()` lo segnala in `errore`), la
+            # voce lo dice invece di rispondere come se fosse partito.
+            esito = _riprendi.apri(task, conn)
+            if esito.get("errore"):
+                return {"tipo": "riprendi",
+                        "risposta": d["riprendi_lancio_errore"].format(
+                            errore=_terr(esito["errore"], lang)),
+                        "azione": {"tipo": "vai", "vista": "task"}}
+            chiave = "riprendi_chiusa" if s["stato"] == "chiusa" else "riprendi_persa"
+            return {"tipo": "riprendi",
+                    "risposta": d[chiave].format(motivo=_tmot(s["motivo"], lang)),
+                    "azione": {"tipo": "vai", "vista": "task"}}
+
         if comando in ("fallo", "eseguilo"):
             scelta = proposte.scegli(conn, arg or None, lang)
             if not scelta:
@@ -371,6 +555,15 @@ def _esegui(testo: str, lang=None, conn=None) -> dict:
                     "azione": {"tipo": "vai", "vista": "progetti"}}
 
         if comando == "aggiorna":
+            # LOTTO-L3-RITOCCO punto 4: con `plancia serve --no-sync` nessun
+            # sync parte da solo (vedi api.py:serve), quindi "rileggo le
+            # fonti" sarebbe una promessa vuota. Import locale di `api`
+            # (invece che in testa al file) perché `api.py` importa già
+            # `jarvis`: un import in cima creerebbe un ciclo.
+            from . import api as _api
+            if getattr(_api, "_NO_SYNC_ATTIVO", False):
+                return {"tipo": "aggiorna", "risposta": d["aggiorna_no_sync"],
+                        "azione": {"tipo": "aggiorna", "avviato": False}}
             return {"tipo": "aggiorna", "risposta": d["aggiorna"],
                     "azione": {"tipo": "aggiorna"}}
 

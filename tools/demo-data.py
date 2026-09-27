@@ -2,12 +2,16 @@
 """Crea un archivio Plancia finto, per gli screenshot e per provarlo a vuoto.
 
     PLANCIA_HOME=/tmp/plancia-demo python3 tools/demo-data.py
-    PLANCIA_HOME=/tmp/plancia-demo ./bin/plancia serve --port 7799 --no-sync
+    PLANCIA_HOME=/tmp/plancia-demo ./bin/plancia serve --port 7844 --no-sync
+
+La porta è indifferente (qui usiamo la stessa di tools/scatti.sh solo per
+coerenza con l'esempio); quello che conta è isolare PLANCIA_HOME.
 
 I dati non hanno niente a che vedere con nessuno: servono solo a far vedere
 com'è fatta l'interfaccia quando c'è dentro qualcosa.
 """
 
+import json
 import os
 import random
 import shutil
@@ -16,7 +20,7 @@ from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from plancia import store  # noqa: E402
+from plancia import richiamo, slot, store  # noqa: E402
 
 random.seed(11)
 ORA = datetime.now(timezone.utc)
@@ -26,6 +30,14 @@ def quando(giorni, ore=9):
     return (ORA - timedelta(days=giorni)).replace(hour=ore, minute=random.randint(0, 59),
                                                   second=0, microsecond=0
                                                   ).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def scadenza(giorni):
+    """Una data (YYYY-MM-DD) a `giorni` da oggi: negativo per una scadenza già
+    passata. Serve solo a scaglionare le scadenze dei task finti (LOTTO-L2-DEMO
+    punto 1), non ha nulla a che fare con `quando()`, che scrive timestamp
+    passati per attività già avvenuta."""
+    return (ORA + timedelta(days=giorni)).strftime("%Y-%m-%d")
 
 
 PROGETTI = [
@@ -44,6 +56,46 @@ PROGETTI = [
     ("atlas", "Atlas", "ricerca", 2, 0,
      "Comparing three embedding models on a corpus of support tickets."),
 ]
+
+# Le tre aree (LOTTO-L2-DEMO punto 1): padri manuali con tre figli l'uno,
+# collegati sotto con slot.set_parent invece che con un parent_id scritto a
+# mano, per passare dalla stessa strada di un uso vero. I figli sono progetti
+# già in PROGETTI sopra: nessuna area nasce senza almeno tre, come chiede il
+# lotto. `postcard` e `kiln` esistono solo per completare i tre figli di
+# `backlot` (gli altri due li aveva già l'elenco di sopra).
+AREE = [
+    ("signalworks", "Signalworks", "infra", 1, 0,
+     "The handful of tools that turn raw sensor logs into an alert someone can act on."),
+    ("fieldcraft", "Fieldcraft", "progetto", 1, 0,
+     "Setting up and tearing down instruments in the field, so a trip needs one packing list."),
+    ("backlot", "Backlot", "progetto", 2, 0,
+     "The small stuff that keeps the other two areas running: hosting, exports, the odd rewrite."),
+]
+
+PROGETTI_AREA = [
+    ("postcard", "Postcard", "progetto", 2, 0,
+     "One-page status pages generated from a template, for clients who just want a link."),
+    ("kiln", "Kiln", "infra", 3, 0,
+     "Build cache for the site generators upstream, so a full rebuild is the exception."),
+]
+
+# Progetti senza area (punto 1: "qualche progetto senza area"): restano radici
+# senza figli e senza padre, per la riga "senza_area" del pannello Prossimi.
+SENZA_AREA = [
+    ("gutter", "Gutter", "progetto", 2, 0,
+     "Log rotation and cleanup for machines nobody watches until they fill up."),
+    ("almanac", "Almanac", "ricerca", 3, 0,
+     "A running log of which release broke which downstream project."),
+    ("spindle", "Spindle", "progetto", 2, 0,
+     "Turns a folder of audio recordings into timestamped transcripts overnight."),
+]
+
+# Il legame figlio -> area, usato subito dopo la creazione dei progetti.
+FIGLI_AREA = {
+    "signalworks": ["lumen", "apiary", "atlas"],
+    "fieldcraft": ["field-notes", "harbour", "inbox-zero"],
+    "backlot": ["site", "postcard", "kiln"],
+}
 
 # (progetto, titolo, messaggi, tool, token, giorni fa, agente, scambi)
 SESSIONI = [
@@ -86,14 +138,42 @@ COMMIT = [
     ("harbour", "Wait for health checks before switching", 13),
 ]
 
+# (titolo, progetto, priorità, stato, giorni fa se chiuso, scadenza)
+# La scadenza è un'offerta di giorni da oggi (scadenza(), negativo = già
+# passata): scaglionata apposta (LOTTO-L2-DEMO punto 1) così il pannello
+# Prossimi mostra un ordine visibile invece di righe tutte uguali.
 TASK = [
-    ("Write the migration note for Apiary 2.0", "apiary", 1, "aperto", None),
-    ("Decide whether Lumen keeps the plugin API", "lumen", 1, "in corso", None),
-    ("Rerun the ablation with the larger split", "field-notes", 2, "aperto", None),
-    ("Harbour: rollback still leaves the old release dir", "harbour", 2, "bloccato", None),
-    ("Archive page for the site", "site", 3, "aperto", None),
-    ("Ship Lumen 0.4", "lumen", 1, "fatto", 7),
-    ("Move budgets off the in-memory store", "apiary", 2, "fatto", 9),
+    ("Write the migration note for Apiary 2.0", "apiary", 1, "aperto", None, scadenza(2)),
+    ("Decide whether Lumen keeps the plugin API", "lumen", 1, "in corso", None, scadenza(1)),
+    ("Rerun the ablation with the larger split", "field-notes", 2, "aperto", None, scadenza(5)),
+    ("Harbour: rollback still leaves the old release dir", "harbour", 2, "bloccato", None,
+     scadenza(-1)),
+    ("Archive page for the site", "site", 3, "aperto", None, None),
+    ("Ship Lumen 0.4", "lumen", 1, "fatto", 7, None),
+    ("Move budgets off the in-memory store", "apiary", 2, "fatto", 9, None),
+    ("Cut the first Kiln cache eviction policy", "kiln", 1, "aperto", None, scadenza(3)),
+    ("Swap Postcard's template loader for something that caches", "postcard", 2, "in corso",
+     None, scadenza(-2)),
+]
+
+# Le tre carte di stato di "Riprendi" (LOTTO-L2-DEMO punto 1, verdetto
+# 16/09/2026 §B): un task per "chiusa" e uno per "persa" (host diverso).
+# "persa" (mai registrata) non serve una riga a parte: ogni task di TASK qui
+# sopra nasce già senza session_id, quindi è già quello stato di default.
+# "viva" non si simula: non c'è modo scriptabile di dire "questa sessione è
+# davvero aperta adesso" senza un processo vero dietro (lo dice anche
+# riprendi._claude_vivo quando non riesce a interrogare nient'altro).
+#
+# (titolo, progetto, session_id, agent, cwd, host)
+# host vuoto = "questa macchina", per riprendi.stato (`if host_task and
+# host_task != host_ora`, falso su stringa vuota): non c'è bisogno del vero
+# hostname per dire "stessa macchina", e scriverlo nel db dimostrativo
+# esporrebbe un nome vero (punto 2 del lotto) per niente.
+TASK_RIPRESA = [
+    ("Wire the retry budget into the nightly job", "apiary", "demo-closed-01",
+     "claude", "~/dev/apiary", ""),
+    ("Rotate the backup keys before they expire", "harbour", "demo-otherhost-01",
+     "claude", "~/dev/harbour", "altra-scrivania"),
 ]
 
 POST = [
@@ -245,7 +325,57 @@ def scrivi_turni(conn):
     print(f"turni indicizzati: {esito['turni']}")
 
 
+def cartella_claude_config():
+    """`PLANCIA_HOME/claude-config`: il CLAUDE_CONFIG_DIR finto sotto cui
+    scrivere la trascrizione di `scrivi_trascrizione_chiusa`, mai il vero
+    `~/.claude` dell'utente (regola della sessione)."""
+    return store.config.DATA_DIR / "claude-config"
+
+
+def scrivi_trascrizione_chiusa(cwd, session_id):
+    """La trascrizione finta per lo stato "chiusa" di riprendi.stato
+    (LOTTO-L2-DEMO punto 1): il codice vero la cerca in
+    `CLAUDE_CONFIG_DIR/projects/<cartella>/<session_id>.jsonl`, dove
+    `<cartella>` è `richiamo.cartella_sessione(cwd)` (lo stesso calcolo che fa
+    `riprendi._trascrizione_claude`). Si scrive sotto `PLANCIA_HOME/claude-config`
+    invece che nel `~/.claude` vero: per vederla nel server bisogna esportare
+    CLAUDE_CONFIG_DIR su questa cartella (il valore lo stampa `main()`), non
+    toccare l'archivio vero dell'utente.
+    """
+    cartella = cartella_claude_config() / "projects" / richiamo.cartella_sessione(cwd)
+    cartella.mkdir(parents=True, exist_ok=True)
+    riga = {
+        "type": "assistant",
+        "timestamp": quando(1),
+        "message": {"role": "assistant", "content": [
+            {"type": "text",
+             "text": "The retry budget is wired into the nightly job now: it stops "
+                     "after three attempts instead of hammering the queue until morning."}]},
+    }
+    (cartella / f"{session_id}.jsonl").write_text(json.dumps(riga) + "\n", encoding="utf-8")
+
+
+def scrivi_config_server():
+    """`config.json` nella PLANCIA_HOME finta (correzione del critico 18/09,
+    LOTTO-L2-DEMO): il ticker di `plancia.api.serve` gira comunque anche con
+    `--no-sync` (quel flag salta solo il sync d'avvio, non il thread che
+    rilancia `start_sync` ogni `sync_caldo_minuti`), e un giro caldo durante
+    gli scatti rilegge Codex/Claude veri della macchina e ingerisce nomi reali
+    nel db dimostrativo. Un `sync_caldo_minuti` alto tiene il ticker fermo
+    per ore, quindi non conta più quanto lo script che fa gli scatti resta
+    acceso. `motore_riepilogo: template` evita che il primo caricamento di
+    Oggi, se la cache del riepilogo per qualche motivo non fa match, lanci un
+    `claude -p` vero (plancia/recap.py, default 'claude') dentro l'ambiente
+    finto."""
+    store.config.save_config({
+        "sync_caldo_minuti": 1440,
+        "sync_freddo_minuti": 1440,
+        "motore_riepilogo": "template",
+    })
+
+
 def main():
+    scrivi_config_server()
     conn = store.connect()
     store.init_db(conn)
     store.migrate(conn)
@@ -254,7 +384,7 @@ def main():
         conn.execute(f"DELETE FROM {tabella}")
 
     ids = {}
-    for key, nome, kind, prio, pin, riassunto in PROGETTI:
+    for key, nome, kind, prio, pin, riassunto in PROGETTI + AREE + PROGETTI_AREA + SENZA_AREA:
         pid = store.upsert_project(conn, key, nome, kind=kind, priority=prio, pinned=pin,
                                    summary=riassunto, auto=0, _force=True)
         ids[key] = pid
@@ -264,12 +394,51 @@ def main():
                      (key, riassunto[:70], "public", f"https://github.com/example/{key}",
                       quando(1), pid, store.now()))
 
-    conn.execute("UPDATE projects SET next_action=? WHERE key='apiary'",
-                 ("write the 2.0 migration note before anyone upgrades",))
-    conn.execute("UPDATE projects SET next_action=? WHERE key='field-notes'",
-                 ("rerun the ablation with the larger split",))
+    # Le tre aree (LOTTO-L2-DEMO punto 1): stesso set_parent che usa un uso
+    # vero, non un parent_id scritto a mano, così un errore lì lo si vede qui.
+    for padre, figli in FIGLI_AREA.items():
+        for figlio in figli:
+            esito = slot.set_parent(conn, figlio, padre, "l2-demo-aree")
+            if not esito["ok"]:
+                raise RuntimeError(f"set_parent({figlio}, {padre}): {esito['motivo']}")
+
+    conn.execute("UPDATE projects SET next_action=? WHERE key='atlas'",
+                 ("score the fourth model before writing anything up",))
+    conn.execute("UPDATE projects SET next_action=? WHERE key='signalworks'",
+                 ("decide which two tools get the shared config format",))
+    conn.execute("UPDATE projects SET next_action=? WHERE key='fieldcraft'",
+                 ("write the packing list once, stop rebuilding it per trip",))
+    conn.execute("UPDATE projects SET next_action=? WHERE key='backlot'",
+                 ("move the last export script off the machine under the desk",))
+    conn.execute("UPDATE projects SET next_action=? WHERE key='gutter'",
+                 ("add the disk-full alert before it happens again",))
+    conn.execute("UPDATE projects SET next_action=? WHERE key='almanac'",
+                 ("log last week's breakage before it is forgotten",))
+    conn.execute("UPDATE projects SET next_action=? WHERE key='spindle'",
+                 ("fix the timestamp drift on recordings over an hour",))
     conn.execute("UPDATE projects SET status='in pausa' WHERE key='inbox-zero'")
     conn.execute("UPDATE projects SET status='concluso' WHERE key='site'")
+
+    # Ultime attività scaglionate per gli 8 progetti nuovi (LOTTO-L2-DEMO
+    # punto 1, correzione del critico 18/09): senza questo, postcard e kiln
+    # non hanno nessuna riga in SESSIONI e restano "never" nel pannello
+    # Prossimi e nelle card di Progetti. Le tre aree sono padri senza sessioni
+    # proprie: si toccano con la data del figlio più recente (min(giorni fa)
+    # in SESSIONI), così l'area non sembra più vecchia del lavoro che contiene.
+    # I tre progetti senza area (gutter, almanac, spindle) e i due figli nuovi
+    # di backlot (postcard, kiln) prendono una data scaglionata a mano, diversa
+    # l'una dall'altra: il numero non deve avere senso, deve solo essere distinto.
+    store.touch_project(conn, ids["postcard"], quando(3))
+    store.touch_project(conn, ids["kiln"], quando(6))
+    store.touch_project(conn, ids["gutter"], quando(2))
+    store.touch_project(conn, ids["almanac"], quando(10))
+    store.touch_project(conn, ids["spindle"], quando(5))
+    # signalworks: min(lumen 0, apiary 0, atlas 4) = 0
+    store.touch_project(conn, ids["signalworks"], quando(0))
+    # fieldcraft: min(field-notes 1, harbour 2, inbox-zero 24) = 1
+    store.touch_project(conn, ids["fieldcraft"], quando(1))
+    # backlot: min(site 8, postcard 3, kiln 6) = 3
+    store.touch_project(conn, ids["backlot"], quando(3))
 
     for i, (key, titolo, n_user, n_tools, out, giorni) in enumerate(SESSIONI):
         inizio = quando(giorni, 9 + (i % 8))
@@ -303,13 +472,30 @@ def main():
         store.add_event(conn, data, "commit", messaggio, repo, ids[repo], f"c{i}", "github",
                         dedup=f"c{i}")
 
-    for titolo, key, prio, stato, chiuso in TASK:
+    for titolo, key, prio, stato, chiuso, due in TASK:
         ts = quando(random.randint(1, 6))
         conn.execute(
-            "INSERT INTO tasks(title, body, status, priority, project_id, source, "
-            "created_at, updated_at, done_at) VALUES(?,?,?,?,?,?,?,?,?)",
-            (titolo, "", stato, prio, ids[key], "claude", ts, ts,
+            "INSERT INTO tasks(title, body, status, priority, project_id, source, due, "
+            "created_at, updated_at, done_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+            (titolo, "", stato, prio, ids[key], "claude", due, ts, ts,
              quando(chiuso) if chiuso is not None else None))
+
+    # Le tre carte di stato di "Riprendi" (vedi il commento su TASK_RIPRESA):
+    # session_id/agent/cwd/host, le colonne che riprendi.stato legge per
+    # decidere. Nessun `due`: qui il punto è lo stato di ripresa, non le
+    # scadenze scaglionate (quelle sono in TASK, sopra).
+    for titolo, key, sid, agent, cwd, host in TASK_RIPRESA:
+        ts = quando(1)
+        conn.execute(
+            "INSERT INTO tasks(title, body, status, priority, project_id, source, "
+            "session_id, agent, cwd, host, created_at, updated_at) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+            (titolo, "", "aperto", 1, ids[key], "claude", sid, agent, cwd,
+             host, ts, ts))
+
+    # La trascrizione finta per lo stato "chiusa": vedi scrivi_trascrizione_chiusa.
+    chiusa = next(t for t in TASK_RIPRESA if t[2] == "demo-closed-01")
+    scrivi_trascrizione_chiusa(chiusa[4], chiusa[2])
 
     for testo, stato, key, fonte in POST:
         ts = quando(random.randint(0, 8))
@@ -383,6 +569,8 @@ def main():
     recap.build(conn, lang="en", engine="template", cache=True)
     conn.close()
     print(f"archivio dimostrativo pronto in {store.config.DB_PATH}")
+    print(f"per vedere lo stato \"chiusa\" (task Riprendi): "
+          f"export CLAUDE_CONFIG_DIR={cartella_claude_config()}")
 
 
 if __name__ == "__main__":

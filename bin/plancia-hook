@@ -58,21 +58,34 @@ def ancoraggio(cwd):
     finally:
         con.close()
 
-    for percorso, chiave in noti.items():
-        if cwd == percorso or cwd.startswith(percorso + "/"):
-            return f"\n\nSessione ancorata al progetto `{chiave}` ({percorso})."
-
+    # Un contenitore non e' mai la casa di un progetto, per legge della radice:
+    # si controlla prima, cosi' un contenitore registrato per sbaglio come
+    # percorso di progetto non zittisce l'avviso (e' successo con ~/dev).
     if cwd in [c.rstrip("/") for c in CONTENITORI]:
         figli = sorted({v for k, v in noti.items() if k.startswith(cwd + "/")})
         elenco = ("  Progetti registrati qui dentro: " + ", ".join(figli)) if figli else ""
         return (
             "\n\nATTENZIONE: questa sessione e' aperta in una cartella contenitore, "
             f"non dentro un progetto ({cwd}).\n"
-            "  Da qui si finisce a scrivere dentro cartelle di progetto senza esserci "
-            "mai entrati, e la sessione si perde. Prima di scrivere qualsiasi cosa: "
-            "chiedigli su quale progetto sta lavorando e digli di riaprire la sessione "
-            "in quella cartella.\n" + elenco
+            "  Da qui le schede dei file di un progetto NON si aprono (la radice della "
+            "sessione e' questa cartella, e settings.json non conta) e ogni cd sposta "
+            "solo la shell. Appena sai su quale progetto si lavora, PRIMA di scrivere "
+            "qualsiasi cosa, chiama mcp__ccd_directory__change_directory con il percorso "
+            "assoluto del progetto: la sessione si sposta li' e i file si aprono. Se non "
+            "lo sai, chiediglielo. Per una seconda cartella oltre al progetto, "
+            "mcp__ccd_directory__request_directory.\n" + elenco
         )
+
+    # La corrispondenza piu' specifica vince: con `~/dev` registrato come
+    # percorso di un progetto, `~/dev/stiva` risultava ancorata a quello invece
+    # che a stiva. I contenitori non contano mai come percorso di progetto.
+    contenitori = {c.rstrip("/") for c in CONTENITORI}
+    candidati = [(percorso, chiave) for percorso, chiave in noti.items()
+                 if percorso not in contenitori
+                 and (cwd == percorso or cwd.startswith(percorso + "/"))]
+    if candidati:
+        percorso, chiave = max(candidati, key=lambda pc: len(pc[0]))
+        return f"\n\nSessione ancorata al progetto `{chiave}` ({percorso})."
 
     return (
         f"\n\nQuesta cartella non risulta legata a nessun progetto di Plancia ({cwd}). "

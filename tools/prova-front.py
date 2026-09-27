@@ -3,13 +3,17 @@
 
     python3 tools/prova-front.py
 
-Guardare la pagina con un browser vero non si può automatizzare qui: la pagina ha
-timer che vanno avanti da soli, e il tempo virtuale di Chrome non arriva mai in
-fondo. Quindi si guarda il sorgente, e si cercano le due cose che si sono rotte
-davvero: una stringa italiana che nessuno ha tradotto e che quindi compare in
-mezzo all'inglese, e una vista che nessuno può raggiungere.
+Qui non si apre nessun browser: si guarda solo il sorgente, con delle regex, e
+si cercano le due cose che si sono rotte davvero: una stringa italiana che
+nessuno ha tradotto e che quindi compare in mezzo all'inglese, e una vista che
+nessuno può raggiungere. La pagina aperta per davvero, con un server acceso e
+Chrome headless (`--virtual-time-budget`, per far passare i timer che
+altrimenti andrebbero avanti da soli), è tools/prova-video.sh: quello vede un
+errore JavaScript o una vista rimasta sul segnaposto del router, che qui,
+essendo solo testo, restano invisibili.
 """
 
+import importlib.util
 import re
 import sys
 from pathlib import Path
@@ -77,6 +81,46 @@ def main():
 
     prova("niente template letterali dentro le stringhe tradotte",
           not [s for s in usate if "${" in s])
+
+    # la mappa della memoria
+    prova("la vista memoria c'è ed è nel menu",
+          "memoria" in viste and "memoria" in nel_menu)
+
+    # I nodi si cliccano perché portano data-memory, che è lo stesso aggancio
+    # dell'elenco in Archivio: se sparisce, la mappa diventa un disegno.
+    prova("i nodi della mappa aprono la memoria",
+          'data-memory="${esc(n.nome)}"' in sorgente)
+
+    # Il tetto all'altezza della mappa non è estetico: senza, la prova del
+    # richiamo finisce sotto la piega e non la usa piu' nessuno.
+    stile = (RADICE / "web" / "style.css").read_text(encoding="utf-8")
+    prova("la mappa ha un tetto in altezza", "max-height: 54vh" in stile)
+
+    # Le classi dei tipi devono esistere nel foglio di stile, altrimenti i nodi
+    # escono tutti dello stesso colore e la mappa non dice piu' niente.
+    senza_colore = [t for t in ("feedback", "user", "reference", "project")
+                    if f".mnodo.{t}" not in stile]
+    prova("ogni tipo di memoria ha il suo colore", not senza_colore, str(senza_colore))
+
+    # ---------------------------------------------------------------- scoperta
+    # Stessa idea di tools/prova.py: ogni lotto porta le sue prove statiche sul
+    # front in un file sotto tools/prove-front/, un modulo per lotto invece di
+    # un file unico con un proprietario alla volta. "_" salta, un errore nel
+    # modulo conta come fallito con il nome del file e non ferma gli altri.
+    cartella_prove = RADICE / "tools" / "prove-front"
+    if cartella_prove.is_dir():
+        for percorso in sorted(cartella_prove.glob("*.py")):
+            if percorso.stem.startswith("_"):
+                continue
+            try:
+                spec = importlib.util.spec_from_file_location(
+                    f"tools.prove_front.{percorso.stem}", percorso)
+                modulo = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(modulo)
+                modulo.esegui(prova, RADICE)
+            except Exception as errore:  # noqa: BLE001 - un lotto non affossa gli altri
+                falliti.append(percorso.stem)
+                print(f"  NO   {percorso.stem} (errore nel modulo: {errore})")
 
     print()
     print(f"{passati} passate, {len(falliti)} fallite")

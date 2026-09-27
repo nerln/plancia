@@ -6,9 +6,10 @@ cosa farne. Qui i fatti diventano proposte, ognuna con un'azione già pronta, co
 
 Le proposte nascono solo da segnali che stanno nei dati, mai da un modello: un
 lancio fallito, un obiettivo di Codex bloccato, modifiche non committate da un
-giorno, un post approvato che non è mai uscito, una spesa fuori scala. Se il
-segnale non c'è, la proposta non c'è: meglio un riepilogo che finisce corto che
-uno che si inventa un consiglio.
+giorno, un post approvato che non è mai uscito, un task aperto dimenticato da
+tre settimane su un progetto vivo, una spesa fuori scala. Se il segnale non
+c'è, la proposta non c'è: meglio un riepilogo che finisce corto che uno che si
+inventa un consiglio.
 """
 
 import json
@@ -38,6 +39,7 @@ T = {
         "prossimo_passo": "Su {cosa} il prossimo passo è: {passo}. Lo mando a un agente?",
         "spesa": "Oggi hai già generato {n} volte la tua media giornaliera. Ti conviene tenerla d'occhio.",
         "senza_progetto": "Il task {cosa} non è legato a nessun progetto. A quale lo attacco?",
+        "task_stagnante": "{cosa} è fermo da {giorni} giorni su {progetto} senza un tocco. Lo archivio o lo riassegno?",
         "chiudi": "Vuoi che ne faccia qualcuna?",
     },
     "en": {
@@ -49,6 +51,7 @@ T = {
         "prossimo_passo": "On {cosa} the next step is: {passo}. Send it to an agent?",
         "spesa": "Today you are already at {n} times your daily average. Worth keeping an eye on.",
         "senza_progetto": "The task {cosa} is not attached to any project. Which one?",
+        "task_stagnante": "{cosa} has sat untouched for {giorni} days on {progetto}. Should I archive it or reassign it?",
         "chiudi": "Want me to do any of them?",
     },
     "es": {
@@ -60,6 +63,7 @@ T = {
         "prossimo_passo": "En {cosa} el siguiente paso es: {passo}. ¿Lo mando a un agente?",
         "spesa": "Hoy ya vas por {n} veces tu media diaria. Conviene vigilarlo.",
         "senza_progetto": "La tarea {cosa} no está ligada a ningún proyecto. ¿A cuál?",
+        "task_stagnante": "{cosa} lleva {giorni} días sin tocar en {progetto}. ¿Lo archivo o lo reasigno?",
         "chiudi": "¿Quieres que haga alguna?",
     },
 }
@@ -157,8 +161,60 @@ def calcola(conn, lang="it", limite=4) -> list:
     if fuga:
         aggiungi(6, "spesa", {"tipo": "vai", "vista": "archivio"}, n=fuga, rif="spesa")
 
+    # 8. un task aperto che nessuno tocca da settimane, su un progetto ancora
+    # vivo, non è "in corso": è dimenticato. Uno per volta (il più vecchio),
+    # come task_fermo qui sopra: un elenco che si allunga da solo non è una
+    # proposta, è un altro riepilogo. Un task già proposto sopra (controllo 5,
+    # "in corso" fermo da 3 giorni) non torna qui: altrimenti lo stesso task
+    # genererebbe due proposte opposte ("lo riprendo?" e "lo archivio?").
+    # L'urgenza 7 è la più bassa di tutte apposta (è la meno urgente da fare
+    # subito): ma proprio per questo il taglio finale a `limite` la
+    # scarterebbe sempre non appena ci sono `limite` proposte più urgenti, e
+    # un task dimenticato da settimane resterebbe invisibile per sempre. Il
+    # posto riservato più sotto la ripesca.
+    id_gia_proposti = {p["azione"]["task_id"] for p in fuori
+                       if (p.get("azione") or {}).get("task_id") is not None}
+    for r in conn.execute(
+            "SELECT t.id, t.title, t.updated_at, p.name AS pname, p.key AS pkey "
+            "FROM tasks t JOIN projects p ON p.id=t.project_id "
+            "WHERE t.status IN ('aperto','in corso') AND p.status='attivo' AND p.hidden=0 "
+            "AND t.updated_at < ? ORDER BY t.updated_at ASC",
+            (_giorni_fa(21),)):
+        if r["id"] in id_gia_proposti:
+            continue
+        # L'azione è nello stesso formato di task_fermo: "manda" è uno dei
+        # tipi che jarvis._esegui_proposta sa eseguire davvero (apre un
+        # cantiere che chiede a un agente di archiviare o riassegnare il
+        # task). "archivia" non esisteva come tipo gestito da nessuno: la
+        # proposta prometteva un effetto che "fallo" non produceva.
+        aggiungi(7, "task_stagnante",
+                 {"tipo": "manda",
+                  "titolo": f"Archivia o riassegna il task #{r['id']} '{r['title'][:80]}' "
+                            f"su {r['pname']}",
+                  "progetto": r["pkey"], "task_id": r["id"], "modo": "proposta"},
+                 cosa=r["title"][:60], giorni=_quanti_giorni(r["updated_at"]),
+                 progetto=r["pname"], rif=r["id"])
+        break
+
     fuori.sort(key=lambda p: p["urgenza"])
-    return fuori[:limite]
+
+    # Un posto riservato per task_stagnante (decisione di Eugenio, 28/09,
+    # voce 8 del DECIDE in docs/CANTIERE-2026-09.md): la sua urgenza 7, la
+    # più bassa di tutte, la fa arrivare ultima non appena ci sono `limite`
+    # proposte più urgenti, quindi il taglio qui sotto la escluderebbe
+    # sempre. Se c'è e non è già tra le prime `limite`, prende il posto
+    # dell'ultima (la meno urgente) di quelle prime `limite`: l'ordine delle
+    # altre non cambia. Con `limite` >= al numero di proposte non cambia
+    # niente (ci sarebbe comunque tra le prime). Con `limite` == 1 il posto
+    # riservato non vale: vince sempre la proposta più urgente, altrimenti un
+    # limite a una sola proposta perderebbe sempre quella più urgente in
+    # favore di questa.
+    risultato = fuori[:limite]
+    if limite >= 2:
+        stagnante = next((p for p in fuori if p["motivo"] == "task_stagnante"), None)
+        if stagnante is not None and stagnante["id"] not in {p["id"] for p in risultato}:
+            risultato = risultato[:-1] + [stagnante]
+    return risultato
 
 
 def _quanti_giorni(ts) -> int:

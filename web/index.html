@@ -6,6 +6,7 @@
 <meta name="plancia-token" content="__PLANCIA_TOKEN__">
 <title>Plancia</title>
 <link rel="stylesheet" href="/style.css?v=__PLANCIA_V__">
+<link rel="stylesheet" href="/moto.css?v=__PLANCIA_V__">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='13' fill='none' stroke='%23f2a25c' stroke-width='2.5'/><path d='M16 3v6M16 23v6M3 16h6M23 16h6' stroke='%23f2a25c' stroke-width='2.5'/><circle cx='16' cy='16' r='3' fill='%23f2a25c'/></svg>">
 </head>
 <body>
@@ -28,6 +29,7 @@
       <a href="#/lavagna" data-view="lavagna"><i data-i="lavagna"></i><span data-t="Lavagna">Lavagna</span><em id="badge-lavagna"></em></a>
       <a href="#/progetti" data-view="progetti"><i data-i="progetti"></i><span data-t="Progetti">Progetti</span></a>
       <a href="#/social" data-view="social"><i data-i="social"></i><span data-t="Social">Social</span><em id="badge-social"></em></a>
+      <a href="#/memoria" data-view="memoria"><i data-i="memoria"></i><span data-t="Memoria">Memoria</span></a>
       <a href="#/archivio" data-view="archivio"><i data-i="archivio"></i><span data-t="Archivio">Archivio</span></a>
     </nav>
     <div class="rail-foot">
@@ -47,6 +49,7 @@
         <span data-t="Cerca in tutto il lavoro">Cerca in tutto il lavoro</span><kbd>⌘K</kbd>
       </button>
       <div class="topbar-actions">
+        <span id="spia-memoria" class="spia-memoria" hidden></span>
         <button id="btn-sync" class="ghost" data-t="Aggiorna">Aggiorna</button>
         <a class="ghost" id="btn-briefing" href="#/briefing" data-t="Briefing">Briefing</a>
       </div>
@@ -71,6 +74,10 @@
 
 <audio id="player" hidden></audio>
 <div id="toast" class="toast" hidden></div>
+<script>document.documentElement.dataset.errori = '0';
+window.addEventListener('error', () => { document.documentElement.dataset.errori = String(+document.documentElement.dataset.errori + 1); });
+window.addEventListener('unhandledrejection', () => { document.documentElement.dataset.errori = String(+document.documentElement.dataset.errori + 1); });
+</script>
 <script src="/app.js?v=__PLANCIA_V__"></script>
 </body>
 </html>

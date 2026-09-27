@@ -54,8 +54,10 @@ def collect(conn, day: str = None) -> dict:
 
     sessioni = rows(
         "SELECT s.session_id, s.title, substr(s.first_prompt,1,240) AS prompt, "
-        "s.started_at, s.n_user, s.n_tools, s.out_tokens, p.name AS progetto, p.key AS chiave "
+        "s.started_at, s.n_user, s.n_tools, s.out_tokens, p.name AS progetto, p.key AS chiave, "
+        "par.name AS area "
         "FROM sessions s LEFT JOIN projects p ON p.id=s.project_id "
+        "LEFT JOIN projects par ON par.id = p.parent_id "
         f"WHERE s.started_at >= ? AND s.started_at < ? AND {store.visibile()} "
         "ORDER BY s.out_tokens DESC",
         (start, end))
@@ -71,8 +73,9 @@ def collect(conn, day: str = None) -> dict:
         "LEFT JOIN projects p ON p.id=t.project_id "
         "WHERE t.created_at >= ? AND t.created_at < ? AND t.status <> 'fatto'", (start, end))
     task_aperti = rows(
-        "SELECT t.id, t.title, t.priority, t.due, p.name AS progetto FROM tasks t "
-        "LEFT JOIN projects p ON p.id=t.project_id "
+        "SELECT t.id, t.title, t.priority, t.due, p.name AS progetto, par.name AS area "
+        "FROM tasks t LEFT JOIN projects p ON p.id=t.project_id "
+        "LEFT JOIN projects par ON par.id = p.parent_id "
         "WHERE t.status IN ('aperto','in corso','bloccato') "
         "ORDER BY t.priority ASC, t.due IS NULL, t.due ASC LIMIT 8")
     scaduti = [t for t in task_aperti if t["due"] and t["due"] < label]
@@ -83,11 +86,14 @@ def collect(conn, day: str = None) -> dict:
         "SELECT id, platform, status, substr(text,1,120) AS text FROM posts "
         "WHERE status IN ('idea','bozza','approvato','programmato') LIMIT 5")
     prossimi = rows(
-        "SELECT name, key, next_action, last_activity FROM projects "
-        "WHERE status='attivo' AND hidden=0 AND next_action <> '' "
-        "ORDER BY priority ASC, last_activity DESC LIMIT 5")
+        "SELECT p.name, p.key, p.next_action, p.last_activity, par.name AS area "
+        "FROM projects p LEFT JOIN projects par ON par.id = p.parent_id "
+        "WHERE p.status='attivo' AND p.hidden=0 AND p.next_action <> '' "
+        "ORDER BY p.priority ASC, p.last_activity DESC LIMIT 5")
     fermi = rows(
-        "SELECT p.name, p.key, p.last_activity FROM projects p WHERE p.status='attivo' "
+        "SELECT p.name, p.key, p.last_activity, par.name AS area FROM projects p "
+        "LEFT JOIN projects par ON par.id = p.parent_id "
+        "WHERE p.status='attivo' "
         "AND p.hidden=0 AND p.last_activity IS NOT NULL AND p.last_activity < ? "
         + SOSTANZA + " ORDER BY p.last_activity ASC LIMIT 3",
         ((datetime.now(timezone.utc) - timedelta(days=14)).strftime("%Y-%m-%dT%H:%M:%SZ"),))
@@ -95,19 +101,21 @@ def collect(conn, day: str = None) -> dict:
     per_progetto = {}
     for s in sessioni:
         key = s["progetto"] or "senza progetto"
-        voce = per_progetto.setdefault(key, {"progetto": key, "sessioni": 0, "token": 0,
-                                             "titoli": []})
+        voce = per_progetto.setdefault(key, {"progetto": key, "area": s.get("area"),
+                                             "sessioni": 0, "token": 0, "titoli": []})
         voce["sessioni"] += 1
         voce["token"] += s["out_tokens"] or 0
         if s["title"]:
             voce["titoli"].append(s["title"])
     for c in commit:
-        key = None
-        row = conn.execute("SELECT p.name FROM repos r JOIN projects p ON p.id=r.project_id "
-                           "WHERE r.name=?", (c["repo"],)).fetchone()
+        row = conn.execute(
+            "SELECT p.name, par.name AS area FROM repos r JOIN projects p ON p.id=r.project_id "
+            "LEFT JOIN projects par ON par.id = p.parent_id WHERE r.name=?",
+            (c["repo"],)).fetchone()
         key = row["name"] if row else c["repo"]
-        voce = per_progetto.setdefault(key, {"progetto": key, "sessioni": 0, "token": 0,
-                                             "titoli": []})
+        voce = per_progetto.setdefault(
+            key, {"progetto": key, "area": (row["area"] if row else None),
+                  "sessioni": 0, "token": 0, "titoli": []})
         voce.setdefault("commit", 0)
         voce["commit"] = voce.get("commit", 0) + 1
 
@@ -223,6 +231,16 @@ def _prima_frase(testo: str, massimo: int = 130) -> str:
     return taglio.rsplit(" ", 1)[0]
 
 
+def _con_area(nome: str, area) -> str:
+    """"<progetto> (<area>)" quando c'è un'area, il nome da solo altrimenti.
+
+    Una funzione sola per il testo a modelli e per quello che finisce nel
+    JSON mandato a Claude (`_compact`): l'area compare nello stesso formato
+    in entrambe le strade, non solo in quella che si legge per prima.
+    """
+    return f"{nome} ({area})" if area else nome
+
+
 def _elenco(items, lang) -> str:
     items = [i for i in items if i]
     if not items:
@@ -250,7 +268,7 @@ def render_template(dati: dict, lang: str) -> str:
         com = (t["commit_0"] if n_commit == 0 else
                t["commit_1"] if n_commit == 1 else t["commit_n"].format(n=n_commit))
         frasi.append(t["apertura"].format(n_sess=sess, n_commit=com).capitalize())
-        nomi = [v["progetto"] for v in dati["per_progetto"][:3]]
+        nomi = [_con_area(v["progetto"], v.get("area")) for v in dati["per_progetto"][:3]]
         if nomi:
             frasi.append(t["su_progetti"].format(elenco=_elenco(nomi, lang)))
         if dati["sessioni"] and dati["sessioni"][0].get("title"):
@@ -274,11 +292,11 @@ def render_template(dati: dict, lang: str) -> str:
         frasi.append(t["post"].format(n=len(dati["post_pubblicati"]), q=len(dati["post_coda"])))
     if dati["prossimi_passi"]:
         frasi.append(t["prossimi"].format(elenco=_elenco(
-            [f"{p['name']}, {_prima_frase(p['next_action'])}"
+            [f"{_con_area(p['name'], p.get('area'))}, {_prima_frase(p['next_action'])}"
              for p in dati["prossimi_passi"][:2]], lang)))
     if dati["progetti_fermi"]:
         frasi.append(t["fermi"].format(elenco=_elenco(
-            [p["name"] for p in dati["progetti_fermi"]], lang)))
+            [_con_area(p["name"], p.get("area")) for p in dati["progetti_fermi"]], lang)))
     prop = dati.get("proposte") or []
     frasi.append(prop[0]["testo"] if prop else t["chiusura"])
     return " ".join(f for f in frasi if f)
@@ -361,26 +379,35 @@ def claude_text(prompt: str, timeout: int = 120) -> str:
 
 
 def _compact(dati: dict) -> dict:
-    """Solo quello che serve a raccontare, niente id e niente rumore."""
+    """Solo quello che serve a raccontare, niente id e niente rumore.
+
+    I nomi di progetto qui dentro portano già l'area quando c'è
+    ("<progetto> (<area>)"), con `_con_area`: è la stessa stringa che finisce
+    nel testo a modelli, così il formato non dipende dal fatto che Claude
+    segua un'istruzione per nominarla allo stesso modo.
+    """
     return {
         "giorno": dati["giorno"],
         "sessioni_oggi": len(dati["sessioni"]),
         "sessioni_ieri": dati["sessioni_ieri"],
         "token_generati": dati["token_giorno"],
         "lavoro_per_progetto": [
-            {k: v for k, v in p.items() if k != "titoli"} | {"titoli": p["titoli"][:3]}
+            {k: v for k, v in p.items() if k not in ("titoli", "area", "progetto")}
+            | {"progetto": _con_area(p["progetto"], p.get("area")), "titoli": p["titoli"][:3]}
             for p in dati["per_progetto"][:5]],
         "commit": [{"repo": c["repo"], "messaggio": c["message"]} for c in dati["commit"][:8]],
         "task_chiusi": [t["title"] for t in dati["task_chiusi"]],
         "task_creati": [t["title"] for t in dati["task_creati"]],
-        "task_aperti": [{"titolo": t["title"], "progetto": t["progetto"], "scadenza": t["due"]}
+        "task_aperti": [{"titolo": t["title"], "progetto": _con_area(t["progetto"], t.get("area")),
+                         "scadenza": t["due"]}
                         for t in dati["task_aperti"][:6]],
         "task_in_ritardo": [t["title"] for t in dati["task_scaduti"]],
         "post_pubblicati": [p["text"] for p in dati["post_pubblicati"]],
         "post_in_coda": len(dati["post_coda"]),
-        "prossimi_passi": [{"progetto": p["name"], "passo": _prima_frase(p["next_action"], 200)}
+        "prossimi_passi": [{"progetto": _con_area(p["name"], p.get("area")),
+                            "passo": _prima_frase(p["next_action"], 200)}
                            for p in dati["prossimi_passi"]],
-        "progetti_fermi": [p["name"] for p in dati["progetti_fermi"]],
+        "progetti_fermi": [_con_area(p["name"], p.get("area")) for p in dati["progetti_fermi"]],
         "cosa_converrebbe_fare": [p["testo"] for p in dati.get("proposte", [])],
     }
 

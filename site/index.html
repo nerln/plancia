@@ -3,15 +3,21 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Plancia: one board for the work you do with AI</title>
-<meta name="description" content="Plancia reads what Claude Code and Codex already write on your disk and puts it on one board: every open task, a spoken daily recap, and one place to send work back. Local only, open source.">
-<meta property="og:title" content="Plancia: one board for the work you do with AI">
-<meta property="og:description" content="Every open task from every coding agent, on one board. A spoken recap that proposes what to do next. Runs on your machine, sends nothing.">
+<title>Plancia: one row per project, for the work you do with AI</title>
+<meta name="description" content="Plancia reads what Claude Code and Codex already write on your disk and turns it into one row per project: what to do next, and Resume to reopen the conversation that wrote it. A spoken daily recap closes with a decision. Local only, open source.">
+<meta property="og:title" content="Plancia: one row per project, for the work you do with AI">
+<meta property="og:description" content="One row per project, from every coding agent, sorted by what needs you. Resume reopens the conversation that wrote it. A spoken recap that proposes what to do next. Runs on your machine, sends nothing.">
 <meta property="og:type" content="website">
 <meta property="og:image" content="https://nerln.github.io/plancia/img/today.png">
 <meta name="twitter:card" content="summary_large_image">
 <link rel="stylesheet" href="style.css">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><circle cx='12' cy='12' r='9' fill='none' stroke='%23e8934e' stroke-width='1.6'/><circle cx='12' cy='12' r='2' fill='%23e8934e'/><path d='M12 1v4M12 19v4M1 12h4M19 12h4' stroke='%23e8934e' stroke-width='1.6'/></svg>">
+<!-- GSAP 3.14.2, servito da qui e non da un CDN: la pagina non fa una sola
+     richiesta a terzi. Va con defer, e l'unica cosa che anima e' il cambio di
+     lingua, che succede a un clic, molto dopo il caricamento. Se il file non
+     arriva, i bottoni continuano a funzionare: la lingua cambia di scatto,
+     com'e' sempre stato. Solo il core, niente plugin. -->
+<script src="vendor/gsap.min.js" defer></script>
 </head>
 <body>
 
@@ -51,21 +57,28 @@
       <span data-lingua="it">macOS · open source · nessuna telemetria, nessun account</span>
     </span>
 
-    <h1 data-lingua="en">Two agents, four terminals,<br><em>one board.</em></h1>
-    <h1 data-lingua="it">Due agenti, quattro terminali,<br><em>una lavagna sola.</em></h1>
+    <h1 data-lingua="en">Two agents, four terminals,<br><em>one row each.</em></h1>
+    <h1 data-lingua="it">Due agenti, quattro terminali,<br><em>una riga ciascuno.</em></h1>
 
     <p class="sotto" data-lingua="en">
       Claude Code and Codex already write down everything they do, transcripts and task
       lists and goals and memory, in files on your disk. Nothing reads them together.
-      Plancia does: every open task on one board, a spoken recap of the day that ends
-      with what is worth doing next, and one place to send the work back.
+      Plancia does, and it ends with a decision.
     </p>
     <p class="sotto" data-lingua="it">
       Claude Code e Codex si scrivono già tutto, transcript e liste di task e obiettivi e
-      memoria, in file sul tuo disco. Solo che non li legge nessuno insieme. Plancia sì:
-      tutti i task aperti su una lavagna sola, un riepilogo parlato della giornata che
-      finisce con la cosa che conviene fare, e un posto solo da cui rimandare il lavoro.
+      memoria, in file sul tuo disco. Solo che non li legge nessuno insieme. Plancia sì,
+      e finisce con una decisione.
     </p>
+
+    <ul class="patto">
+      <li data-lingua="en">One row per project tells you what to do.</li>
+      <li data-lingua="it">Una riga per progetto ti dice cosa fare.</li>
+      <li data-lingua="en">Resume reopens the conversation that wrote the task.</li>
+      <li data-lingua="it">Riprendi riapre la conversazione che ha scritto il task.</li>
+      <li data-lingua="en">The rest stays folded, one click away.</li>
+      <li data-lingua="it">Il resto sta ripiegato, a un clic di distanza.</li>
+    </ul>
 
     <div class="azioni">
       <a class="btn primo" href="#prezzo">
@@ -84,6 +97,12 @@
       <span data-lingua="it">Python 3 e macOS 13+. Nessuna dipendenza da installare, nessun account,
         nessun server. L'archivio è un file solo: <code>~/.plancia/plancia.db</code>.</span>
     </p>
+    <p class="postilla">
+      <span data-lingua="en">On macOS 26 and later the native app is glass throughout, and every
+        view shows its last state at once while it refreshes: never a blank screen.</span>
+      <span data-lingua="it">Su macOS 26 e successivi l'app nativa è di vetro su ogni superficie,
+        e ogni vista mostra subito l'ultimo stato mentre si aggiorna: mai una schermata vuota.</span>
+    </p>
 
     <div class="prove">
       <div><div class="n zero mono">0</div>
@@ -100,7 +119,7 @@
       <div class="telaio">
         <div class="cima"><i></i><i></i><i></i><span>Plancia</span></div>
         <img src="img/today.png" width="1600" height="1220"
-             alt="Plancia's Today view: the spoken recap, the rhythm of the last thirty days, and a list of proposals.">
+             alt="Plancia's Next up panel: one row per project, grouped by area, each showing what to do next.">
       </div>
     </div>
   </div>
@@ -126,12 +145,55 @@
   </div>
 </section>
 
-<!-- ------------------------------------------------------------- lavagna -->
+<!-- ------------------------------------------------------------- prossimi -->
 <section>
   <div class="wrap doppia">
     <div>
-      <h2 data-lingua="en">Every open task, whoever opened it</h2>
-      <h2 data-lingua="it">Tutti i task aperti, chiunque li abbia aperti</h2>
+      <h2 data-lingua="en">One row per project, not a pile of tasks</h2>
+      <h2 data-lingua="it">Una riga per progetto, non un mucchio di task</h2>
+      <ul class="elenco">
+        <li data-lingua="en"><span class="segno">01</span><div>
+          <b>Grouped by area</b>
+          <p>A thesis, a real repo with its worktrees, a client: whatever you told Plancia is the
+             parent, projects sit under it instead of in one flat list.</p></div></li>
+        <li data-lingua="it"><span class="segno">01</span><div>
+          <b>Raggruppate per area</b>
+          <p>Una tesi, un repo vero con i suoi worktree, un cliente: quello che hai detto a
+             Plancia è il padre, e i progetti stanno sotto invece che in una lista piatta.</p></div></li>
+
+        <li data-lingua="en"><span class="segno">02</span><div>
+          <b>The one thing that needs you</b>
+          <p>The first open task, or the next step a project declared for itself when nothing is
+             open, sorted by deadline and then by last activity.</p></div></li>
+        <li data-lingua="it"><span class="segno">02</span><div>
+          <b>La cosa che ti serve davvero</b>
+          <p>Il primo task aperto, o il prossimo passo che un progetto si è dato quando non ne ha
+             nessuno aperto, ordinati per scadenza e poi per ultima attività.</p></div></li>
+
+        <li data-lingua="en"><span class="segno">03</span><div>
+          <b>Seven rows, then "more"</b>
+          <p>Each area shows up to seven projects; the rest sit behind one click, so a busy area
+             does not push the others off the screen.</p></div></li>
+        <li data-lingua="it"><span class="segno">03</span><div>
+          <b>Sette righe, poi "altri"</b>
+          <p>Ogni area mostra fino a sette progetti; il resto sta a un clic di distanza, così
+             un'area piena non spinge fuori schermo le altre.</p></div></li>
+      </ul>
+    </div>
+    <div class="telaio" data-sale>
+      <div class="cima"><i></i><i></i><i></i><span>Today</span></div>
+      <img src="img/today.png" width="1600" height="1220"
+           alt="The Next up panel: one row per project, grouped by area, each with what is next and when.">
+    </div>
+  </div>
+</section>
+
+<!-- ------------------------------------------------------------- riprendi -->
+<section>
+  <div class="wrap doppia">
+    <div>
+      <h2 data-lingua="en">Resume reopens the conversation that wrote it</h2>
+      <h2 data-lingua="it">Riprendi riapre la conversazione che l'ha scritta</h2>
       <ul class="elenco">
         <li data-lingua="en"><span class="segno">01</span><div>
           <b>Three sources, one list</b>
@@ -143,28 +205,31 @@
              stessi cinque stati e ordinati per quello che ti serve davvero.</p></div></li>
 
         <li data-lingua="en"><span class="segno">02</span><div>
-          <b>Write how you want it done, then dispatch</b>
-          <p>From any row: a prompt, a project, an agent. Plancia runs it in the right folder and
-             tells you how it went.</p></div></li>
+          <b>Alive, closed, or lost</b>
+          <p>Alive, and Resume copies to the clipboard the message to paste into the conversation
+             that is already running. Closed, and it opens a Terminal on its own, right there.
+             Lost, and it says so, and starts over.</p></div></li>
         <li data-lingua="it"><span class="segno">02</span><div>
-          <b>Scrivi come lo vuoi fatto, e mandalo</b>
-          <p>Da ogni riga: un prompt, un progetto, un agente. Plancia lo lancia nella cartella
-             giusta e ti dice com'è andata.</p></div></li>
+          <b>Viva, chiusa o persa</b>
+          <p>Viva, e Riprendi copia negli appunti il messaggio da incollare nella conversazione
+             già aperta. Chiusa, e apre da sola un Terminale, lì per lì. Persa, e lo dice, e
+             riparte da zero.</p></div></li>
 
         <li data-lingua="en"><span class="segno">03</span><div>
-          <b>Plan only, unless you say otherwise</b>
-          <p>The default mode reads and reports without touching a file. Letting an agent modify
-             your code is a separate choice you make every time.</p></div></li>
+          <b>In the background, only if you choose it</b>
+          <p>Send a task off unattended instead: the switch that lets the agent write files is
+             off by default and turns amber only when you flip it, every time.</p></div></li>
         <li data-lingua="it"><span class="segno">03</span><div>
-          <b>Guarda e propone, se non dici altro</b>
-          <p>Il modo predefinito legge e riferisce senza toccare un file. Lasciargli modificare il
-             codice è una scelta a parte, che fai ogni volta.</p></div></li>
+          <b>In background, solo se lo scegli</b>
+          <p>Manda un task in background invece di riprenderlo: l'interruttore che lascia scrivere
+             i file all'agente è spento di default e diventa ambra solo quando lo accendi, ogni
+             volta.</p></div></li>
       </ul>
     </div>
     <div class="telaio" data-sale>
-      <div class="cima"><i></i><i></i><i></i><span>Board</span></div>
+      <div class="cima"><i></i><i></i><i></i><span>All tasks</span></div>
       <img src="img/board.png" width="1600" height="1220"
-           alt="The board: tasks from claude, codex and plancia in one list, each with a dispatch button.">
+           alt="All tasks: a Resume button on every row, and a background-dispatch button in the corner for sending work off unattended.">
     </div>
   </div>
 </section>
@@ -207,9 +272,9 @@
       </ul>
     </div>
     <div class="telaio" data-sale>
-      <div class="cima"><i></i><i></i><i></i><span>Projects</span></div>
-      <img src="img/projects.png" width="1600" height="1220"
-           alt="The projects view: each project with its sessions, commits and next step.">
+      <div class="cima"><i></i><i></i><i></i><span>Today</span></div>
+      <img src="img/recap.png" width="1600" height="1220"
+           alt="The recap read in one paragraph, with the proposal it ends on.">
     </div>
   </div>
 </section>
@@ -431,12 +496,12 @@
 
       <details class="domanda">
         <summary><span data-lingua="en">Can it change my files on its own?</span><span data-lingua="it">Può cambiare i miei file da solo?</span></summary>
-        <p data-lingua="en">Only if you pick the mode that says so, on that dispatch, that time. Everything
-          else, the voice and the recap and the proposals, reads and reports. The button that lets an agent
-          write turns red before you press it.</p>
-        <p data-lingua="it">Solo se scegli il modo che lo dice, su quel lancio, quella volta. Tutto il resto,
-          la voce e il riepilogo e le proposte, legge e riferisce. Il bottone che lascia scrivere un
-          agente diventa rosso prima che tu lo prema.</p>
+        <p data-lingua="en">Only if you turn on "can modify the project files" for that dispatch, that
+          time: it is off by default and turns amber only once you flip it, never on its own.
+          Everything else, the voice and the recap and the proposals, reads and reports.</p>
+        <p data-lingua="it">Solo se accendi tu l'interruttore "può modificare i file del progetto" per
+          quel lancio, quella volta: è spento di default e diventa ambra solo quando lo accendi,
+          mai da solo. Tutto il resto, la voce e il riepilogo e le proposte, legge e riferisce.</p>
       </details>
 
       <details class="domanda">
@@ -449,9 +514,9 @@
 
       <details class="domanda">
         <summary><span data-lingua="en">Windows? Linux?</span><span data-lingua="it">Windows? Linux?</span></summary>
-        <p data-lingua="en">The server, the board and the recap are plain Python and already run anywhere Python
-          runs, browser included. Only the native app, the menu bar and the voice panel are macOS.</p>
-        <p data-lingua="it">Il server, la lavagna e il riepilogo sono Python puro e girano già ovunque giri
+        <p data-lingua="en">The server, the dashboard and the recap are plain Python and already run anywhere
+          Python runs, browser included. Only the native app, the menu bar and the voice panel are macOS.</p>
+        <p data-lingua="it">Il server, la dashboard e il riepilogo sono Python puro e girano già ovunque giri
           Python, browser compreso. Sono macOS solo l'app nativa, la barra dei menu e il pannello
           vocale.</p>
       </details>
@@ -508,16 +573,77 @@ const PAGAMENTO = "";
   var lingua = salvata || ((navigator.language || 'en').slice(0, 2) === 'it' ? 'it' : 'en');
   imposta(lingua);
 
-  function imposta(l) {
+  function imposta(l, aMano) {
     document.documentElement.lang = l;
     document.querySelectorAll('.lingua button').forEach(function (b) {
       b.setAttribute('aria-pressed', String(b.dataset.imposta === l));
     });
     try { localStorage.setItem('plancia-lingua', l); } catch (e) {}
+    // Solo quando il cambio l'ha chiesto qualcuno. Al caricamento la lingua e'
+    // gia' quella giusta e non c'e' niente da raccontare: animarla vorrebbe
+    // dire far lampeggiare la pagina a ogni visita.
+    if (aMano) riscrive(l);
+  }
+
+  /* Il cambio di lingua, in movimento.
+     Le due lingue stanno tutte e due nel DOM e il CSS nasconde quella
+     sbagliata, quindi oggi il cambio e' uno scatto secco: la pagina si
+     sostituisce e non si capisce che e' la stessa pagina. Qui invece si
+     riscrive dall'alto in basso, una riga dietro l'altra, e resta la stessa
+     pagina con un'altra etichetta sopra. Che e' quello che plancia dice di se'
+     e che il testo da solo non fa vedere.
+
+     Si muove solo quello che entra. Chi esce non fa niente: e' il CSS a
+     toglierlo, ed e' giusto cosi', perche' una lingua che si dissolve mentre
+     l'altra arriva da' due pagine sovrapposte invece di una che cambia.
+
+     Senza JS non esiste nemmeno il selettore e la pagina resta in inglese,
+     completa. Senza GSAP i bottoni funzionano lo stesso, di scatto. Con
+     prefers-reduced-motion non si muove niente: la regola CSS del sito non
+     coprirebbe GSAP, che scrive stili inline, quindi il controllo si fa qui. */
+  var fermo = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  function riscrive(l) {
+    if (fermo || !window.gsap) return;
+
+    var tutte = document.querySelectorAll('[data-lingua]');
+    // Due clic in fretta possono lasciare una dissolvenza a meta' su una lingua
+    // che intanto e' stata nascosta. Si azzera prima di ripartire, cosi'
+    // nessun elemento resta con un'opacita' appesa addosso.
+    gsap.killTweensOf(tutte);
+    gsap.set(tutte, { clearProps: 'all' });
+
+    // Le posizioni si leggono adesso, dopo il cambio di lang, quando le nuove
+    // righe sono gia' visibili. E si anima solo cio' che l'occhio ha davvero
+    // davanti: se la cascata si spalmasse su tutte e 67 le righe della lingua,
+    // in pagina se ne vedrebbe una scheggia.
+    var visibili = [], entrano = [];
+    document.querySelectorAll('[data-lingua="' + l + '"]').forEach(function (n) {
+      var r = n.getBoundingClientRect();
+      if (!r.height) return;                       // nascosto dal CSS a questa larghezza
+      visibili.push(n);
+      if (r.bottom > 0 && r.top < innerHeight) entrano.push(n);
+    });
+    // Se la finestra non si lascia misurare -succede in certi contenitori, dove
+    // innerHeight torna 0- il filtro sopra svuoterebbe tutto e il cambio lingua
+    // resterebbe muto senza che nessuno se ne accorga. Meglio ripiegare sulle
+    // prime righe in ordine di documento che non animare niente.
+    if (!entrano.length) entrano = visibili.slice(0, 24);
+    if (!entrano.length) return;
+
+    gsap.from(entrano, {
+      opacity: 0,
+      y: 6,
+      duration: .28,
+      ease: 'power2.out',
+      stagger: { amount: .22 },
+      clearProps: 'all',
+      overwrite: true
+    });
   }
 
   document.querySelectorAll('.lingua button').forEach(function (b) {
-    b.addEventListener('click', function () { imposta(b.dataset.imposta); });
+    b.addEventListener('click', function () { imposta(b.dataset.imposta, true); });
   });
 
   // la barra si stacca dallo sfondo solo quando si è scesi

@@ -2,10 +2,12 @@
 
 import argparse
 import json
+import os
 import sys
 import webbrowser
+from datetime import datetime, timedelta, timezone
 
-from . import actions, briefing, config, store
+from . import __version__, actions, briefing, config, store
 
 
 def cmd_serve(args):
@@ -24,7 +26,7 @@ def cmd_sync(args):
             sys.stderr.flush()
 
     res = ingest.sync(full=args.full, progress=progress, skip_git=args.skip_git,
-                      modo=args.modo)
+                      modo=args.modo, ricalcola=args.riattribuisci)
     sys.stderr.write("\r\x1b[K")
     for key, value in res.items():
         print(f"{key}: {value}")
@@ -147,19 +149,101 @@ def cmd_lavagna(args):
 
 
 def cmd_manda(args):
-    from . import cantiere
+    from . import cantiere, riprendi
+    # LOTTO-L3-RIPRENDI-UI punto 3: "manda" resta un alias di "riprendi
+    # --background" per un rilascio, non sparisce di colpo sotto chi lo ha
+    # già in uno script. L'avviso va su stderr, cosi' uno script che legge
+    # solo stdout (es. `plancia manda ... | qualcosa`) non lo vede mescolato
+    # all'output vero.
+    print("«plancia manda» e' un alias di «plancia riprendi --background»: "
+          "sparira' in un prossimo rilascio.", file=sys.stderr)
     conn = store.connect()
     store.init_db(conn)
     try:
+        sessione = None
+        if args.task:
+            # Stessa logica del ramo background di cmd_riprendi: se il task
+            # ha già una sessione viva o chiusa, il lancio la riprende
+            # (--fork-session) invece di ripartire da un prompt scritto da
+            # zero. Senza questo, "manda" e "riprendi --background" sullo
+            # stesso task avrebbero comportamenti diversi, e non sarebbe più
+            # un vero alias.
+            task = actions.task_get(conn, args.task)
+            if task:
+                s = riprendi.stato(conn, task)
+                sessione = riprendi.sessione_da_riprendere(s)
         r = cantiere.avvia(conn, " ".join(args.titolo), progetto=args.progetto,
                            istruzioni=args.istruzioni or "", agente=args.agente,
-                           modo=args.modo, task_id=args.task, attendi=args.attendi)
+                           modo=args.modo, task_id=args.task, attendi=args.attendi,
+                           sessione=sessione)
         print(f"lancio #{r['run']} · {r['agente']} · {r['modo']} · {r['cwd']}")
         if args.attendi:
             d = cantiere.dettaglio(conn, r["run"])
             print(f"\n[{d['stato']}] {d['esito'][:600]}")
         else:
             print("gira in sottofondo: `plancia lanci` per vedere com'è andata")
+    finally:
+        conn.close()
+
+
+def cmd_riprendi(args):
+    from . import cantiere, riprendi
+    conn = store.connect()
+    store.init_db(conn)
+    try:
+        if args.annulla:
+            # LOTTO-L3-RITOCCO punto 8: prima si prendeva `Path(args.annulla).stem`
+            # (pensato per chi incolla un percorso di log), ma un batch è solo un
+            # nome ("backfill-<timestamp>"), non un file: `.stem` su un batch che
+            # contenesse un punto lo avrebbe troncato in silenzio, e riscriveva la
+            # stessa regola di validità di `riprendi._batch_valido` invece di
+            # riusarla. Ora la stringa passa così com'è, e viene rifiutata subito
+            # se non è un batch valido (vuoto, o con virgole/spazi: non sarebbe
+            # annullabile).
+            if not riprendi._batch_valido(args.annulla):
+                print(f"batch non valido: {args.annulla!r} (vuoto, o con virgole/spazi)")
+                return 1
+            n = riprendi.annulla(conn, args.annulla)
+            print(f"rimessi: {n}")
+            return
+        if args.backfill:
+            batch = "backfill-" + store.now()
+            esito = riprendi.backfill(conn, batch, secco=args.secco)
+            print(f"batch {batch}: trovati {esito['trovati']}, non trovati {esito['non_trovati']}"
+                  + (" (a secco: non ha scritto niente)" if args.secco else ""))
+            return
+        if not args.id:
+            print("serve un id di task, oppure --backfill o --annulla BATCH")
+            return 1
+        task = actions.task_get(conn, args.id)
+        if not task:
+            print(f"task {args.id} inesistente")
+            return 1
+        s = riprendi.stato(conn, task)
+        print(f"#{task['id']} {task['title']}  →  {s['stato']}: {s['motivo']}")
+        if args.dove:
+            print(f"  cwd: {s.get('cwd') or '(nessuna)'}")
+        if args.apri:
+            esito = riprendi.apri(task, conn)
+            if esito.get("stato") == "viva":
+                print(f"  messaggio (da mettere negli appunti a mano): {esito['messaggio']}")
+            else:
+                print(f"  lanciato: {esito.get('riga', '')}")
+                if esito.get("errore"):
+                    print(f"  attenzione: {esito['errore']}")
+            return
+        if args.background:
+            sessione = riprendi.sessione_da_riprendere(s)
+            esito = cantiere.avvia(
+                conn, task.get("title") or "", "", task.get("project_key"),
+                args.istruzioni or "", s.get("agent") or task.get("agent") or "claude",
+                args.scrive, None, task["id"], sessione=sessione)
+            print(f"lancio #{esito['run']} · {esito['agente']} · {esito['modo']} · {esito['cwd']}")
+            return
+        argv = riprendi.comando(task, s, conn)
+        if argv:
+            print("  comando: " + " ".join(argv))
+        print("  messaggio: " + riprendi.messaggio(task))
     finally:
         conn.close()
 
@@ -199,6 +283,55 @@ def cmd_eventi(args):
               f"{coda:<24}  {e['id']}")
 
 
+def cmd_riordina(args):
+    from pathlib import Path
+    from . import riordina
+    conn = store.connect()
+    store.init_db(conn)
+    try:
+        if args.proponi:
+            percorso, righe = riordina.proponi(conn, dove=args.dove)
+            conteggi = {}
+            for r in righe:
+                conteggi[r["regola"]] = conteggi.get(r["regola"], 0) + 1
+            print(f"scritto: {percorso}")
+            for regola in ("path", "repo", "prefisso"):
+                if conteggi.get(regola):
+                    print(f"  {regola}: {conteggi[regola]}")
+            print(f"  nessuna: {conteggi.get('nessuna', 0)}")
+        elif args.mostra:
+            try:
+                righe = riordina.carica(args.mostra)
+            except FileNotFoundError:
+                print(f"file non trovato: {args.mostra}")
+                # Difetto minore segnalato dal tester di L1-RIORDINA: usciva
+                # con 0 (successo) anche quando il file non c'era. `main()`
+                # fa `args.func(args) or 0`: senza un valore vero qui, None
+                # diventa 0 e uno script che controlla l'uscita non si accorge
+                # che il comando non ha fatto niente.
+                return 1
+            print(riordina.tabella(righe) if righe else "nessuna riga")
+        elif args.applica:
+            try:
+                esito = riordina.applica(conn, args.applica,
+                                         resto_in_cartelle_viste=args.resto_in_cartelle_viste)
+            except FileNotFoundError:
+                print(f"file non trovato: {args.applica}")
+                return 1
+            print(f"applicate: {esito['applicate']}  rifiutate: {esito['rifiutate']}")
+            for r in esito["dettagli_rifiutate"]:
+                print(f"  rifiutata {r['chiave']} -> {r['padre']}: {r['motivo']}")
+        elif args.annulla:
+            # Accetta sia il nome del batch (mappa4) sia il percorso del file
+            # (mappa4.json, o l'intero percorso di --dove): lo stem è quello
+            # che --applica ha usato come batch, ma è più naturale ripassare
+            # d'istinto lo stesso file o nome che si è appena visto.
+            n = riordina.annulla(conn, Path(args.annulla).stem)
+            print(f"rimesse: {n}")
+    finally:
+        conn.close()
+
+
 def cmd_projects(args):
     conn = store.connect()
     store.init_db(conn)
@@ -211,6 +344,63 @@ def cmd_projects(args):
         for p in rows:
             print(f"{p['status'][:8]:<9} {p['key']:<22} {p['name'][:38]:<39} "
                   f"{p['task_aperti'] or '':<3} {(p['last_activity'] or '')[:10]}")
+    finally:
+        conn.close()
+
+
+def cmd_sessioni(args):
+    """Il catalogo delle sessioni, raggruppato per il progetto vero.
+
+    Il progetto e' quello su cui la sessione ha lavorato, che non e' sempre
+    quello della cartella da cui e' stata aperta: la tilde in fondo alla riga
+    segna le sessioni attribuite guardando i percorsi che hanno toccato.
+    """
+    conn = store.connect()
+    store.init_db(conn)
+    try:
+        sql = ("SELECT s.session_id, s.started_at, COALESCE(s.agent,'claude') AS agente, "
+               "s.n_user, s.first_prompt, s.title, s.dedotto_da, s.dir_dedotta, "
+               "COALESCE(p.name, 'Senza progetto') AS progetto "
+               "FROM sessions s LEFT JOIN projects p ON p.id=s.project_id WHERE 1=1")
+        params = []
+        if not args.tutte:
+            sql += " AND " + store.visibile("s")
+        if args.progetto:
+            riga = store.get_project(conn, args.progetto)
+            if riga is None:
+                return print(f"nessun progetto che assomigli a «{args.progetto}»")
+            sql += " AND s.project_id=?"
+            params.append(riga["id"])
+        if args.giorni:
+            limite = (datetime.now(timezone.utc) - timedelta(days=args.giorni)
+                      ).strftime("%Y-%m-%dT%H:%M:%SZ")
+            sql += " AND s.started_at > ?"
+            params.append(limite)
+        righe = conn.execute(sql + " ORDER BY s.started_at DESC", params).fetchall()
+        if not righe:
+            return print("nessuna sessione")
+
+        gruppi = {}
+        for r in righe:
+            gruppi.setdefault(r["progetto"], []).append(r)
+        dedotte = 0
+        for progetto, elenco in sorted(
+                gruppi.items(), key=lambda kv: kv[1][0]["started_at"] or "", reverse=True):
+            print(f"\n{progetto}  ({len(elenco)})")
+            for r in elenco:
+                testo = " ".join((r["title"] or r["first_prompt"] or "").split())
+                if len(testo) > 70:
+                    testo = testo[:69] + "…"
+                marchio = ""
+                if r["dedotto_da"] == "percorsi":
+                    marchio, dedotte = " ~", dedotte + 1
+                print(f"  {(r['started_at'] or '')[:10]}  {r['agente']:<7} "
+                      f"{r['session_id'][:8]}  {r['n_user'] or 0:>4}  "
+                      f"{testo:<70}{marchio}".rstrip())
+        print(f"\n{len(righe)} sessioni"
+              + (f", {dedotte} col progetto dedotto dai percorsi (~)" if dedotte else ""))
+        if not args.tutte:
+            print("le chiamate interne e le sessioni temporanee sono fuori: --tutte le mostra")
     finally:
         conn.close()
 
@@ -269,6 +459,78 @@ def cmd_search(args):
             print("nessun risultato")
     finally:
         conn.close()
+
+
+def cmd_ricorda(args):
+    """Mostra cosa il richiamo direbbe a Claude su questa frase, e perché.
+
+    Serve a fidarsi. Il richiamo scrive nel contesto senza chiedere il permesso
+    e senza farsi vedere: se non c'è un modo di guardarlo da fuori, l'unico modo
+    di accorgersi che sbaglia è insospettirsi delle risposte, che è tardi.
+    """
+    from . import richiamo
+    conn = richiamo.apri_ro()
+    if conn is None:
+        print("archivio non ancora creato: lancia `plancia sync`")
+        return
+    tinta = sys.stdout.isatty()
+    testo = " ".join(args.testo)
+    try:
+        if args.tutto:
+            trovati = richiamo.cerca(conn, testo, soglia=0.0, limite=12,
+                                     tipi=None if args.progetti else richiamo.TIPI_TRASVERSALI)
+        else:
+            trovati = richiamo.cerca(conn, testo, escludi_scope=richiamo.cartella_sessione(os.getcwd()),
+                                     tipi=None if args.progetti else richiamo.TIPI_TRASVERSALI)
+    finally:
+        conn.close()
+
+    termini = richiamo.parole(testo)
+    if len(termini) < 2:
+        print("frase troppo corta o troppo comune: il richiamo tace")
+        return
+    if tinta:
+        print(f"\033[2mcercate: {' '.join(termini)}\033[0m")
+    else:
+        print(f"cercate: {' '.join(termini)}")
+
+    if not trovati:
+        print(f"\nniente sopra la soglia ({richiamo.SOGLIA}): il richiamo tace.")
+        print("`--tutto` mostra anche quello che ha scartato.")
+        return
+
+    print()
+    for t in trovati:
+        segno = "→" if t["punteggio"] >= richiamo.SOGLIA else " "
+        testa = f"{segno} {t['punteggio']:6.2f}  {t['nome']}"
+        print(f"\033[1m{testa}\033[0m" if tinta else testa)
+        riga = f"         {t['tipo']} · scritta in {richiamo._dove(t['scope'])}"
+        print(f"\033[2m{riga}\033[0m" if tinta else riga)
+        if t["descrizione"]:
+            print(f"         {t['descrizione'][:100]}")
+    if not args.tutto:
+        print(f"\n{len(trovati)} in contesto. `--tutto` mostra anche gli scartati.")
+
+
+def cmd_esporta(args):
+    """Scrive il cervello in un file solo, da consegnare a mano al telefono.
+
+    Non manda niente da nessuna parte: fa un file e ti dice dov'è. Il passaggio
+    al telefono lo fai tu, con AirDrop o dal Wi-Fi di casa, e in tutt'e due i
+    casi il file non tocca internet.
+    """
+    from pathlib import Path
+    from . import esporta as _esp
+    dove = Path(args.dove).expanduser() if args.dove else (
+        config.DATA_DIR / "memoria.html")
+    percorso, peso, quante = _esp.esporta(dove)
+    print(f"{quante} memorie · {peso / 1024:.0f} KB")
+    print(percorso)
+    print("\nsul telefono: AirDrop questo file, poi aprilo e «Aggiungi a schermata Home».")
+    print("vive lì e non chiede niente alla rete. per aggiornarlo, rifallo e rimandalo.")
+    if args.apri:
+        import subprocess
+        subprocess.run(["open", "-R", str(percorso)], check=False)
 
 
 def cmd_init(args):
@@ -380,12 +642,14 @@ def cmd_config(args):
 
 def build_parser():
     p = argparse.ArgumentParser(prog="plancia", description="Centro di controllo del lavoro con l'IA")
+    p.add_argument("--version", action="version", version=f"plancia {__version__}")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     s = sub.add_parser("serve", help="avvia la dashboard locale")
     s.add_argument("--port", type=int)
     s.add_argument("--open", action="store_true", help="apre il browser")
-    s.add_argument("--no-sync", action="store_true", help="non aggiornare all'avvio")
+    s.add_argument("--no-sync", action="store_true",
+                   help="nessun sync automatico, né all'avvio né periodico")
     s.set_defaults(func=cmd_serve)
 
     s = sub.add_parser("sync", help="rilegge sessioni, memoria, repo")
@@ -393,6 +657,8 @@ def build_parser():
     s.add_argument("--skip-git", action="store_true", help="salta GitHub e git locale")
     s.add_argument("--modo", choices=["tutto", "caldo", "freddo"], default="tutto",
                    help="caldo: solo sessioni e hook. freddo: memoria, repo, indice")
+    s.add_argument("--riattribuisci", action="store_true",
+                   help="ricalcola il progetto di tutte le sessioni dai percorsi toccati")
     s.set_defaults(func=cmd_sync)
 
     s = sub.add_parser("mcp", help="server MCP su stdio (lo lancia Claude Code)")
@@ -449,8 +715,28 @@ def build_parser():
     s.add_argument("--voce", choices=["auto", "voicebox", "say"])
     s.set_defaults(func=cmd_voice)
 
+    s = sub.add_parser("riordina", help="propone, applica e annulla la mappa dei padri")
+    g = s.add_mutually_exclusive_group(required=True)
+    g.add_argument("--proponi", action="store_true", help="calcola la mappa e la scrive in un file")
+    g.add_argument("--mostra", metavar="FILE", help="stampa in tabella la mappa di un file")
+    g.add_argument("--applica", metavar="FILE", help="assegna i padri della mappa di un file")
+    g.add_argument("--annulla", metavar="BATCH", help="rimette il padre di prima di un'applicazione")
+    s.add_argument("--dove", help="dove scrivere il JSON di --proponi "
+                                  "(default ~/.plancia/riordino/<data>.json)")
+    s.add_argument("--resto-in-cartelle-viste", action="store_true",
+                   help="con --applica: chi non ha un padre proposto finisce sotto "
+                        "'cartelle-viste' invece di restare com'era")
+    s.set_defaults(func=cmd_riordina)
+
     s = sub.add_parser("projects", help="elenco progetti")
     s.set_defaults(func=cmd_projects)
+
+    s = sub.add_parser("sessioni", help="il catalogo delle sessioni, per progetto")
+    s.add_argument("--progetto", help="solo quelle di un progetto")
+    s.add_argument("--giorni", type=int, help="solo le ultime N giornate")
+    s.add_argument("--tutte", action="store_true",
+                   help="anche le chiamate interne e le sessioni temporanee")
+    s.set_defaults(func=cmd_sessioni)
 
     s = sub.add_parser("lavagna", help="tutti i task aperti, di tutti gli agenti")
     s.add_argument("--stato", default="aperti")
@@ -466,6 +752,24 @@ def build_parser():
     s.add_argument("--task", type=int, help="id del task di Plancia da chiudere")
     s.add_argument("--attendi", action="store_true")
     s.set_defaults(func=cmd_manda)
+
+    s = sub.add_parser("riprendi", help="riprende un task nei suoi tre stati "
+                                        "(viva/chiusa/persa), o attribuisce sessioni vecchie")
+    s.add_argument("id", nargs="?", type=int, help="id del task di Plancia")
+    s.add_argument("--dove", action="store_true", help="mostra anche la cartella")
+    s.add_argument("--apri", action="store_true",
+                   help="lancia la ripresa in un Terminale visibile")
+    s.add_argument("--background", action="store_true",
+                   help="manda in sottofondo, come 'manda' ma sulla sessione del task")
+    s.add_argument("--scrive", action="store_true",
+                   help="con --background, puo' modificare i file del progetto")
+    s.add_argument("--istruzioni", help="con --background, come lo vuoi fatto")
+    s.add_argument("--backfill", action="store_true",
+                   help="attribuisce una sessione ai task che non ne hanno una")
+    s.add_argument("--secco", action="store_true",
+                   help="con --backfill, conta senza scrivere niente")
+    s.add_argument("--annulla", help="nome del batch di --backfill da disfare")
+    s.set_defaults(func=cmd_riprendi)
 
     s = sub.add_parser("lanci", help="i lavori mandati agli agenti")
     s.add_argument("id", nargs="?", type=int)
@@ -485,6 +789,19 @@ def build_parser():
         s.add_argument("--limit", type=int, default=10)
         s.add_argument("--project", help="restringe a un progetto")
         s.set_defaults(func=cmd_search)
+
+    s = sub.add_parser("ricorda", help="cosa richiamerebbe la memoria su questa frase")
+    s.add_argument("testo", nargs="+")
+    s.add_argument("--tutto", action="store_true",
+                   help="mostra anche quello che resta sotto la soglia")
+    s.add_argument("--progetti", action="store_true",
+                   help="include anche le memorie di progetto, di solito escluse")
+    s.set_defaults(func=cmd_ricorda)
+
+    s = sub.add_parser("esporta", help="il cervello in un file solo, per il telefono")
+    s.add_argument("--dove", help="dove scriverlo (predefinito ~/.plancia/memoria.html)")
+    s.add_argument("--apri", action="store_true", help="mostra il file nel Finder")
+    s.set_defaults(func=cmd_esporta)
 
     s = sub.add_parser("init", help="costruisce la mappa dei progetti dai tuoi dati")
     s.add_argument("--force", action="store_true", help="riscrive il seed esistente")

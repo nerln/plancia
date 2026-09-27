@@ -464,9 +464,15 @@ extension WKWebView {
     }
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKScriptMessageHandler {
     private var window: NSWindow!
     private var web: WKWebView!
+    /// Il materiale nativo dietro tutta la finestra (NSGlassEffectView o
+    /// NSVisualEffectView, vedi costruisciFinestra()). Tenuto in una
+    /// proprietà, non in una variabile locale, perché il gestore `tema` più
+    /// sotto deve poterci scrivere sopra dopo che la finestra è già in piedi:
+    /// vedi il commento su userContentController(_:didReceive:).
+    private var materiale: NSView!
     private let backend = Backend()
     private var statusItem: NSStatusItem!
     private lazy var voce = VoicePanel()
@@ -514,6 +520,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     }
 
     // --- finestra ---
+
     private func costruisciFinestra() {
         let conf = WKWebViewConfiguration()
         let js = """
@@ -521,8 +528,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         """
         conf.userContentController.addUserScript(
             WKUserScript(source: js, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        // Tema dell'app e tema della pagina (L4-VETRO-2, consigliata del
+        // critico del primo giro, punto 7 del lotto - contratto con
+        // L4-MEMORIA che possiede web/app.js e ci manda il messaggio). Il
+        // materiale nativo dietro la finestra segue l'aspetto di SISTEMA per
+        // default; la pagina invece segue `plancia-theme`, che può essere
+        // forzato al contrario del sistema, o lasciato su 'auto'. Senza
+        // questo handler, con tema forzato, il testo che sta FUORI dai
+        // pannelli di vetro (non coperto da nessun .panel/.card) si
+        // troverebbe sopra un materiale nativo del colore sbagliato - lo
+        // stesso problema che gli aloni di body::before risolvono fuori
+        // dall'app, qui dentro l'app. Quando la pagina calcola il tema
+        // risolto chiama webkit.messageHandlers.tema.postMessage('light'|
+        // 'dark'); questo handler forza l'aspetto sul MATERIALE, non sulla
+        // finestra (vedi userContentController(_:didReceive:) più sotto):
+        // window.appearance è l'antenato di cui web/app.js:2061-2075 legge
+        // prefers-color-scheme via matchMedia per risolvere 'auto', quindi
+        // se lo forzassimo qui, in modalità 'auto' il primo messaggio
+        // fisserebbe la vista sul valore di quel momento e un cambio di
+        // aspetto del sistema, dopo, non arriverebbe più alla pagina (il
+        // listener 'change' di matchMedia non scatterebbe mai). Il
+        // materiale, invece, è fratello della WKWebView sotto `contenuto`
+        // (vedi costruisciFinestra() più sotto): assegnargli .appearance non
+        // tocca ciò che la pagina legge, la pagina continua a seguire il
+        // sistema, e il materiale segue il tema che la pagina ha risolto.
+        // Una pagina vecchia (senza quella chiamata) non manda mai il
+        // messaggio: il materiale resta sull'aspetto di sistema,
+        // comportamento invariato.
+        conf.userContentController.add(self, name: "tema")
         web = WKWebView(frame: .zero, configuration: conf)
         web.navigationDelegate = self
+        // Vetro L2-GLASS: senza questo, WKWebView dipinge il proprio sfondo
+        // bianco/nero opaco prima ancora che arrivi il CSS della pagina, e
+        // col body trasparente su tutta la finestra dentro l'app (L4-VETRO,
+        // decisione 18/09: non più solo la colonna del rail, vedi
+        // web/style.css "dentro l'app") si vedrebbe quell'opaco al posto
+        // del materiale nativo dietro, su tutta la finestra.
+        web.setValue(false, forKey: "drawsBackground")
 
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1180, height: 780),
                           styleMask: [.titled, .closable, .miniaturizable, .resizable,
@@ -532,7 +574,70 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
         window.minSize = NSSize(width: 880, height: 560)
-        window.contentView = web
+        // Vetro L2-GLASS: la finestra stessa deve smettere di dipingere il
+        // proprio sfondo opaco, altrimenti coprirebbe il materiale nativo
+        // messo dietro tutta la finestra qui sotto ancora prima del WKWebView.
+        window.isOpaque = false
+        window.backgroundColor = .clear
+
+        let contenuto = NSView(frame: NSRect(x: 0, y: 0, width: 1180, height: 780))
+
+        // Il materiale nativo dietro TUTTA la finestra (decisione di Eugenio
+        // del 18/09/2026, L4-VETRO, parole sue: "voglio un più ampio uso di
+        // liquid glass per tutti i progetti ... deve sembrare tutto vetro":
+        // SOSTITUISCE il materiale di L2-GLASS, largo solo quanto il rail -
+        // Self.railW e la sua sincronia a mano con --rail-w in CSS sono
+        // spariti con lui, vedi docs/lotti/LOTTO-L4-VETRO.md). Da macOS 26
+        // NSGlassEffectView (Liquid Glass); prima NSVisualEffectView con
+        // .underWindowBackground - il materiale che Apple documenta apposta
+        // per lo sfondo di un'intera finestra, a differenza di .sidebar (una
+        // fascia stretta, giusto per il vecchio rail) o di .hudWindow (un
+        // pannello scuro isolato tipo HUD, non l'intera finestra): scelto
+        // per questo, non verificato a vista qui (l'app non si apre da
+        // questo lotto, lo fa il coordinatore con Eugenio). Sta DIETRO il
+        // WKWebView nello z-order (aggiunto per primo), prende il bounds del
+        // contentView con autoresizingMask width+height, così segue il
+        // ridimensionamento della finestra su entrambi gli assi: ogni
+        // pannello di vetro della pagina (non solo il rail, vedi
+        // web/style.css) lo lascia intravedere col proprio backdrop-filter.
+        // Proprietà dell'istanza (non `let` locale): il gestore `tema` più
+        // sotto ci scrive .appearance dopo che la finestra è già in piedi.
+        if #available(macOS 26, *) {
+            let vetro = NSGlassEffectView(frame: contenuto.bounds)
+            // Letto dall'header di questa macchina (macOS 27, Xcode 27,
+            // NSGlassEffectView.h): esistono anche cornerRadius, tintColor,
+            // style (.regular/.clear) e, da macOS 27, effectIsInteractive;
+            // c'è pure NSGlassEffectContainerView, ma è per fondere più
+            // NSGlassEffectView vicini fra loro (qui ce n'è uno solo, dietro
+            // tutta la finestra: non serve). cornerRadius resta 0 (il
+            // materiale copre l'intera finestra, senza angoli da smussare) e
+            // tintColor resta assente (l'ambra rimane solo un accento nei
+            // pannelli CSS, non nel materiale nativo).
+            // style, punto 6 del lotto L4-VETRO-2: esplicito a .regular, non
+            // lasciato al default implicito. .clear è pensato per un
+            // elemento isolato e piccolo (un controllo, una card fluttuante)
+            // che deve sembrare vetro sottile e quasi invisibile sopra
+            // quello che ha dietro; .regular è il materiale "di sistema",
+            // pensato per una superficie grande e stabile come lo sfondo di
+            // un'intera finestra - la stessa distinzione che la scelta di
+            // .underWindowBackground faceva già nel ramo else qui sotto.
+            vetro.style = .regular
+            self.materiale = vetro
+        } else {
+            let effetto = NSVisualEffectView(frame: contenuto.bounds)
+            effetto.material = .underWindowBackground
+            effetto.blendingMode = .behindWindow
+            effetto.state = .active
+            self.materiale = effetto
+        }
+        materiale.autoresizingMask = [.width, .height]
+
+        web.frame = contenuto.bounds
+        web.autoresizingMask = [.width, .height]
+        contenuto.addSubview(materiale)
+        contenuto.addSubview(web)
+        window.contentView = contenuto
+
         window.setFrameAutosaveName("PlanciaMain")
         window.center()
         window.makeKeyAndOrderFront(nil)
@@ -857,6 +962,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         if let ui = ui { s += "?ui=" + ui }
         if let v = vista { s += "#/" + v }
         if let u = URL(string: s) { web.load(URLRequest(url: u)) }
+    }
+
+    /// Il messaggio 'tema' della pagina (vedi il commento su
+    /// conf.userContentController.add(self, name: "tema") in
+    /// costruisciFinestra()): quando plancia-theme risolve un tema, la
+    /// pagina manda "light" o "dark" e il MATERIALE segue - non la finestra:
+    /// window.appearance è quello che matchMedia('prefers-color-scheme')
+    /// legge dentro la pagina (web/app.js:2061-2075) per risolvere 'auto', e
+    /// se lo forzassimo qui romperemmo 'auto' (vedi il commento più sopra su
+    /// costruisciFinestra()). Il materiale è un fratello della WKWebView
+    /// sotto lo stesso `contenuto`, quindi restare sul materiale non tocca
+    /// ciò che la pagina legge. Qualunque altro nome o corpo che non sia
+    /// esattamente questi due viene ignorato: un valore imprevisto non deve
+    /// lasciare il materiale in uno stato a metà.
+    func userContentController(_ userContentController: WKUserContentController,
+                                didReceive message: WKScriptMessage) {
+        guard message.name == "tema", let valore = message.body as? String else { return }
+        switch valore {
+        case "dark": materiale.appearance = NSAppearance(named: .darkAqua)
+        case "light": materiale.appearance = NSAppearance(named: .aqua)
+        default: break
+        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { false }

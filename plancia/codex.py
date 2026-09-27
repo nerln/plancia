@@ -202,9 +202,14 @@ def sync(conn, keywords, progress=None, full=False) -> int:
 BLOCCO = """
 [mcp_servers.plancia]
 command = "{cmd}"
-args = []
+args = ["--agente", "codex"]
 startup_timeout_sec = 30
 """
+# --agente codex e' il segnale con cui il server, lanciato da qui, sa di
+# essere dentro Codex e non dentro Claude Code: lo legge plancia/sessione.py
+# da sys.argv per scegliere come cercare la sessione (rollout piu' recente
+# nella cwd, invece di CLAUDE_CODE_SESSION_ID). bin/plancia-mcp non lo
+# consuma per altro, quindi non c'e' conflitto.
 
 
 def mcp_registrato() -> bool:
@@ -214,29 +219,26 @@ def mcp_registrato() -> bool:
         return False
 
 
-def registra_mcp() -> str:
-    """Aggiunge il server a config.toml senza toccare il resto.
-
-    Il file lo scrive Codex, quindi si appende un blocco e basta: riscriverlo
-    con una libreria TOML perderebbe commenti e ordine.
-    """
-    if not CONFIG_TOML.exists():
-        return f"Codex non è configurato ({CONFIG_TOML} non esiste)"
-    testo = CONFIG_TOML.read_text("utf-8")
-    if "[mcp_servers.plancia]" in testo:
-        return "server MCP già presente in Codex"
-    from . import setup_claude
-    setup_claude.backup(CONFIG_TOML)
-    if not testo.endswith("\n"):
-        testo += "\n"
-    CONFIG_TOML.write_text(testo + BLOCCO.format(cmd=setup_claude.MCP_CMD), "utf-8")
-    return f"server MCP registrato in {CONFIG_TOML}"
+def _sezione_plancia(testo: str) -> str:
+    """Il testo del blocco [mcp_servers.plancia] dentro `testo`, o "" se assente."""
+    i = testo.find("[mcp_servers.plancia]")
+    if i < 0:
+        return ""
+    j = testo.find("\n[", i + 1)
+    return testo[i:j] if j >= 0 else testo[i:]
 
 
-def rimuovi_mcp() -> str:
-    if not CONFIG_TOML.exists():
-        return "niente da togliere da Codex"
-    righe = CONFIG_TOML.read_text("utf-8").splitlines(True)
+def _blocco_ha_flag(testo: str) -> bool:
+    """True se il blocco già scritto porta --agente codex negli args."""
+    sezione = _sezione_plancia(testo)
+    return "--agente" in sezione and "codex" in sezione
+
+
+def _togli_blocco_plancia(testo: str) -> str:
+    """`testo` senza il blocco [mcp_servers.plancia], se c'è (righe, non stringhe:
+    stessa logica usata da `rimuovi_mcp()`, fattorizzata qui perché ora serve
+    anche a `registra_mcp()` per riscrivere un blocco vecchio)."""
+    righe = testo.splitlines(True)
     fuori, salta = [], False
     for riga in righe:
         if riga.strip() == "[mcp_servers.plancia]":
@@ -248,7 +250,51 @@ def rimuovi_mcp() -> str:
             else:
                 continue
         fuori.append(riga)
-    CONFIG_TOML.write_text("".join(fuori), "utf-8")
+    return "".join(fuori)
+
+
+def registra_mcp() -> str:
+    """Aggiunge il server a config.toml, o lo aggiorna se manca il flag.
+
+    Il file lo scrive Codex, quindi si appende un blocco e basta: riscriverlo
+    con una libreria TOML perderebbe commenti e ordine.
+
+    Misurato il 16/09/2026 su questa macchina: ~/.codex/config.toml aveva già
+    un blocco [mcp_servers.plancia] con `args = []` (registrato prima che
+    questo lotto aggiungesse il flag --agente codex). Uscire silenziosamente
+    con "già presente" in quel caso — come faceva questa funzione prima della
+    correzione — lascia il comando reale senza il flag per sempre: a
+    differenza di `install_mcp()` per Claude Code (che fa remove+add a ogni
+    installazione), niente altro qui aggiorna un blocco già scritto. Quindi:
+    blocco assente → lo si scrive; blocco presente senza il flag → lo si
+    toglie e si riscrive con il flag (con backup, come per una scrittura
+    nuova); blocco presente con il flag → niente da fare.
+    """
+    if not CONFIG_TOML.exists():
+        return f"Codex non è configurato ({CONFIG_TOML} non esiste)"
+    testo = CONFIG_TOML.read_text("utf-8")
+    from . import setup_claude
+    if "[mcp_servers.plancia]" in testo:
+        if _blocco_ha_flag(testo):
+            return "server MCP già presente in Codex"
+        setup_claude.backup(CONFIG_TOML)
+        testo = _togli_blocco_plancia(testo)
+        if not testo.endswith("\n"):
+            testo += "\n"
+        CONFIG_TOML.write_text(testo + BLOCCO.format(cmd=setup_claude.MCP_CMD), "utf-8")
+        return "server MCP aggiornato in Codex (flag --agente codex)"
+    setup_claude.backup(CONFIG_TOML)
+    if not testo.endswith("\n"):
+        testo += "\n"
+    CONFIG_TOML.write_text(testo + BLOCCO.format(cmd=setup_claude.MCP_CMD), "utf-8")
+    return f"server MCP registrato in {CONFIG_TOML}"
+
+
+def rimuovi_mcp() -> str:
+    if not CONFIG_TOML.exists():
+        return "niente da togliere da Codex"
+    testo = CONFIG_TOML.read_text("utf-8")
+    CONFIG_TOML.write_text(_togli_blocco_plancia(testo), "utf-8")
     return "server MCP tolto da Codex"
 
 

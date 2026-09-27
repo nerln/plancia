@@ -12,7 +12,7 @@ import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import config, store
+from . import attribuzione, config, slot, store
 
 # Oltre questa soglia una riga è quasi sempre un tool_result enorme: leggerla
 # con json.loads costa più di quello che vale. Se ne ricava il minimo a byte.
@@ -188,7 +188,14 @@ def sync_memory(conn, progress=None) -> int:
         meta, body = read_frontmatter(text)
         name = meta.get("name") or md.stem
         mtype = (meta.get("metadata") or {}).get("type", "") if isinstance(meta.get("metadata"), dict) else ""
-        links = sorted(set(re.findall(r"\[\[([^\]]+)\]\]", body)))
+        # I legami si cercano fuori dal codice. Dentro i backtick le doppie
+        # parentesi quadre non sono un rinvio a un'altra memoria: sono sintassi.
+        # `[[item]]`, chiave di un file di configurazione citata in una memoria,
+        # risultava un legame verso una memoria inesistente, e la diagnosi lo
+        # chiamava link rotto per sempre.
+        prosa = re.sub(r"```.*?```", " ", body, flags=re.S)
+        prosa = re.sub(r"`[^`\n]*`", " ", prosa)
+        links = sorted(set(re.findall(r"\[\[([^\]]+)\]\]", prosa)))
         pid_row = store.find_project_by_link(conn, "memory", name)
         pid = pid_row["id"] if pid_row else None
         if pid is None and mtype == "project" and name not in methods:
@@ -217,6 +224,19 @@ def sync_memory(conn, progress=None) -> int:
                         meta.get("description", ""), pid, name, "memory",
                         dedup=f"memoria:{name}:{mtime}")
         count += 1
+
+    # Una memoria cancellata restava nell'archivio per sempre: il giro leggeva
+    # i file che ci sono e non guardava mai quelli che non ci sono più. Due
+    # righe puntavano a file spariti da una settimana, e continuavano a contare
+    # nelle diagnosi e a farsi trovare dalla ricerca. Si toglie solo ciò che
+    # stava sotto la cartella dei progetti di Claude, che è l'unica di cui
+    # questo giro sa qualcosa.
+    radice = str(config.CLAUDE_PROJECTS)
+    spariti = [r["path"] for r in conn.execute("SELECT path FROM knowledge")
+               if (r["path"] or "").startswith(radice) and not Path(r["path"]).exists()]
+    if spariti:
+        conn.executemany("DELETE FROM knowledge WHERE path=?", [(p,) for p in spariti])
+        log(f"memoria: {len(spariti)} sparite", progress)
     conn.commit()
     log(f"memoria: {count} file", progress)
     return count
@@ -292,6 +312,60 @@ def progetto_per_cartella(conn, cwd: str, keywords: dict, testo: str = ""):
 
     Vale per Claude Code e per Codex: cambia il formato del transcript, non il
     significato di una cartella di lavoro.
+
+    Prima di L1-INGEST, una cwd mai vista diventava sempre una scheda radice:
+    122 progetti su una manciata di famiglie reali, perché nessuna
+    riorganizzazione dei manuali (`vesuvius`, `op6-causal`, ...) veniva mai
+    letta all'ingest. Ora, quando la cwd non risolve un progetto già noto
+    (`resolve_path_project`), si cerca un padre con `slot.padre_per_path`
+    prima di creare. Da qui scatta solo la regola del prefisso del nome
+    della cartella (`vesuvius` trova `vesuvius-op7`): una cwd sotto un path
+    già collegato a un manuale è un caso che `resolve_path_project` guarda
+    per prima (i suoi link path sono un sovrainsieme esatto di quelli della
+    regola 1 di `padre_per_path`), quindi la sessione finisce dentro il
+    manuale stesso e non arriva mai qui. La regola per path resta corretta,
+    provata in isolamento in `tools/prove/slot.py`, ma attraverso questa
+    funzione non scatta mai.
+
+    Tre casi:
+
+    1. La cwd è già coperta da un link path (di un manuale o di una scheda
+       nata prima): `resolve_path_project` la trova PRIMA di arrivare qui
+       (i suoi link path sono un sovrainsieme esatto di quelli guardati
+       dalla regola 1 di `padre_per_path`), quindi la sessione finisce
+       dentro quella scheda e questa funzione non crea niente. Non si
+       cambia questo comportamento da qui: lo decide `resolve_path_project`.
+
+    2. La cwd non risolve niente e la sua chiave (slug del basename) non
+       esiste ancora: nasce una scheda nuova con quella chiave, figlia del
+       padre trovato da `slot.padre_per_path` o, in mancanza, di
+       `cartelle-viste` (il contenitore delle cartelle senza un manuale che
+       le riconosca, creato una sola volta al bisogno).
+
+    3. La cwd non risolve niente ma la chiave esiste già, e appartiene a un
+       progetto ESTRANEO: un manuale con lo stesso nome della cartella, o
+       una scheda nata da un'altra cartella con lo stesso basename (se
+       quella scheda avesse un link path che copre questa cwd, saremmo nel
+       caso 1, non qui, quindi arrivare al caso 3 vuol dire che non ce l'ha).
+       Legare comunque questa cwd a quella scheda (com'era prima di
+       L1-INGEST-B) sporca un progetto che non c'entra niente: da quel
+       momento `resolve_path_project` gli attribuirebbe ogni sessione
+       futura sotto la cartella incidentale e le sue sottocartelle,
+       bypassando anche `cartelle-viste`. Si crea invece una SECONDA
+       scheda, con chiave disambiguata `<slug>-2`, `-3`, ... (la prima
+       libera), `auto=1`, lo stesso nome (senza suffisso) e lo stesso
+       criterio di padre del caso 2: così "una scheda per cwd" resta vero e
+       il progetto estraneo non riceve nessun link che non gli appartiene.
+
+    Il padre si assegna solo a una scheda nata in QUESTA chiamata (casi 2 e
+    3: sempre una riga appena inserita, mai una riassegnazione). Una scheda
+    con `parent_id` già valorizzato (a mano, o da un sync precedente) non
+    viene mai toccata (`WHERE ... AND parent_id IS NULL`), e la guardia
+    `padre_id != trovato` evita che una scheda diventi padre di se stessa:
+    capita quando il suo stesso basename è `cartelle-viste` vista per la
+    prima volta, prima che il contenitore esista già come riga propria
+    (`_cartella_vista` trova allora la riga appena inserita da questa
+    stessa chiamata, che è `trovato`).
     """
     if not cwd:
         return None
@@ -325,9 +399,102 @@ def progetto_per_cartella(conn, cwd: str, keywords: dict, testo: str = ""):
     trovato = resolve_path_project(conn, cwd)
     if trovato is None:
         base = os.path.basename(cwd.rstrip("/")) or cwd
-        trovato = store.upsert_project(conn, base, base.replace("-", " "), kind="progetto")
+        # La chiave può già appartenere a una scheda esistente (vedi il
+        # docstring sopra, caso 3): si controlla PRIMA di scrivere qualsiasi
+        # cosa. Se esiste già ma non risolveva la cwd (altrimenti saremmo
+        # già tornati sopra, da resolve_path_project), quella scheda è
+        # estranea: non le si lega questa cwd, si crea una scheda diversa
+        # con chiave disambiguata (L1-INGEST-B).
+        chiave = store.slugify(base)
+        esisteva = conn.execute(
+            "SELECT id FROM projects WHERE key=?", (chiave,)
+        ).fetchone()
+        if esisteva:
+            chiave = _chiave_libera(conn, chiave)
+        trovato = store.upsert_project(conn, chiave, base.replace("-", " "),
+                                       kind="progetto", auto=1)
         store.link_project(conn, trovato, "path", normale)
+        # Il padre si cerca e si scrive sempre qui: `trovato` è appena stato
+        # inserito (chiave nuova per costruzione, sia nel caso 2 sia nel
+        # caso 3), quindi l'UPDATE sotto non riassegna mai il parent_id di
+        # una scheda altrui.
+        padre_key = slot.padre_per_path(conn, normale)
+        padre_id = _progetto_id(conn, padre_key) if padre_key else _cartella_vista(conn)
+        # padre_id != trovato: guardia contro il caso in cui la scheda
+        # appena creata SIA _cartella_vista (cwd con basename
+        # "cartelle-viste"): senza questo controllo diventerebbe padre
+        # di se stessa.
+        if padre_id is not None and padre_id != trovato:
+            conn.execute(
+                "UPDATE projects SET parent_id=?, updated_at=? "
+                "WHERE id=? AND parent_id IS NULL",
+                (padre_id, store.now(), trovato))
     return trovato
+
+
+def _chiave_libera(conn, base: str) -> str:
+    """La prima chiave libera dopo una collisione: `<base>-2`, poi `-3`, ...
+
+    Il progetto che già ha la chiave `base` (un manuale, o una scheda nata
+    da un'altra cartella con lo stesso basename) resta intatto: la cwd
+    nuova prende sempre una chiave diversa dalla sua, mai la stessa.
+    """
+    n = 2
+    while conn.execute(
+        "SELECT 1 FROM projects WHERE key=?", (f"{base}-{n}",)
+    ).fetchone():
+        n += 1
+    return f"{base}-{n}"
+
+
+def _progetto_id(conn, key):
+    """L'id di un progetto dalla sua chiave esatta, o None se non esiste più
+    (caso limite: cancellato fra la lettura di slot.padre_per_path e qui)."""
+    riga = conn.execute("SELECT id FROM projects WHERE key=?", (key,)).fetchone()
+    return riga["id"] if riga else None
+
+
+def _cartella_vista(conn) -> int:
+    """Il contenitore delle cwd nuove senza nessun manuale che le rivendichi.
+
+    Creato una volta sola: le chiamate successive trovano la riga già
+    esistente e ne riusano l'id, senza riscrivere kind/hidden/summary ogni
+    volta (che sovrascriverebbe silenziosamente una modifica fatta a mano,
+    es. se qualcuno la nasconde in dashboard).
+    """
+    riga = conn.execute("SELECT id FROM projects WHERE key='cartelle-viste'").fetchone()
+    if riga:
+        return riga["id"]
+    return store.upsert_project(
+        conn, "cartelle-viste", "Cartelle viste", kind="infra", auto=0, hidden=0,
+        status="attivo",
+        summary="Le cartelle di lavoro viste per la prima volta, senza un progetto "
+                "manuale a cui appartenere.")
+
+
+def radici_e_generiche(conn):
+    """Le cartelle che valgono come progetto, e quelle che non dicono niente."""
+    drive = drive_root()
+    radici = attribuzione.radici_note(conn, drive=drive)
+    return (sorted(radici, key=len, reverse=True),
+            attribuzione.radici_generiche(drive=drive))
+
+
+def attribuisci(conn, cwd, keywords, testo, conteggi, radici, generiche):
+    """Il progetto di una sessione, con scritto come ci si e' arrivati.
+
+    Prima si guarda cosa ha toccato, poi da dove e' stata aperta. Se la cartella
+    dedotta non appartiene a nessun progetto si torna alla regola di prima, che
+    e' l'unica autorizzata a inventare un progetto nuovo.
+    """
+    esito = attribuzione.decidi(cwd, attribuzione.percorsi_finti(conteggi),
+                                radici, generiche)
+    pid = None
+    if esito["categoria"] == "progetto" and esito["dir"]:
+        pid = resolve_path_project(conn, esito["dir"])
+    if pid is None:
+        pid = progetto_per_cartella(conn, cwd, keywords, testo)
+    return pid, esito
 
 
 def _bytes_field(raw: bytes, key: bytes, limit: int = 400):
@@ -356,13 +523,18 @@ def _is_real_prompt(text: str) -> bool:
     return True
 
 
-def scan_session_file(path: Path, start_offset: int) -> dict:
-    """Legge solo i byte nuovi del transcript e ne ricava le statistiche."""
+def scan_session_file(path: Path, start_offset: int, radici=None) -> dict:
+    """Legge solo i byte nuovi del transcript e ne ricava le statistiche.
+
+    `radici` sono le cartelle note, gia' ordinate dalla piu' profonda: se ci
+    sono, si conta anche quali di quelle la sessione ha toccato. Costa niente
+    perche' i `tool_use` vengono aperti comunque per contare i tool.
+    """
     acc = {
         "offset": start_offset, "cwd": None, "branch": None, "title": None,
         "first_prompt": None, "queued_prompt": None, "ts_min": None, "ts_max": None,
         "n_user": 0, "n_assistant": 0, "n_tools": 0, "models": set(),
-        "tools": {}, "in_tokens": 0, "out_tokens": 0,
+        "tools": {}, "in_tokens": 0, "out_tokens": 0, "radici": {}, "n_percorsi": 0,
     }
     with open(path, "rb") as fh:
         if start_offset:
@@ -441,11 +613,60 @@ def scan_session_file(path: Path, start_offset: int) -> dict:
                         acc["n_tools"] += 1
                         name = item.get("name", "?")
                         acc["tools"][name] = acc["tools"].get(name, 0) + 1
+                        if radici is not None:
+                            _segna(acc, attribuzione.percorsi_da_tool_use(item), radici)
+    return acc
+
+
+def _segna(acc: dict, percorsi, radici) -> None:
+    """Somma i percorsi di un tool_use alle radici gia' viste.
+
+    `n_percorsi` conta tutti i percorsi visti, anche quelli fuori dalle radici:
+    serve come numero d'ordine, per sapere quale cartella e' stata toccata per
+    prima quando due pareggiano.
+    """
+    for percorso in percorsi:
+        radice = attribuzione.radice_di(percorso, radici)
+        acc["n_percorsi"] += 1
+        if not radice:
+            continue
+        voce = acc["radici"].get(radice)
+        if voce is None:
+            acc["radici"][radice] = [1, acc["n_percorsi"]]
+        else:
+            voce[0] += 1
+
+
+def conta_percorsi(path: Path, radici, offset: int = 0) -> dict:
+    """Le radici toccate da un transcript, senza leggerne altro.
+
+    Serve alla riattribuzione, che deve ripassare tutto l'archivio: una riga che
+    non nomina un `tool_use` viene scartata dal confronto sui byte, senza passare
+    da json. Misurato il 3 settembre 2026 su 470 transcript e 1,7 GB: tre secondi.
+    """
+    acc = {"radici": {}, "n_percorsi": 0}
+    with open(path, "rb") as fh:
+        if offset:
+            fh.seek(offset)
+        for raw in fh:
+            # Il confronto e' su `"tool_use"` e non su `"type":"tool_use"`: fra
+            # la chiave e il valore ci puo' stare uno spazio, e `"tool_use_id"`
+            # non contiene la virgoletta di chiusura, quindi non passa lo stesso.
+            if b'"tool_use"' not in raw or len(raw) > MAX_PARSE:
+                continue
+            try:
+                rec = json.loads(raw)
+            except Exception:
+                continue
+            for item in (rec.get("message") or {}).get("content") or []:
+                if isinstance(item, dict) and item.get("type") == "tool_use":
+                    _segna(acc, attribuzione.percorsi_da_tool_use(item), radici)
     return acc
 
 
 def sync_sessions(conn, keywords, progress=None, full=False) -> int:
     files = sorted(config.CLAUDE_PROJECTS.glob("*/*.jsonl"))
+    radici, generiche = radici_e_generiche(conn)
     updated = 0
     for i, path in enumerate(files):
         sid = path.stem
@@ -456,8 +677,8 @@ def sync_sessions(conn, keywords, progress=None, full=False) -> int:
             continue
         row = conn.execute(
             "SELECT id, bytes_scanned, file_size, models, tools, title, first_prompt, "
-            "started_at, n_user, n_assistant, n_tools, in_tokens, out_tokens, project_id "
-            "FROM sessions WHERE session_id=?", (sid,)
+            "started_at, n_user, n_assistant, n_tools, in_tokens, out_tokens, project_id, "
+            "radici_toccate FROM sessions WHERE session_id=?", (sid,)
         ).fetchone()
         offset = 0 if (full or row is None) else (row["bytes_scanned"] or 0)
         if offset > size:
@@ -466,7 +687,7 @@ def sync_sessions(conn, keywords, progress=None, full=False) -> int:
             continue
         log(f"sessioni {i + 1}/{len(files)} · {sid[:8]} ({size // 1024} KB)", progress)
         try:
-            acc = scan_session_file(path, offset)
+            acc = scan_session_file(path, offset, radici)
         except OSError:
             continue
 
@@ -491,26 +712,38 @@ def sync_sessions(conn, keywords, progress=None, full=False) -> int:
         out_tok = old("out_tokens") + acc["out_tokens"]
         cwd = acc["cwd"]
 
+        # I conteggi di prima si sommano a quelli dei byte appena letti: il sync
+        # incrementale vede solo la coda del transcript, e da sola direbbe che la
+        # sessione ha lavorato dove ha lavorato nell'ultima ora.
+        vecchie = store.jloads(row["radici_toccate"], {}) if (row and offset) else {}
+        conteggi = attribuzione.fondi(vecchie, acc["radici"])
+
         pid = row["project_id"] if row else None
+        esito = {"dir": None, "da": None, "n": 0}
         if cwd:
-            pid = progetto_per_cartella(conn, cwd, keywords,
-                                        f"{title or ''} {first_prompt or ''}")
+            pid, esito = attribuisci(conn, cwd, keywords,
+                                     f"{title or ''} {first_prompt or ''}",
+                                     conteggi, radici, generiche)
 
         conn.execute(
             "INSERT INTO sessions(session_id, project_id, file, bytes_scanned, file_size, "
             "cwd, git_branch, title, first_prompt, started_at, ended_at, n_user, n_assistant, "
-            "n_tools, models, tools, in_tokens, out_tokens, updated_at) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+            "n_tools, models, tools, in_tokens, out_tokens, dir_dedotta, dedotto_da, "
+            "n_percorsi, radici_toccate, updated_at) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
             "ON CONFLICT(session_id) DO UPDATE SET project_id=excluded.project_id, "
             "bytes_scanned=excluded.bytes_scanned, file_size=excluded.file_size, "
             "cwd=COALESCE(excluded.cwd, sessions.cwd), git_branch=COALESCE(excluded.git_branch, sessions.git_branch), "
             "title=excluded.title, first_prompt=excluded.first_prompt, ended_at=excluded.ended_at, "
             "n_user=excluded.n_user, n_assistant=excluded.n_assistant, n_tools=excluded.n_tools, "
             "models=excluded.models, tools=excluded.tools, in_tokens=excluded.in_tokens, "
-            "out_tokens=excluded.out_tokens, updated_at=excluded.updated_at",
+            "out_tokens=excluded.out_tokens, dir_dedotta=excluded.dir_dedotta, "
+            "dedotto_da=excluded.dedotto_da, n_percorsi=excluded.n_percorsi, "
+            "radici_toccate=excluded.radici_toccate, updated_at=excluded.updated_at",
             (sid, pid, str(path), acc["offset"], size, cwd, acc["branch"], title,
              (first_prompt or "")[:2000], started, ended, n_user, n_assistant, n_tools,
-             json.dumps(models), json.dumps(prev_tools), in_tok, out_tok, store.now()),
+             json.dumps(models), json.dumps(prev_tools), in_tok, out_tok,
+             esito["dir"], esito["da"], esito["n"], json.dumps(conteggi), store.now()),
         )
         label = title or (first_prompt or "sessione")[:90]
         store.add_event(conn, started, "sessione", label,
@@ -543,6 +776,68 @@ def reassign_generic(conn, keywords) -> int:
                          (pid, s["id"]))
             moved += 1
     return moved
+
+
+def riattribuisci(conn, progress=None) -> dict:
+    """Ricalcola l'attribuzione di tutte le sessioni gia' in archivio.
+
+    Serve quando le radici note cambiano: un progetto nuovo, un repo clonato,
+    una cartella spostata. Rilegge i transcript di Claude da capo perche' i
+    percorsi toccati non erano stati salvati, ma legge solo i `tool_use`: sui
+    470 transcript di questa macchina, 1,7 GB, ci mette tre secondi. Le sessioni
+    di Codex passano lo stesso, per la sola regola sulla cartella: quando nasce
+    un progetto, anche le loro devono poterci finire dentro.
+
+    Non crea progetti. Se la cartella dedotta non appartiene a nessun progetto
+    la sessione resta dov'era, e `dir_dedotta` dice comunque dove ha lavorato:
+    e' un'informazione, non una scusa per riempire l'elenco dei progetti.
+    """
+    radici, generiche = radici_e_generiche(conn)
+    righe = conn.execute(
+        "SELECT id, session_id, file, cwd, project_id, COALESCE(agent,'claude') AS agente "
+        "FROM sessions ORDER BY started_at DESC").fetchall()
+    esiti = {"lette": 0, "dedotte": 0, "spostate": 0, "senza_file": 0}
+    for i, riga in enumerate(righe):
+        if i % 25 == 0:
+            log(f"riattribuisco {i + 1}/{len(righe)}", progress)
+        # I percorsi toccati si leggono solo dai transcript di Claude: il
+        # rollout di Codex ha un altro formato. Per tutte le altre sessioni
+        # vale comunque la regola sulla cartella, che dopo un progetto nuovo
+        # puo' dare una risposta diversa da quella salvata.
+        percorso = Path(riga["file"]) if (riga["file"] and riga["agente"] == "claude") else None
+        conteggi = {}
+        if percorso and percorso.exists():
+            try:
+                conteggi = conta_percorsi(percorso, radici)["radici"]
+                esiti["lette"] += 1
+            except OSError:
+                pass
+        else:
+            esiti["senza_file"] += 1
+        esito = attribuzione.decidi(riga["cwd"],
+                                    attribuzione.percorsi_finti(conteggi),
+                                    radici, generiche)
+        pid = riga["project_id"]
+        if esito["categoria"] == "progetto" and esito["dir"]:
+            trovato = resolve_path_project(conn, esito["dir"])
+            if trovato:
+                pid = trovato
+        if esito["da"] == "percorsi":
+            esiti["dedotte"] += 1
+        conn.execute(
+            "UPDATE sessions SET project_id=?, dir_dedotta=?, dedotto_da=?, "
+            "n_percorsi=?, radici_toccate=? WHERE id=?",
+            (pid, esito["dir"], esito["da"], esito["n"], json.dumps(conteggi), riga["id"]))
+        if pid != riga["project_id"]:
+            esiti["spostate"] += 1
+            conn.execute("UPDATE events SET project_id=? WHERE ref=? AND kind='sessione'",
+                         (pid, riga["session_id"]))
+            store.touch_project(conn, pid, store.now())
+        if i % 50 == 0:
+            conn.commit()
+    conn.commit()
+    log(f"sessioni riattribuite: {esiti['spostate']} spostate su {len(righe)}", progress)
+    return esiti
 
 
 # --------------------------------------------------------------------------
@@ -850,7 +1145,8 @@ def cura_progetti(conn, progress=None) -> int:
     return cur.rowcount
 
 
-def sync(full=False, progress=None, skip_git=False, modo="tutto") -> dict:
+def sync(full=False, progress=None, skip_git=False, modo="tutto",
+         ricalcola=False) -> dict:
     """Le fonti, lette in due giri diversi.
 
     Caldo: la coda degli hook e la coda nuova dei transcript. Sono pochi byte,
@@ -877,6 +1173,12 @@ def sync(full=False, progress=None, skip_git=False, modo="tutto") -> dict:
         from . import codex, lavagna
         result["codex"] = codex.sync(conn, keywords, progress, full=full)
         result["lavagna"] = lavagna.sync(conn, progress)
+
+    # Dopo il giro caldo, cosi' ricalcola anche le sessioni appena arrivate, e
+    # fuori dai due giri perche' non e' una fonte: e' una rilettura di quello
+    # che c'e' gia'.
+    if ricalcola:
+        result["riattribuite"] = riattribuisci(conn, progress)
 
     if freddo:
         result["memoria"] = sync_memory(conn, progress)

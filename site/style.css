@@ -3,7 +3,81 @@
  * Stessa voce dell'app: serif per i titoli, monospaziato per i numeri, sans per
  * il resto. Un accento solo. Qui però c'è più aria: una pagina che deve
  * convincere respira più di uno strumento che deve informare.
+ *
+ * Font vendorizzati in locale, stessi file e stessa licenza della dashboard
+ * (vedi font/LICENSE-fonts.txt): nessuna richiesta a Google a runtime. La
+ * scala --t-* è la stessa dell'app dove un valore combacia, più due gradini
+ * che l'app non ha (--t-hero, --t-lead) per il titolo e il paragrafo del
+ * hero: anche il hero, che deve convincere più che informare, sta sulla
+ * scala e non su una taglia scritta a mano. La prova sui font-size di
+ * web/style.css non copre questo file (è un altro CSS): qui la stessa
+ * regola la applica tools/prove/sito.py.
  */
+
+@font-face {
+  font-family: "Fraunces";
+  font-style: normal;
+  font-weight: 300 700;
+  font-display: swap;
+  src: url("font/fraunces.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Fraunces";
+  font-style: normal;
+  font-weight: 300 700;
+  font-display: swap;
+  src: url("font/fraunces-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: "IBM Plex Sans";
+  font-style: normal;
+  font-weight: 400 600;
+  font-display: swap;
+  src: url("font/plex-sans.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "IBM Plex Sans";
+  font-style: normal;
+  font-weight: 400 600;
+  font-display: swap;
+  src: url("font/plex-sans-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("font/plex-mono-400.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("font/plex-mono-400-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("font/plex-mono-500.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("font/plex-mono-500-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
 
 :root {
   --ink-0: #090c11;
@@ -25,9 +99,21 @@
 
   --r-tag: 3px; --r-card: 10px; --r-panel: 14px; --r-pill: 999px;
 
-  --serif: ui-serif, "New York", "Iowan Old Style", Palatino, Georgia, serif;
-  --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", Inter, system-ui, sans-serif;
-  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+  --serif: "Fraunces", ui-serif, "New York", "Iowan Old Style", Palatino, Georgia, serif;
+  --sans: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "SF Pro Text", Inter, system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+
+  /* stessa scala della dashboard (web/style.css): qui si usa solo dove un
+     valore combacia già, il resto del sito resta a misura libera. Stessa
+     regola dei due pesi: 400/600 per sans e serif, ma 400/500 per il mono
+     (IBM Plex Mono non ha un 600 vendorizzato, vedi il commento su html
+     più sotto e web/style.css). --t-hero e --t-lead sono i due gradini che
+     il resto della scala non ha (il hero deve poter crescere con il
+     viewport più della dashboard): stanno sulla stessa scala, non fuori
+     da essa, e la prova su .apertura/.sotto/.patto controlla che non ci
+     sia più nessun font-size scritto a mano lì dentro. */
+  --t-xs: 11px; --t-sm: 12.5px; --t-md: 14px; --t-lg: 17px; --t-xl: 22px; --t-display: 30px;
+  --t-hero: clamp(38px, 5.2vw, 60px); --t-lead: clamp(17px, 2.1vw, 20px);
 
   --leggio: 1120px;
 }
@@ -35,6 +121,11 @@
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
 html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
+/* Guardia contro la sintesi del grassetto: IBM Plex Mono ha solo i pesi 400 e
+   500, quindi un 600 su var(--mono) verrebbe ingrassato artificialmente dal
+   browser invece di restare sul 500 vero (vedi web/style.css per la stessa
+   regola e la misura). */
+html { font-synthesis: none; }
 
 body {
   background: var(--ink-0);
@@ -60,7 +151,7 @@ body::before {
 
 a { color: inherit; }
 
-h1, h2, h3 { font-family: var(--serif); font-weight: 500; letter-spacing: -.02em; line-height: 1.1; }
+h1, h2, h3 { font-family: var(--serif); font-weight: 400; letter-spacing: -.02em; line-height: 1.1; }
 
 .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
 
@@ -81,12 +172,12 @@ header.barra .wrap { display: flex; align-items: center; gap: var(--s5); height:
 .bussola { width: 22px; height: 22px; flex: none; }
 
 nav.menu { display: flex; gap: var(--s5); margin-left: auto; align-items: center; }
-nav.menu a { color: var(--text-2); text-decoration: none; font-size: 14px; transition: color 140ms; }
+nav.menu a { color: var(--text-2); text-decoration: none; font-size: var(--t-md); transition: color 140ms; }
 nav.menu a:hover { color: var(--text); }
 
 .lingua { display: flex; gap: 2px; border: 1px solid var(--line); border-radius: var(--r-pill); padding: 2px; }
 .lingua button {
-  font: 500 11px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase;
+  font: 500 var(--t-xs)/1 var(--mono); letter-spacing: .08em; text-transform: uppercase;
   background: none; border: 0; color: var(--text-3); cursor: pointer;
   padding: 5px 9px; border-radius: var(--r-pill);
 }
@@ -97,7 +188,7 @@ nav.menu a:hover { color: var(--text); }
 .btn {
   display: inline-flex; align-items: center; gap: 8px;
   padding: 12px 20px; border-radius: var(--r-pill);
-  font: 500 14px/1 var(--sans); text-decoration: none; cursor: pointer;
+  font: 600 var(--t-md)/1 var(--sans); text-decoration: none; cursor: pointer;
   border: 1px solid var(--line-strong); color: var(--text); background: var(--ink-2);
   transition: transform 140ms cubic-bezier(.25,1,.5,1), background 140ms, border-color 140ms;
 }
@@ -120,12 +211,26 @@ nav.menu a:hover { color: var(--text); }
 }
 .occhiello .punto { width: 6px; height: 6px; border-radius: 50%; background: var(--nominal); }
 
-.apertura h1 { font-size: clamp(38px, 5.2vw, 60px); max-width: 17ch; }
+.apertura h1 { font-size: var(--t-hero); max-width: 17ch; }
 .apertura h1 em { font-style: normal; color: var(--amber); }
 .apertura .sotto {
-  font-size: clamp(17px, 2.1vw, 20px); color: var(--text-2);
+  font-size: var(--t-lead); color: var(--text-2);
   max-width: 56ch; margin-top: var(--s5); line-height: 1.55;
 }
+/* Le tre frasi del verdetto (LOTTO-L4-SITO): una riga per progetto, Riprendi
+   riapre la conversazione, il resto ripiegato. Stanno nel hero ma non sono il
+   titolo: --t-lg è il gradino più grande della scala che non è --t-hero o
+   --t-lead, e qui basta e avanza. */
+.patto { list-style: none; margin-top: var(--s5); display: grid; gap: 6px; }
+.patto li {
+  font-size: var(--t-lg); color: var(--text-2);
+  padding-left: 20px; position: relative; max-width: 56ch;
+}
+.patto li::before {
+  content: ""; position: absolute; left: 0; top: 10px;
+  width: 8px; height: 1px; background: var(--amber-line);
+}
+
 .azioni { display: flex; flex-wrap: wrap; gap: var(--s3); margin-top: var(--s6); align-items: center; }
 .postilla { font-size: 13px; color: var(--text-3); margin-top: var(--s4); max-width: 62ch; }
 .postilla code { font-family: var(--mono); color: var(--text-2); }
@@ -139,7 +244,7 @@ nav.menu a:hover { color: var(--text); }
 }
 .prove div { padding: var(--s5) var(--s5) var(--s5) 0; }
 .prove div + div { border-left: 1px solid var(--line); padding-left: var(--s5); }
-.prove .n { font: 500 26px/1 var(--mono); letter-spacing: -.02em; }
+.prove .n { font: 500 26px/1 var(--mono); letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
 .prove .n.zero { color: var(--nominal); }
 .prove p { font-size: 13px; color: var(--text-3); margin-top: 6px; }
 
@@ -167,7 +272,7 @@ nav.menu a:hover { color: var(--text); }
 
 section { padding: var(--s9) 0; }
 section h2 { font-size: clamp(28px, 3.6vw, 40px); max-width: 20ch; }
-section .guida { color: var(--text-2); max-width: 54ch; margin-top: var(--s4); font-size: 17px; }
+section .guida { color: var(--text-2); max-width: 54ch; margin-top: var(--s4); font-size: var(--t-lg); }
 
 .doppia { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s8); align-items: center; }
 .doppia.rovescia > *:first-child { order: 2; }
@@ -178,20 +283,20 @@ section .guida { color: var(--text-2); max-width: 54ch; margin-top: var(--s4); f
   display: grid; grid-template-columns: 22px 1fr; gap: var(--s3); align-items: start;
 }
 .elenco li:last-child { border-bottom: 1px solid var(--line); }
-.elenco b { font: 500 15px/1.4 var(--sans); display: block; }
+.elenco b { font: 600 15px/1.4 var(--sans); display: block; }
 .elenco p { color: var(--text-2); font-size: 14.5px; margin-top: 4px; }
 .elenco .segno { font: 500 12px/1.7 var(--mono); color: var(--amber); }
 
 /* --------------------------------------------------------------- provenienza */
 
-.provenienza { width: 100%; border-collapse: collapse; margin-top: var(--s6); font-size: 14px; }
+.provenienza { width: 100%; border-collapse: collapse; margin-top: var(--s6); font-size: var(--t-md); }
 .provenienza th {
-  text-align: left; font: 500 11px/1 var(--mono); letter-spacing: .12em;
+  text-align: left; font: 500 var(--t-xs)/1 var(--mono); letter-spacing: .12em;
   text-transform: uppercase; color: var(--text-3); padding-bottom: var(--s3);
   border-bottom: 1px solid var(--line);
 }
 .provenienza td { padding: var(--s3) var(--s4) var(--s3) 0; border-bottom: 1px solid var(--line); vertical-align: top; }
-.provenienza td.percorso { font-family: var(--mono); font-size: 12.5px; color: var(--text-2); white-space: nowrap; }
+.provenienza td.percorso { font-family: var(--mono); font-size: var(--t-sm); color: var(--text-2); white-space: nowrap; }
 .provenienza td.verso { color: var(--text-3); max-width: 44ch; }
 .provenienza tr td:last-child { color: var(--text-2); }
 
@@ -203,8 +308,8 @@ section .guida { color: var(--text-2); max-width: 54ch; margin-top: var(--s4); f
   padding: var(--s6); background: var(--ink-1); display: flex; flex-direction: column;
 }
 .prezzo.scelto { border-color: var(--amber-line); background: linear-gradient(180deg, #28211f, var(--ink-1) 60%); }
-.prezzo h3 { font-size: 22px; }
-.prezzo .cifra { font: 500 40px/1 var(--mono); letter-spacing: -.03em; margin: var(--s4) 0 var(--s2); }
+.prezzo h3 { font-size: var(--t-xl); }
+.prezzo .cifra { font: 500 40px/1 var(--mono); letter-spacing: -.03em; margin: var(--s4) 0 var(--s2); font-variant-numeric: tabular-nums; }
 .prezzo .cifra small { font-size: 15px; color: var(--text-3); letter-spacing: 0; }
 .prezzo .nota { color: var(--text-2); font-size: 14.5px; }
 .prezzo ul { list-style: none; margin: var(--s5) 0 var(--s6); }
@@ -220,7 +325,7 @@ section .guida { color: var(--text-2); max-width: 54ch; margin-top: var(--s4); f
 .domanda summary {
   cursor: pointer; list-style: none; padding: var(--s5) 0;
   display: flex; gap: var(--s4); align-items: baseline;
-  font: 500 16.5px/1.4 var(--sans);
+  font: 600 16.5px/1.4 var(--sans);
 }
 .domanda summary::-webkit-details-marker { display: none; }
 .domanda summary > span { flex: 1; }
@@ -234,7 +339,7 @@ section .guida { color: var(--text-2); max-width: 54ch; margin-top: var(--s4); f
 
 footer { border-top: 1px solid var(--line); padding: var(--s7) 0 var(--s8); margin-top: var(--s8); }
 footer .wrap { display: flex; flex-wrap: wrap; gap: var(--s5); align-items: baseline; }
-footer a { color: var(--text-2); text-decoration: none; font-size: 14px; }
+footer a { color: var(--text-2); text-decoration: none; font-size: var(--t-md); }
 footer a:hover { color: var(--text); }
 footer .firma { color: var(--text-3); font-size: 13px; margin-left: auto; }
 

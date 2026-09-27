@@ -8,6 +8,7 @@ cose che si sono rotte almeno una volta, messe in fila, così prima di una
 release si sa in dieci secondi se una di quelle è tornata a rompersi.
 """
 
+import importlib.util
 import io
 import json
 import os
@@ -392,6 +393,120 @@ def main():
     prova("nessun commit finisce nella sessione di un altro progetto",
           sbagliati == 0, f"sbagliati: {sbagliati}")
 
+    # --------------------------------------------------- progetto dai percorsi
+    # La cartella da cui una sessione e' stata aperta quasi non dice niente:
+    # queste sono le regole con cui si guarda invece cosa ha toccato.
+    from plancia import attribuzione as attr  # noqa: E402
+    CASA_FINTA = "/Users/tizio"
+    DRIVE_FINTO = CASA_FINTA + "/Library/CloudStorage/GoogleDrive-x/Il mio Drive"
+    RADICI = {"/Users/tizio/dev/plancia", "/Users/tizio/dev/paratia",
+              DRIVE_FINTO + "/Lavoro/Cowork"}
+    GEN = attr.radici_generiche(home=CASA_FINTA, drive=DRIVE_FINTO)
+
+    e = attr.decidi(DRIVE_FINTO, ["/Users/tizio/dev/plancia/a.py"] * 3
+                    + ["/Users/tizio/dev/paratia/b.py"], RADICI, GEN)
+    prova("da una cartella generica il progetto lo dicono i percorsi",
+          e["dir"] == "/Users/tizio/dev/plancia" and e["da"] == "percorsi"
+          and e["n"] == 4, str(e))
+
+    e = attr.decidi("/Users/tizio/dev/paratia",
+                    ["/Users/tizio/dev/plancia/a.py"] * 2
+                    + ["/Users/tizio/dev/paratia/b.py"] * 3, RADICI, GEN)
+    prova("una cwd che e' gia' un progetto non si scavalca per due file",
+          e["dir"] == "/Users/tizio/dev/paratia" and e["da"] == "cwd", str(e))
+
+    e = attr.decidi("/Users/tizio/dev/paratia",
+                    ["/Users/tizio/dev/plancia/a.py"] * 9
+                    + ["/Users/tizio/dev/paratia/b.py"], RADICI, GEN)
+    prova("con il 90% dei percorsi altrove la cwd si scavalca",
+          e["dir"] == "/Users/tizio/dev/plancia" and e["da"] == "percorsi", str(e))
+
+    e = attr.decidi("/Users/tizio/dev/paratia/lab", [], RADICI, GEN)
+    prova("una sottocartella conta come il progetto che la contiene",
+          e["dir"] == "/Users/tizio/dev/paratia" and e["da"] == "cwd", str(e))
+
+    e = attr.decidi(DRIVE_FINTO, [], RADICI, GEN)
+    prova("senza percorsi e senza cartella nota non si inventa niente",
+          e["dir"] is None and e["da"] == "nessuno", str(e))
+
+    prova("le chiamate interne di Plancia restano interne",
+          attr.decidi(str(config.DATA_DIR), [], RADICI, GEN)["categoria"] == "interna")
+    prova("lo scratchpad e le cartelle drift-* restano temporanee",
+          attr.decidi("/private/var/folders/j7/x/T/drift-ab12/p", [], RADICI,
+                      GEN)["categoria"] == "temporanea"
+          and attr.decidi("/private/tmp/claude-501/x/scratchpad", [], RADICI,
+                          GEN)["categoria"] == "temporanea")
+
+    # I pareggi si rompono con il primo tocco, non con l'ordine del dizionario
+    e = attr.decidi(DRIVE_FINTO, ["/Users/tizio/dev/paratia/b.py",
+                                  "/Users/tizio/dev/plancia/a.py"], RADICI, GEN)
+    prova("a pari merito vince la cartella toccata per prima",
+          e["dir"] == "/Users/tizio/dev/paratia", str(e))
+
+    # Le virgolette: la radice del Drive si chiama «Il mio Drive», con gli spazi
+    trovati = attr.percorsi_da_comando(
+        'git -C /Users/tizio/dev/plancia status && cat "%s/Lavoro/Cowork/n o t a.md"'
+        % DRIVE_FINTO)
+    prova("dal comando escono sia il percorso nudo sia quello con gli spazi",
+          set(trovati) == {"/Users/tizio/dev/plancia",
+                           DRIVE_FINTO + "/Lavoro/Cowork/n o t a.md"}, str(trovati))
+    prova("un glob nel comando si accorcia alla sua cartella",
+          attr.percorsi_da_comando("ls /Users/tizio/dev/paratia/*.py")
+          == ["/Users/tizio/dev/paratia"])
+    prova("il numero di riga e la virgola non finiscono nel percorso",
+          attr.percorsi_da_comando("sed -n 1p /Users/tizio/dev/plancia/a.py:42,")
+          == ["/Users/tizio/dev/plancia/a.py"])
+    prova("gli input dei tool danno file_path, path e glob",
+          attr.percorsi_da_tool_use({"input": {"file_path": "/Users/tizio/dev/plancia/x.py"}})
+          + attr.percorsi_da_tool_use({"input": {"pattern": "/Users/tizio/dev/paratia/**/*.ts"}})
+          == ["/Users/tizio/dev/plancia/x.py", "/Users/tizio/dev/paratia"])
+
+    # I conteggi di due sync diversi si sommano, o una sessione lunga finirebbe
+    # attribuita in base al solo ultimo pezzo letto
+    fusi = attr.fondi({"/Users/tizio/dev/plancia": [3, 0]},
+                      {"/Users/tizio/dev/plancia": [2, 0], "/Users/tizio/dev/paratia": [1, 1]})
+    prova("i percorsi di due letture si sommano",
+          fusi["/Users/tizio/dev/plancia"][0] == 5 and "/Users/tizio/dev/paratia" in fusi,
+          str(fusi))
+
+    # le colonne nuove devono esserci ed essere ammesse a NULL, o la Plancia
+    # installata dall'altra copia smetterebbe di scrivere su questo database
+    colonne = {r["name"]: r for r in conn.execute("PRAGMA table_info(sessions)")}
+    prova("le colonne dell'attribuzione ci sono e non sono obbligatorie",
+          all(c in colonne and not colonne[c]["notnull"]
+              for c in ("dir_dedotta", "dedotto_da", "n_percorsi", "radici_toccate")),
+          str(sorted(colonne)))
+
+    # ---------------------------------------------------------- riattribuzione
+    # Un giro vero su un transcript finto: deve leggere il file, dedurre la
+    # cartella e scriverla in tabella senza creare progetti nuovi.
+    finta = CASA / "transcript-finto.jsonl"
+    riga = {"type": "assistant", "timestamp": "2026-09-03T10:00:00Z",
+            "cwd": str(config.HOME), "message": {"model": "claude-opus-5", "content": [
+                {"type": "tool_use", "name": "Read",
+                 "input": {"file_path": str(RADICE / "plancia" / "ingest.py")}}]}}
+    finta.write_text("\n".join(json.dumps(riga) for _ in range(4)), "utf-8")
+    radici_vere = sorted({str(RADICE)}, key=len, reverse=True)
+    letto = ingest.conta_percorsi(finta, radici_vere)
+    prova("conta_percorsi vede i tool_use e li mette sotto la loro radice",
+          letto["radici"].get(str(RADICE), [0])[0] == 4, str(letto))
+
+    prima_progetti = conn.execute("SELECT COUNT(*) FROM projects").fetchone()[0]
+    conn.execute("INSERT INTO sessions(session_id, cwd, file, agent, started_at) "
+                 "VALUES('finta-riattr', ?, ?, 'claude', '2026-09-03T10:00:00Z')",
+                 (str(config.HOME), str(finta)))
+    conn.commit()
+    esiti = ingest.riattribuisci(conn)
+    dopo = conn.execute("SELECT dir_dedotta, dedotto_da, n_percorsi FROM sessions "
+                        "WHERE session_id='finta-riattr'").fetchone()
+    prova("la riattribuzione scrive cartella dedotta e prova",
+          dopo["dedotto_da"] in ("percorsi", "nessuno") and esiti["lette"] >= 1,
+          str(dict(dopo)))
+    prova("la riattribuzione non crea progetti nuovi",
+          conn.execute("SELECT COUNT(*) FROM projects").fetchone()[0] == prima_progetti)
+    conn.execute("DELETE FROM sessions WHERE session_id='finta-riattr'")
+    conn.commit()
+
     # --------------------------------------------------------- git delle cartelle
     # `git status` dentro il Drive puo' prendere minuti: ogni file tracciato e' un
     # segnaposto che il file provider deve verificare. Misurato il 9 agosto 2026
@@ -494,6 +609,7 @@ def main():
             ("/api/knowledge", "json"), ("/api/agents", "json"),
             ("/api/capabilities", "json"), ("/api/status", "json"),
             ("/api/voice/status", "json"), ("/api/recap?solo_cache=1", "json"),
+            ("/api/memoria/mappa", "json"), ("/api/memoria/prova?q=swap", "json"),
         ]
         rotti = []
         for rotta, forma in ROTTE:
@@ -555,11 +671,21 @@ def main():
     chiamate = app_js.count("'/api/search?q='")
     prova("ogni chiamata a /api/search apre l'oggetto",
           chiamate == 2 and app_js.count("d.turni || []") == 2, f"{chiamate} chiamate")
+    # La prova va sempre contata, con o senza node: se sparisce quando node
+    # manca, il numero totale di prove eseguite cambia da una macchina
+    # all'altra (188 senza node, 189 con), il README dichiara un solo numero
+    # fisso, e la prova sul README (più sotto) diventa rossa da sola su chi
+    # non ha node installato, non per una regressione vera. Il gancio
+    # pre-push la bloccherebbe: misurato, `env PATH=/usr/bin:/bin:/usr/sbin:/sbin
+    # python3 tools/prova.py` dava "eseguite 188" contro un README a 189.
     if shutil.which("node"):
         esito = subprocess.run(["node", "--check", str(RADICE / "web" / "app.js")],
                                capture_output=True)
         prova("app.js si compila", esito.returncode == 0,
               esito.stderr.decode()[:200])
+    else:
+        prova("app.js si compila (node assente: non verificato)", True,
+              "installa node per verificare davvero")
 
     # -------------------------------------------------------- installazione
     # Si prova su una casa finta: e' la strada che fa chi arriva dal repo, e
@@ -727,10 +853,15 @@ def main():
           any(r["kind"] == "capacita" for r in trovata), str([dict(r) for r in trovata]))
 
     # ------------------------------------------------------------------- skill
+    # L2-SKILL (16/09) ha tolto "plancia_manda" dal testo della skill (i lanci
+    # headless spariscono, resta "riprendi" un task): l'elenco atteso segue il
+    # testo nuovo invece di quello vecchio. `_sc.SKILL` è diventato `SKILL_IT`
+    # perché ora esiste anche `SKILL_EN` (vedi tools/prove/skill.py per le
+    # prove sulle due lingue).
     from plancia import setup_claude as _sc  # noqa: E402
-    for nome, costante in (("plancia", _sc.SKILL), ("riepilogo", _sc.RIEPILOGO_SKILL)):
+    for nome, costante in (("plancia", _sc.SKILL_IT), ("riepilogo", _sc.RIEPILOGO_SKILL)):
         prova(f"la skill {nome} parla delle cose che ci sono",
-              all(p in costante for p in (["plancia_lavagna", "plancia_manda", "proposta"]
+              all(p in costante for p in (["plancia_task_add", "riprendi", "send_message"]
                                           if nome == "plancia" else ["proposta", "fallo"])),
               "la skill nel repo è più vecchia del programma")
         prova(f"la skill {nome} ha il suo frontmatter",
@@ -744,6 +875,212 @@ def main():
         if riga.strip().startswith(("ok ", "NO ")):
             prova(riga.split(None, 1)[1].strip(), riga.strip().startswith("ok"))
 
+    # ---------------------------------------------------------------- richiamo
+    # Il richiamo scrive in contesto senza chiedere niente a nessuno, quindi gli
+    # errori che fa non si vedono: si vedono solo le risposte che ne escono. Qui
+    # si controlla soprattutto che sappia tacere.
+    from plancia import richiamo  # noqa: E402
+
+    QUI = "-Users-tizio-dev-alfa"
+    ALTROVE = "-Users-tizio-dev-beta"
+
+    def memoria(nome, tipo, scope, descrizione, corpo):
+        # I legami si ricavano dal corpo come fa l'ingest vero: scriverli a mano
+        # qui vorrebbe dire provare una cosa diversa da quella che gira.
+        prosa = re.sub(r"`[^`\n]*`", " ", re.sub(r"```.*?```", " ", corpo, flags=re.S))
+        legami = json.dumps(sorted(set(re.findall(r"\[\[([^\]]+)\]\]", prosa))))
+        conn.execute(
+            "INSERT OR REPLACE INTO knowledge(name, path, scope, description, type, "
+            "body, links, updated_at) VALUES(?,?,?,?,?,?,?,'2026-01-01T00:00:00Z')",
+            (nome, f"/finto/{scope}/memory/{nome}.md", scope, descrizione, tipo, corpo,
+             legami))
+
+    # I corpi sono lunghi apposta: sotto SOSTANZA_MINIMA il richiamo scarta, e
+    # una memoria finta troppo magra farebbe fallire le prove per il motivo
+    # sbagliato. E' anche il motivo per cui quella regola esiste.
+    LUNGO = (" Questo corpo esiste per avere abbastanza sostanza da superare la"
+             " soglia sotto la quale una memoria e' solo un titolo rimasto li'."
+             " Serve a provare il richiamo, non a dire qualcosa di vero.")
+    memoria("niente-swap", "feedback", ALTROVE,
+            "il Mac ha 16 GB e lo swap lo uccide",
+            "Il preventivo di memoria va fatto prima di allocare il modello." + LUNGO)
+    # la stessa memoria copiata anche nella cartella corrente: e' il caso che
+    # sfuggiva, perche' la copia di la' passava il filtro sulla cartella
+    memoria("barra-injection", "feedback", ALTROVE,
+            "rifiuta i tool dove il contenuto remoto diventa istruzione",
+            "Giudica l'architettura, non la pulizia del codice." + LUNGO)
+    memoria("barra-injection", "feedback", QUI,
+            "rifiuta i tool dove il contenuto remoto diventa istruzione",
+            "Giudica l'architettura, non la pulizia del codice." + LUNGO)
+    memoria("alfa-stato", "project", ALTROVE,
+            "lo stato del progetto alfa",
+            "Il prossimo passo di alfa e' la memoria, lo swap e l'injection." + LUNGO)
+    # Il titolo rimasto li': deve restare fuori dal richiamo anche se le parole
+    # cercate ci stanno tutte dentro. E' il caso che ha fatto nascere la regola.
+    memoria("codici-di-prova", "reference", ALTROVE,
+            "Codici di verifica del progetto", "Codici di verifica del progetto.")
+    conn.commit()
+    store.rebuild_search(conn)
+    conn.commit()
+
+    r = richiamo.cerca(conn, "quanta memoria serve prima di allocare il modello",
+                       escludi_scope=QUI)
+    prova("richiama la memoria scritta in un'altra cartella",
+          [x["nome"] for x in r] == ["niente-swap"], str([x["nome"] for x in r]))
+
+    r = richiamo.cerca(conn, "quanta memoria serve prima di allocare il modello",
+                       escludi_scope=ALTROVE)
+    prova("e tace su quella che Claude Code ha già caricato da sé", r == [],
+          str([x["nome"] for x in r]))
+
+    r = richiamo.cerca(conn, "il contenuto remoto diventa istruzione nei tool",
+                       escludi_scope=QUI)
+    prova("una copia in un'altra cartella non la fa tornare", r == [],
+          str([x["nome"] for x in r]))
+
+    r = richiamo.cerca(conn, "il prossimo passo del progetto alfa quale sarebbe",
+                       escludi_scope=QUI)
+    prova("le memorie di progetto restano fuori dal richiamo", r == [],
+          str([x["nome"] for x in r]))
+
+    r = richiamo.cerca(conn, "qual e il codice di verifica del progetto",
+                       escludi_scope=QUI)
+    prova("una memoria che è solo un titolo non richiama, per quanto combaci",
+          r == [], str([x["nome"] for x in r]))
+
+    prova("una frase corta non richiama niente",
+          richiamo.cerca(conn, "ok grazie") == [])
+    prova("una frase che non c'entra non richiama niente",
+          richiamo.cerca(conn, "rinomina la funzione e aggiorna i test") == [])
+
+    r = richiamo.cerca(conn, "quanta memoria serve prima di allocare il modello",
+                       escludi_scope=QUI, salta={"niente-swap"})
+    prova("nella stessa sessione non si ripete", r == [], str([x["nome"] for x in r]))
+
+    richiamo.segna_detto("prova-sessione", ["niente-swap"])
+    prova("e il segnaposto della sessione se lo ricorda",
+          "niente-swap" in richiamo.gia_detto("prova-sessione"))
+
+    testo = richiamo.blocco([{
+        "nome": "niente-swap", "descrizione": "il Mac ha 16 GB", "tipo": "feedback",
+        "scope": ALTROVE, "corpo": "x" * 4000, "path": "", "punteggio": 9.0}])
+    prova("il blocco in contesto resta corto",
+          0 < len(testo) <= richiamo.MAX_CARATTERI, f"{len(testo)} caratteri")
+    prova("e dice che è contesto, non istruzioni", "non istruzioni" in testo)
+
+    # Le sigle. Il filtro sulla lunghezza ne buttava via una classe intera:
+    # `ram`, `api`, `css`, `gpu`, `mcp` sono corte quanto `per` e `che`, e sono
+    # i termini che discriminano di più in quello che scrive.
+    termini = richiamo.parole("quanta ram serve per le api css del mio mac")
+    prova("le sigle di tre lettere sopravvivono",
+          {"ram", "api", "css", "mac"} <= set(termini), str(termini))
+    prova("e le parole vuote di tre lettere no",
+          not ({"per", "del", "che", "due"} & set(termini)), str(termini))
+
+    # ------------------------------------------------------------------ mappa
+    from plancia import mappa as _mappa  # noqa: E402
+
+    m = _mappa.mappa(conn)
+    nomi = [n["nome"] for n in m["nodi"]]
+    prova("la mappa conta i fatti, non i file",
+          len(nomi) == len(set(nomi)), f"{len(nomi)} nodi, {len(set(nomi))} nomi")
+    prova("e la memoria in due cartelle resta un nodo solo",
+          nomi.count("barra-injection") == 1, str(nomi))
+
+    doppia = next((n for n in m["nodi"] if n["nome"] == "barra-injection"), None)
+    prova("che però si ricorda di stare in due posti",
+          doppia and len(doppia["cartelle"]) == 2, str(doppia and doppia["cartelle"]))
+    prova("e finisce fra le doppie della diagnosi",
+          "barra-injection" in [d["nome"] for d in m["diagnosi"]["doppie"]])
+
+    prova("la diagnosi dice quante ne può richiamare il richiamo",
+          m["diagnosi"]["richiamabili"] == sum(1 for n in m["nodi"] if n["richiamabile"])
+          and m["diagnosi"]["richiamabili"] < m["diagnosi"]["totale"],
+          f"{m['diagnosi']['richiamabili']}/{m['diagnosi']['totale']}")
+
+    # Un rinvio dentro i backtick e' sintassi, non un legame: `[[item]]`, che e'
+    # la chiave di un file di configurazione citata in una memoria, risultava un
+    # link rotto per sempre.
+    from plancia import ingest as _ing  # noqa: E402
+    import re as _re
+    prosa = _re.sub(r"`[^`\n]*`", " ",
+                    _re.sub(r"```.*?```", " ", "vedi [[vero]] e la chiave `[[item]]` qui",
+                            flags=_re.S))
+    prova("i doppi quadri dentro il codice non sono legami",
+          _re.findall(r"\[\[([^\]]+)\]\]", prosa) == ["vero"], prosa)
+
+    # Un legame verso un progetto che esiste non e' rotto: e' una memoria che
+    # varrebbe la pena scrivere, e chiamarla rotta trasforma un invito in un
+    # rimprovero.
+    conn.execute("INSERT OR IGNORE INTO projects(key, name) VALUES('molo','molo')")
+    memoria("cita-un-progetto", "feedback", ALTROVE, "cita un progetto vero",
+            "Segue lo schema di [[molo]] e rinvia anche a [[mai-vista]]." + LUNGO)
+    conn.commit()
+    m2 = _mappa.mappa(conn)
+    prova("un legame verso un progetto vero è una memoria da scrivere",
+          "molo" in m2["diagnosi"]["da_scrivere"], str(m2["diagnosi"]["da_scrivere"]))
+    prova("e uno verso il nulla resta un link rotto",
+          "mai-vista" in [x["verso"] for x in m2["diagnosi"]["rotti"]],
+          str(m2["diagnosi"]["rotti"]))
+
+    # Una memoria cancellata dal disco deve sparire dall'archivio al giro dopo.
+    fantasma = "/finto/sparita/memory/fantasma.md"
+    conn.execute(
+        "INSERT OR REPLACE INTO knowledge(name, path, scope, type, body, links, updated_at) "
+        "VALUES('fantasma',?,?, 'feedback','x','[]','2026-01-01T00:00:00Z')",
+        (str(config.CLAUDE_PROJECTS / "sparita" / "memory" / "fantasma.md"), "sparita"))
+    conn.commit()
+    _ing.sync_memory(conn)
+    resta = conn.execute("SELECT COUNT(*) FROM knowledge WHERE name='fantasma'").fetchone()[0]
+    prova("una memoria sparita dal disco esce dall'archivio", resta == 0, str(fantasma))
+
+    p = _mappa.prova(conn, "quanta memoria serve prima di allocare il modello")
+    prova("la prova del richiamo dice cosa ha preso",
+          [x["nome"] for x in p["presi"]] == ["niente-swap"], str(p["presi"]))
+    prova("e mostra anche chi ha perso",
+          all(x["nome"] != "niente-swap" for x in p["scartati"]))
+    prova("una frase corta la prova la dichiara corta",
+          _mappa.prova(conn, "ok")["corta"] is True)
+
+    # ---------------------------------------------------------------- esporta
+    # Il file che va sul telefono. La proprietà che conta non è che sia bello:
+    # è che non chieda niente a nessuno, perché il motivo per cui esiste è
+    # portarsi l'archivio in tasca senza farlo passare da un servizio.
+    from plancia import esporta as _esp  # noqa: E402
+
+    fuori = CASA / "memoria.html"
+    percorso, peso, quante = _esp.esporta(fuori)
+    pagina = fuori.read_text(encoding="utf-8")
+    prova("l'esportazione scrive un file solo", fuori.exists() and peso > 500,
+          f"{peso} byte")
+    prova("e ci mette dentro le memorie", quante > 0, str(quante))
+
+    # Niente che si carichi da fuori: un solo <link>, un font o un'immagine
+    # remota vorrebbero dire che aprire l'archivio dice a qualcuno che l'hai
+    # aperto. Si guarda il markup, non il testo delle memorie, che di URL ne
+    # contiene parecchi in modo legittimo. Da L1-FONT: i tre font vendorizzati
+    # entrano come url(data:font/woff2;base64,...) dentro @font-face, quindi
+    # uno url( nudo non basta più a distinguere un font incorporato da uno
+    # remoto: si guarda dentro le parentesi e si segnala ogni url(...) il cui
+    # contenuto, tolti apici e spazi, non comincia con "data:" (case
+    # insensitivo: prende anche url(HTTPS://...) e url(//host/x), che un
+    # controllo che cerca solo "http" lascerebbe passare).
+    senza_dati = re.sub(r"const DATI = .*?;\n", "", pagina, flags=re.S)
+    url_remoti = [u for u in re.findall(r"url\(([^)]*)\)", senza_dati)
+                  if not u.strip().strip("'\"").lower().startswith("data:")]
+    fughe = [s for s in ("<link", "<script src", "<img", "@import",
+                         "fetch(", "XMLHttpRequest", "//cdn", "https://")
+             if s in senza_dati]
+    if url_remoti:
+        fughe.append(f"url(...) con http dentro: {url_remoti}")
+    prova("il file non carica niente da fuori", not fughe, str(fughe))
+
+    dati_finti = {"memorie": [{"n": "x", "t": "feedback", "d": "</script><b>rotto",
+                               "c": "", "q": "qui", "a": "2026-01-01", "r": True}],
+                  "progetti": [], "task": [], "quando": "ora"}
+    prova("una memoria che contiene un tag di chiusura non chiude lo script",
+          "</script><b>rotto" not in _esp.costruisci(dati_finti))
+
     # ------------------------------------------------------------------- stile
     # la regola di casa: niente em dash nei testi che legge una persona
     fuori = []
@@ -752,6 +1089,53 @@ def main():
         if percorso.exists() and "—" in percorso.read_text(encoding="utf-8"):
             fuori.append(percorso.name)
     prova("niente em dash nei testi pubblici", not fuori, str(fuori))
+
+    # ---------------------------------------------------------------- scoperta
+    # Ogni lotto porta le sue prove in un file sotto tools/prove/, invece di
+    # doverle infilare tutte qui dentro: un file solo con un proprietario solo
+    # per ondata diventerebbe un collo di bottiglia appena due lotti lavorano
+    # in parallelo. Un modulo che comincia con "_" è materiale di supporto
+    # (una funzione condivisa, un fixture), non una prova, e va saltato. Un
+    # modulo che alza un'eccezione all'importazione o all'esecuzione non deve
+    # fermare gli altri: conta come una prova fallita con il nome del file, e
+    # si continua.
+    cartella_prove = RADICE / "tools" / "prove"
+    if cartella_prove.is_dir():
+        for percorso in sorted(cartella_prove.glob("*.py")):
+            if percorso.stem.startswith("_"):
+                continue
+            try:
+                spec = importlib.util.spec_from_file_location(
+                    f"tools.prove.{percorso.stem}", percorso)
+                modulo = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(modulo)
+                modulo.esegui(prova)
+            except Exception as errore:  # noqa: BLE001 - un lotto non affossa gli altri
+                falliti.append(percorso.stem)
+                print(f"  NO   {percorso.stem} (errore nel modulo: {errore})")
+
+    # ------------------------------------------------------------------ readme
+    # Il README dichiara quante prove gira questa suite, così chi arriva prima
+    # di fidarsi legge un numero invece di dover contare. Se diverge dal vero,
+    # sta mentendo a chi legge: qualcuno ha aggiunto (o tolto) una prova senza
+    # aggiornare la riga. Il +1 nel confronto è questa prova stessa: il numero
+    # dichiarato deve contare anche lei, non solo quelle venute prima.
+    schema_numero = re.compile(r"(\d+)\s+(?:prove|controlli|checks)\b")
+    dichiarati = {}
+    for percorso in (RADICE / "README.md", RADICE / "README.it.md"):
+        if not percorso.exists():
+            continue
+        trovato = schema_numero.search(percorso.read_text(encoding="utf-8"))
+        if trovato:
+            dichiarati[percorso.name] = int(trovato.group(1))
+    atteso = passati + len(falliti) + 1
+    if not dichiarati:
+        prova("il README dichiara quante prove gira la suite", False,
+              "cercato 'N prove/controlli/checks' in README.md e README.it.md: non trovato")
+    else:
+        prova("il numero di prove nel README è quello vero",
+              all(n == atteso for n in dichiarati.values()),
+              f"dichiarato {dichiarati}, eseguite {atteso}")
 
     print()
     print(f"{passati} passate, {len(falliti)} fallite")

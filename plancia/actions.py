@@ -43,17 +43,34 @@ def _after_write(conn):
 # --------------------------------------------------------------------------
 
 def task_add(conn, title, body="", project=None, priority=2, due=None, tags="",
-             source="manuale", session_id=None) -> dict:
+             source="manuale", session_id=None, cwd=None, agent=None, host=None) -> dict:
     title = (title or "").strip()
     if not title:
         raise BadInput("il titolo del task non può essere vuoto")
     pid = _project_id(conn, project)
     ts = store.now()
+    # cwd e agent sono nello schema da prima di questo lotto (store.py, colonne
+    # aggiunte via AGGIUNTE["tasks"]) ma nessun chiamante le scriveva mai: sono
+    # morte nel codice, vive nel dato (docs/RICOGNIZIONE-dati-mcp-hook.md,
+    # punto 1). host la aggiunge L0-SCHEMA: si scrive solo se la colonna esiste
+    # già, così questo file non si rompe finché quel lotto non è fuso.
+    colonne = ["title", "body", "status", "priority", "project_id", "due", "tags",
+               "source", "session_id", "created_at", "updated_at"]
+    valori = [title, body or "", "aperto", int(priority or 2), pid, due, tags or "",
+              source, session_id, ts, ts]
+    if cwd is not None:
+        colonne.append("cwd")
+        valori.append(cwd)
+    if agent is not None:
+        colonne.append("agent")
+        valori.append(agent)
+    if host is not None and any(r["name"] == "host" for r in
+                                conn.execute("PRAGMA table_info(tasks)")):
+        colonne.append("host")
+        valori.append(host)
+    segnaposto = ",".join("?" for _ in colonne)
     cur = conn.execute(
-        "INSERT INTO tasks(title, body, status, priority, project_id, due, tags, source, "
-        "session_id, created_at, updated_at) VALUES(?,?,'aperto',?,?,?,?,?,?,?,?)",
-        (title, body or "", int(priority or 2), pid, due, tags or "", source, session_id, ts, ts),
-    )
+        "INSERT INTO tasks(%s) VALUES(%s)" % (",".join(colonne), segnaposto), valori)
     tid = cur.lastrowid
     store.add_event(conn, ts, "task", f"task creato: {title}", body[:200], pid,
                     f"task:{tid}", source, dedup=f"task-new:{tid}")

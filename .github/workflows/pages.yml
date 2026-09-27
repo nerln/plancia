@@ -1,13 +1,18 @@
-# Pubblica la cartella site/ su GitHub Pages a ogni push su main.
+# Pubblica la cartella site/ su GitHub Pages.
+#
+# LOTTO-L4-SITO (punto 4, vedi anche il punto 7 dei punti ciechi del verdetto
+# 2026-09-16): non parte piu' da un push su main. Un push qualsiasi che tocca
+# site/** mandava online ogni lotto sito appena fuso, anche a meta' lavoro:
+# contro il vincolo "niente deploy" del piano. Adesso parte solo a mano
+# (workflow_dispatch) o quando si pubblica una versione con un tag `v*`.
 #
 # Da fare una volta sola nel repo: Settings > Pages > Source: GitHub Actions.
 name: sito
 
 on:
-  push:
-    branches: [main]
-    paths: ['site/**', '.github/workflows/pages.yml']
   workflow_dispatch:
+  push:
+    tags: ['v*']
 
 permissions:
   contents: read

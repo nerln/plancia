@@ -2,11 +2,11 @@
 
 [![collaudo](https://github.com/nerln/plancia/actions/workflows/prova.yml/badge.svg)](https://github.com/nerln/plancia/actions/workflows/prova.yml)
 
-Una lavagna sola per il lavoro che fai con l'IA. Claude Code e Codex si scrivono
-già tutto, in file sul tuo disco. Solo che non li legge nessuno insieme. Plancia
-sì: tutti i task aperti di tutti e due su una lavagna sola, un riepilogo parlato
-della giornata che finisce con la cosa che conviene fare, e un posto solo da cui
-rimandare il lavoro.
+Claude Code e Codex si scrivono già tutto, in file sul tuo disco. Solo che non
+li legge nessuno insieme. Plancia sì: una riga per progetto ti dice cosa fare,
+Riprendi riapre la conversazione che ha scritto il task, e un riepilogo
+parlato della giornata finisce con la cosa che conviene fare. Il resto sta
+ripiegato, a un clic di distanza.
 
 Sito: [plancia](https://nerln.github.io/plancia/).
 
@@ -94,6 +94,132 @@ Nella dashboard `/` apre la ricerca da qualsiasi vista, e i chip sopra i
 risultati contano quanti ne vengono da ogni progetto su tutto l'indice, non sulla
 pagina. In Claude Code e in Codex è `plancia_search`.
 
+## Il richiamo della memoria
+
+Cercare funziona solo se ti ricordi di cercare. Ma le cose che vorresti sapere
+sono proprio quelle che hai dimenticato di sapere.
+
+Claude Code tiene la memoria per cartella: carica il `MEMORY.md` di dove sei e
+basta. Così quello che hai imparato su un progetto smette di esistere appena ne
+apri un altro. Su questa macchina si vedeva: la stessa memoria scritta due volte
+in due cartelle diverse, otto volte su quarantasette, perché la prima era
+invisibile da dove stavi.
+
+Il richiamo è un hook `UserPromptSubmit` che a ogni messaggio guarda le memorie
+di *tutte* le cartelle e mette in contesto le poche che c'entrano. Costa 30 ms e
+non tocca la rete: bm25 sull'indice che c'è già, nessun modello da caricare.
+
+Richiama solo i tipi che viaggiano: `feedback`, `user`, `reference`. Una memoria
+di progetto no: dentro quel progetto la carica già Claude Code, e fuori il
+briefing ha già dato stato e prossimo passo. Ripeterla sarebbe rumore travestito
+da aiuto.
+
+Quattro modi di tacere, che è la parte difficile:
+
+- niente che sia già in contesto (le memorie della cartella corrente);
+- niente due volte nella stessa sessione;
+- niente sotto soglia, e niente quando il secondo risultato vale quasi quanto il
+  primo, perché senza un vincitore chiaro non ha capito di cosa si parla;
+- niente che sia solo un titolo. Questa è una regola di correttezza, non di
+  igiene: bm25 normalizza per lunghezza, quindi un file di quaranta caratteri
+  che contiene esattamente le parole cercate batte qualunque memoria vera.
+  Due avanzi di un vecchio test, «codici di verifica del progetto», rispondevano
+  con punteggio 15 a frasi come «verifica che il progetto funzioni» e sarebbero
+  entrati in contesto ogni volta.
+
+```bash
+plancia ricorda "quanta ram serve al mio mac per un modello in locale"
+plancia ricorda "aggiungi un bottone al form" --tutto   # anche gli scartati
+```
+
+Il primo trova `mac-16gb-no-swap`, che sta in un'altra cartella. Il secondo non
+trova niente, ed è la risposta giusta: un richiamo che si accende sempre è un
+richiamo che si impara a saltare.
+
+Che la frase debba nominare il Mac perché quella memoria vinca dice cos'è questo
+richiamo e cosa non è. Confronta parole, non significati: `ram` e `memoria`
+funzionano tutte e due perché stanno scritte nel testo, ma una domanda sul
+consumo che non nomini né la macchina né la memoria non la trova. Provare a
+inseguire le coniugazioni tagliando le parole alla radice è stato provato e ha
+fatto danno, perché in italiano "collaborare" e "collaudo" cadono sulla stessa.
+Meglio perdere un richiamo che darne uno sbagliato.
+
+## Guardare la memoria
+
+`#/memoria` nella dashboard. L'elenco delle memorie stava già in Archivio e
+diceva cosa c'è; questa vista dice com'è messo.
+
+La mappa disegna il grafo dei `[[link]]`, un colore per tipo e la dimensione per
+quanti legami ha. Il riempimento porta l'unica affermazione che conta: **pieno
+vuol dire che il richiamo può portarla in contesto**. Su questa macchina sono 13
+su 44, e vedere quarantaquattro pallini di cui trentuno vuoti dice in un colpo
+d'occhio una cosa che nessun elenco diceva.
+
+Il grafo va letto sapendo cos'è: i legami sono quelli scritti a mano, quindi
+è un'opinione, non una misura. Due memorie sullo stesso argomento senza un
+`[[link]]` fra loro qui sembrano estranee. E i wikilink non contano niente per
+il richiamo, che lavora su bm25 del testo: la mappa mostra come hai organizzato
+il sapere, non come la macchina lo trova.
+
+Sotto c'è la casella che vale il viaggio: scrivi una frase e vedi cosa ti
+richiamerebbe, con i punteggi e con quello che ha scartato. È l'unico modo di
+guardare da fuori una cosa che scrive nel contesto senza farsi vedere. Ed è così
+che si è scoperto che due file di scarto rispondevano a mezzo vocabolario.
+
+Accanto, le poche cose contabili: quante memorie vivono in due cartelle, quante
+non sono legate a niente, quanti link puntano al vuoto, quante sono rimaste un
+titolo. Se non c'è niente, il riquadro resta quasi bianco, ed è il premio.
+
+## Portarselo in tasca
+
+```bash
+plancia esporta
+```
+
+Scrive un file HTML unico che contiene l'archivio dentro di sé e sa cercarselo:
+le memorie per intero, i progetti attivi col prossimo passo, i task aperti. Su
+questa macchina sono 247 KB.
+
+Non chiede niente alla rete. Niente font, niente fogli di stile, niente
+immagini, nessuna chiamata: è tutto dentro, e il collaudo controlla che resti
+così. Aprirlo non dice a nessuno che l'hai aperto, ed è l'unico requisito che
+conta davvero per un archivio personale.
+
+Sul telefono ci va a mano: AirDrop, che è un collegamento diretto fra i due
+dispositivi, oppure il Wi-Fi di casa, che di casa non esce. In tutt'e due i casi
+il file non tocca internet e non passa da nessun servizio. Poi «Aggiungi a
+schermata Home» e si comporta come un'app, senza App Store e senza certificati
+di sviluppatore.
+
+Da lì funziona da solo: in aereo, in montagna, col Mac spento. Per aggiornarlo
+si rifà e si rimanda, e serve essere vicini al Mac una volta ogni tanto, non
+avere una VPN sempre accesa. Il piè di pagina dice di quando è la copia, perché
+un archivio che non dichiara la propria età è un archivio di cui fidarsi troppo.
+
+## Il progetto su cui una sessione ha lavorato davvero
+
+Una sessione finiva nel progetto della cartella da cui era stata aperta. Per
+Codex funziona, perché Codex si apre dentro il progetto. Per Claude Code no:
+misurato su questa macchina, 199 sessioni su 587 erano aperte dalla radice del
+Drive, da `~/dev` o dalla casa, cartelle da cui si lavora a tutto.
+
+Adesso Plancia guarda anche cosa la sessione ha toccato: i file dei `tool_use` e
+i percorsi assoluti dentro i comandi Bash, contati per cartella di progetto. Se
+la cartella di apertura non dice niente vince la cartella toccata di più; se
+invece è già un progetto si tiene quella, a meno che il 70 per cento dei percorsi
+non stia da un'altra parte. Ogni riga porta con sé la cartella dedotta e il
+perché, quindi l'attribuzione si può controllare invece di doverci credere.
+
+```bash
+plancia sessioni                         # il catalogo, per progetto
+plancia sessioni --progetto molo --giorni 30
+plancia sync --riattribuisci             # ricalcola tutto l'archivio
+```
+
+La tilde in fondo a una riga, e la scritta «dedotta dai percorsi» nella
+dashboard, segnano le sessioni attribuite così. Le chiamate interne di Plancia e
+le sessioni temporanee restano da parte: `--tutte` le mostra.
+
 ## Il riepilogo giornaliero
 
 Plancia mette insieme la giornata dai dati veri (sessioni, commit, task aperti e
@@ -133,6 +259,15 @@ rimasto lì. Le proposte nascono solo dai segnali, mai dall'intuizione di un
 modello, così una giornata tranquilla ti dà un riepilogo corto invece di un
 consiglio inventato. Dici "fallo", o "la seconda", e parte.
 
+## Prossimi
+
+Una riga per progetto attivo, dentro Oggi, accanto al riepilogo: il primo
+task aperto, o il suo prossimo passo dichiarato se non ce n'è nessuno,
+raggruppate per area, ordinate per scadenza e poi per ultima attività. Ne
+compaiono al massimo sette per gruppo; il resto sta dietro un "altri N".
+Per raggrupparsi per area invece che restare una lista piatta serve la mappa
+di `plancia riordina`.
+
 ## Jarvis
 
 Non tieni premuto niente. `⌥Spazio` da qualsiasi app, oppure `plancia://jarvis`,
@@ -163,26 +298,44 @@ tieni premuta la barra spaziatrice e detti. È solo dettatura in ingresso, e una
 modalità a mani libere non c'è per scelta. Questa è l'altra metà: risponde e
 agisce.
 
-## La lavagna
+## Tutti i task
 
-![La lavagna](docs/board.png)
+![Tutti i task](docs/board.png)
 
 Claude Code tiene la sua lista di task in una cartella, Codex i suoi obiettivi in
-un altro database, Plancia ha i suoi. Nessuno dei tre sa degli altri due. La
-lavagna li legge tutti, riporta gli stati a `aperto`, `in corso`, `bloccato`,
+un altro database, Plancia ha i suoi. Nessuno dei tre sa degli altri due. Questa
+vista li legge tutti, riporta gli stati a `aperto`, `in corso`, `bloccato`,
 `fatto`, `sparito`, e mostra una lista sola.
 
-Da ogni riga puoi scrivere come vuoi che sia fatto il lavoro e mandarlo:
+**Riprendi è la prima cosa che offre una riga.** Un task porta con sé l'id
+della sessione che l'ha scritto, quindi il bottone sulla sua riga non
+rilancia niente da zero: riapre la conversazione vera, in uno dei tre stati.
+Viva, e Riprendi copia negli appunti il messaggio da incollare nella
+conversazione che sta già girando (`riprendi il task 42 di Plancia: <titolo>`):
+non c'è niente da lanciare. Chiusa, e premere Riprendi apre da solo un
+Terminale visibile, con `claude --resume <id>` (o `codex resume <id>`) nella
+cartella del task: Plancia non tocca mai una trascrizione da un secondo
+processo. Persa, perché la sessione non è mai stata registrata o è scaduta,
+e allora lo dice invece di fingere, e ripartire da capo, col contesto scritto
+a mano, è l'unica strada che resta.
 
 ```bash
-plancia lavagna                          # la lavagna, da terminale
-plancia manda "rilancia l'ablation" --agente codex --progetto atlas
-plancia lanci                            # com'è andata
+plancia lavagna                          # tutti i task aperti, da terminale
+plancia riprendi 42                      # riprende il task 42, nel suo stato
+plancia riprendi 42 --apri               # lo fa subito, come fa il bottone
+plancia lanci                            # com'è andato un lancio in background
 ```
 
-Il modo predefinito è `proposta`: l'agente legge e riferisce senza toccare un
-file. `--modo esegui` lo lascia scrivere, ed è una scelta che fai ogni volta. Di
-ogni lancio restano esito, token e costo.
+Mandare un lavoro in background è l'altra strada, secondaria, per quando
+riprendere non è quello che vuoi: `plancia riprendi 42 --background --scrive
+--istruzioni "rilancia l'ablation"` lo lancia senza sorveglianza, sulla
+sessione di quel task, e ne registra l'esito. Il modo predefinito è di sola
+lettura; `--scrive` lo lascia scrivere, ed è una scelta che fai ogni volta.
+`plancia manda "rilancia l'ablation" --agente codex --progetto atlas` è il
+vecchio alias per la stessa cosa senza un id di task: funziona ancora ma
+stampa un avviso di deprecazione su stderr e sparirà in un prossimo rilascio.
+Dentro Claude Code e Codex la stessa ripresa sta dietro al tool `plancia` con
+`azione="riprendi"` e l'`id` del task.
 
 ## Il registro degli eventi
 
@@ -275,6 +428,26 @@ in `~/.plancia/seed.json`. Le sessioni aperte da una cartella generica vengono
 attribuite per parole chiave, e riattribuite a ogni sync man mano che affini le
 parole.
 
+## Aree
+
+Una mappa dei progetti serve solo se si può correggere, e correggere 122
+progetti uno per uno non succede mai. `plancia riordina --proponi` calcola
+una mappa dei padri per ogni progetto (un'area come una tesi, o un repo vero
+con i suoi worktree) e la scrive in un file invece che nel database, così la
+leggi prima che cambi qualcosa.
+
+```bash
+plancia riordina --proponi                    # scrive la mappa proposta in un file
+plancia riordina --mostra <file>              # la stampa in tabella
+plancia riordina --applica <file>             # assegna tutti i padri che contiene
+plancia riordina --annulla <batch>            # disfa esattamente quell'applicazione
+```
+
+Applicare è un batch solo, e annullarlo rimette il padre precedente di ogni
+progetto, non un padre vuoto. Oggi (il riepilogo) e Prossimi raggruppano i
+progetti per area appena questa mappa esiste; prima che esista, ripiegano su
+una lista piatta, così su un'installazione nuova non si rompe niente.
+
 ## Due scelte non ovvie
 
 **I transcript si leggono a byte, non a righe.** Sono centinaia di megabyte e
@@ -316,12 +489,12 @@ Dati in `~/.plancia/`: `plancia.db` (SQLite), `seed.json`, `token`,
 `briefing.md`, `audio/`. Tienili fuori da qualsiasi cartella sincronizzata: un
 file SQLite dentro Drive o Dropbox si corrompe.
 
-## Sei superfici
+## Sette superfici
 
-Oggi (il riepilogo, il ritmo, le proposte, i task), Cerca, Lavagna, Progetti,
-Social,
-Archivio (sessioni, agenti, memoria, capacità). Tutto il resto passa da ⌘K. Al
-primo avvio una guida in sei passi spiega le parti non ovvie, e resta lì sotto
+Oggi (il riepilogo, il ritmo, le proposte, e Prossimi: una riga per progetto,
+raggruppate per area, con cosa riprendere), Cerca, Tutti i task, Progetti,
+Social, Memoria, Archivio (sessioni, agenti, capacità). Tutto il resto passa
+da ⌘K. Al primo avvio una guida spiega le parti non ovvie, e resta lì sotto
 "Guida".
 
 ## Cosa serve
@@ -343,7 +516,7 @@ git config core.hooksPath .githooks
 ```
 
 Accende il gancio che fa girare `python3 tools/prova.py` prima di ogni push:
-138 controlli in una ventina di secondi, su un archivio finto che non tocca
+953 controlli in una ventina di secondi, su un archivio finto che non tocca
 il tuo.
 
 ## Licenza

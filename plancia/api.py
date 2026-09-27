@@ -6,6 +6,7 @@ così un'altra pagina aperta nel browser non può toccare i dati.
 
 import json
 import mimetypes
+import os
 import re
 import threading
 import traceback
@@ -15,10 +16,20 @@ from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import (actions, agente, briefing, cantiere, config, eventi, ingest,
-               jarvis, lavagna, recap, store, voice)
+               jarvis, lavagna, recap, riprendi, slot, store, voice)
 
 SYNC_LOCK = threading.Lock()
 SYNC_STATE = {"running": False, "message": "", "started": None, "result": None}
+
+# LOTTO-L3-RITOCCO punto 4: `serve()` la imposta a True quando il processo è
+# partito con `--no-sync` (`sync_first=False`): nessun sync deve mai partire
+# per tutta la vita del processo (vedi il commento su `serve`, più sotto), e
+# `/api/sync` deve dirlo invece di far finta di aver avviato qualcosa che poi
+# il ticker (mai partito) non farebbe mai davvero. Un modulo-livello invece di
+# un parametro passato in giro perché `jarvis._esegui`, che risponde alla
+# stessa domanda a voce, la legge da qui (import locale, per non creare un
+# ciclo: vedi jarvis.py).
+_NO_SYNC_ATTIVO = False
 
 
 def _sync_worker(full=False, modo="tutto"):
@@ -153,6 +164,7 @@ def overview(conn, lang=None) -> dict:
         "sessioni_recenti": [dict(r) for r in conn.execute(
             "SELECT s.session_id, s.title, substr(s.first_prompt,1,180) AS prompt, "
             "s.started_at, s.ended_at, s.n_user, s.n_tools, s.out_tokens, s.cwd, "
+            "s.dedotto_da, s.dir_dedotta, "
             "p.name AS progetto, p.key AS project_key FROM sessions s "
             f"LEFT JOIN projects p ON p.id=s.project_id WHERE {store.visibile()} "
             "ORDER BY s.started_at DESC LIMIT 12"
@@ -176,7 +188,8 @@ def project_detail(conn, ident) -> dict:
             "SELECT * FROM posts WHERE project_id=? ORDER BY updated_at DESC", (pid,)).fetchall()],
         "sessioni": [dict(r) for r in conn.execute(
             "SELECT session_id, title, substr(first_prompt,1,200) AS prompt, started_at, "
-            "n_user, n_tools, out_tokens, models FROM sessions WHERE project_id=? "
+            "n_user, n_tools, out_tokens, models, dedotto_da, dir_dedotta "
+            "FROM sessions WHERE project_id=? "
             "ORDER BY started_at DESC LIMIT 40", (pid,)).fetchall()],
         "memoria": [dict(r) for r in conn.execute(
             "SELECT id, name, description, type, updated_at FROM knowledge WHERE project_id=? "
@@ -190,6 +203,55 @@ def project_detail(conn, ident) -> dict:
             "ORDER BY c.date DESC LIMIT 30", (pid,)).fetchall()],
         "eventi": [dict(r) for r in conn.execute(
             "SELECT * FROM events WHERE project_id=? ORDER BY ts DESC LIMIT 60", (pid,)).fetchall()],
+    }
+
+
+def prossimi_raggruppati(conn) -> dict:
+    """`/api/prossimi`: le righe di `slot.prossimi()` raggruppate per area
+    (il progetto padre), per il pannello "Prossimi" di Oggi (LOTTO-L2-VISTA,
+    punto 1).
+
+    Il gruppo si apre alla prima riga incontrata scorrendo `slot.prossimi()`
+    nel suo ordine (già quello del verdetto: scadenza minore prima, poi
+    ultima attività) e non si riordina più dopo: così la primissima riga del
+    primo gruppo resta la primissima riga dell'ordine originale, e "la prima
+    riga con scadenza ha la scadenza minore" (prova rossa del lotto) resta
+    vero anche raggruppato. Stesso ragionamento di
+    `briefing._blocco_prossimi`, che raggruppa la stessa lista per lo stesso
+    motivo, ma per il testo del briefing invece che per questo JSON.
+
+    Un padre attivo che ha anche lui una riga (un suo task o next_action) va
+    nel gruppo con la propria chiave, non in "senza area": la sua chiave è
+    già un'intestazione (compare come area di almeno un figlio), non serve
+    un secondo gruppo solo per lui.
+    """
+    righe = slot.prossimi(conn)
+    if not righe:
+        return {"aree": [], "senza_area": []}
+
+    chiavi_area = {r["area"] for r in righe if r["area"]}
+    nomi_area = {}
+    if chiavi_area:
+        segnaposto = ",".join("?" for _ in chiavi_area)
+        for r in conn.execute(
+                f"SELECT key, name FROM projects WHERE key IN ({segnaposto})",
+                list(chiavi_area)):
+            nomi_area[r["key"]] = r["name"]
+
+    gruppi, ordine, senza_area = {}, [], []
+    for r in righe:
+        chiave_gruppo = r["area"] or (r["key"] if r["key"] in chiavi_area else None)
+        if chiave_gruppo is None:
+            senza_area.append(r)
+            continue
+        if chiave_gruppo not in gruppi:
+            gruppi[chiave_gruppo] = []
+            ordine.append(chiave_gruppo)
+        gruppi[chiave_gruppo].append(r)
+
+    return {
+        "aree": [{"key": k, "name": nomi_area.get(k, k), "righe": gruppi[k]} for k in ordine],
+        "senza_area": senza_area,
     }
 
 
@@ -289,6 +351,16 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, briefing.build(conn, first("project")),
                                   "text/markdown; charset=utf-8")
             if path == "/api/projects":
+                # ?albero=1 (LOTTO-L2-VISTA): la vista Progetti annidata legge
+                # da qui, padri con i loro figli e i totali già sommati
+                # (slot.albero, non toccato da questo lotto: solo instradato).
+                # Il parametro conta per presenza/valore, non solo per
+                # presenza: first(...) restituisce la stringa così com'è, e
+                # "0" (falsy in Python, ma non un valore vuoto) non deve
+                # disattivare l'albero come farebbe un `if first("albero"):`
+                # nudo.
+                if first("albero") not in (None, "", "0"):
+                    return self._json(slot.albero(conn))
                 return self._json([dict(r) for r in conn.execute(
                     "SELECT * FROM projects ORDER BY pinned DESC, priority, last_activity DESC"
                 ).fetchall()])
@@ -296,8 +368,24 @@ class Handler(BaseHTTPRequestHandler):
             if m:
                 data = project_detail(conn, urllib.parse.unquote(m.group(1)))
                 return self._json(data) if data else self._error(404, "progetto inesistente")
+            if path == "/api/prossimi":
+                return self._json(prossimi_raggruppati(conn))
             if path == "/api/tasks":
-                return self._json(actions.tasks_list(conn, first("status"), first("project"),
+                progetto = first("project")
+                if first("dopo") not in (None, "", "0") and progetto:
+                    # Il cassetto "Dopo" nel drawer del progetto: gli stessi
+                    # task aperti che slot.prossimi() userebbe come "cosa"
+                    # per questo progetto (stesso ordine: _ORDINE_TASK di
+                    # slot.py è copiato da qui, vedi il commento su quella
+                    # costante), oltre al primo. Il drawer non ha una riga
+                    # di Prossimi (quella sta nel pannello di Oggi): mostra
+                    # già tutti i task del progetto nella sua sezione
+                    # "Task", quindi il cassetto ripete apposta i task oltre
+                    # il primo, così com'è nel lotto (vedi il dubbio
+                    # nel rapporto sulla ridondanza con quella sezione).
+                    aperti = actions.tasks_list(conn, "aperti", progetto, limit=100)
+                    return self._json(aperti[1:])
+                return self._json(actions.tasks_list(conn, first("status"), progetto,
                                                      int(first("limit", 200))))
             if path == "/api/posts":
                 return self._json(actions.posts_list(conn, first("status"), first("platform")))
@@ -338,6 +426,12 @@ class Handler(BaseHTTPRequestHandler):
                     "p.name AS progetto, p.key AS project_key FROM knowledge k "
                     "LEFT JOIN projects p ON p.id=k.project_id ORDER BY k.updated_at DESC"
                 ).fetchall()])
+            if path == "/api/memoria/mappa":
+                from . import mappa as _mappa
+                return self._json(_mappa.mappa(conn))
+            if path == "/api/memoria/prova":
+                from . import mappa as _mappa
+                return self._json(_mappa.prova(conn, first("q", "")))
             if path == "/api/proposte":
                 from . import proposte as _prop
                 lista = _prop.calcola(conn, recap.lang_or_default(first("lang")))
@@ -423,6 +517,30 @@ class Handler(BaseHTTPRequestHandler):
                     "ultima_voce": store.get_meta(conn, "ultima_voce"),
                     "ultima_voce_da": store.get_meta(conn, "ultima_voce_da"),
                 })
+            m = re.match(r"^/api/riprendi/(\d+)$", path)
+            if m:
+                # LOTTO-L3-RIPRENDI-UI, punto 1: i tre stati di un task
+                # (plancia/riprendi.py, non toccato da questo lotto) piu' il
+                # comando pronto e il messaggio, cosi' la dashboard mostra
+                # UN pulsante con lo stato invece di dover ricalcolarlo lei.
+                task = actions.task_get(conn, int(m.group(1)))
+                if not task:
+                    return self._error(404, "task inesistente")
+                s = riprendi.stato(conn, task)
+                argv = riprendi.comando(task, s, conn)
+                # La data da mostrare in "sessione del <data>" (chiusa/codex):
+                # riprendi.stato() non la porta (non le serve per decidere lo
+                # stato), quindi si va a prenderla dalla sessione vera se
+                # c'e', e solo se manca si ripiega sull'ultimo tocco del task.
+                sessione_data = None
+                if s.get("session_id"):
+                    r = conn.execute("SELECT started_at FROM sessions WHERE session_id=?",
+                                     (s["session_id"],)).fetchone()
+                    sessione_data = r["started_at"] if r else None
+                sessione_data = sessione_data or task.get("updated_at")
+                return self._json({"riprendi": s, "comando": argv,
+                                   "messaggio": riprendi.messaggio(task),
+                                   "sessione_data": sessione_data})
             return self._error(404, "rotta inesistente")
         finally:
             conn.close()
@@ -457,11 +575,68 @@ class Handler(BaseHTTPRequestHandler):
                 titolo = (body.get("titolo") or "").strip()
                 if not titolo:
                     raise actions.BadInput("serve un titolo")
+                # LOTTO-L3-RITOCCO punto 13: `scrive` (bool, dal nuovo
+                # interruttore del front) invece di `modo` ("proposta"/
+                # "esegui", il vecchio menu a tendina sparito col punto 2 di
+                # LOTTO-L3-RIPRENDI-UI) - vedi cantiere.avvia/_scrive_da.
+                #
+                # L3-RIPRENDI-UI-4 (obbligatoria del critico): `sessione`
+                # inoltrata a cantiere.avvia(), che già la accetta (--resume
+                # --fork-session quando c'è) - prima il modulo "In
+                # background" senza un task_id (righe della lavagna venute
+                # da Claude/Codex, che una sessione la hanno già) partiva
+                # sempre da zero, anche quando "Riprendi" prometteva il
+                # contrario.
                 return self._json(cantiere.avvia(
                     conn, titolo, body.get("dettaglio", ""), body.get("progetto"),
                     body.get("istruzioni", ""), body.get("agente", "claude"),
-                    body.get("modo", "proposta"), body.get("cwd"),
-                    body.get("task_id"), recap.lang_or_default(body.get("lang"))))
+                    bool(body.get("scrive")), body.get("cwd"),
+                    body.get("task_id"), recap.lang_or_default(body.get("lang")),
+                    sessione=body.get("sessione") or None))
+            if path == "/api/riprendi/backfill" and method == "POST":
+                # Un nome di batch nuovo a ogni chiamata (mai virgole o spazi,
+                # riprendi._batch_valido lo richiede): senza un batch tornato
+                # al chiamante, un --annulla successivo non saprebbe quale
+                # lotto di attribuzioni disfare.
+                batch = "backfill-" + store.now()
+                esito = riprendi.backfill(conn, batch, secco=bool(body.get("secco")))
+                esito["batch"] = batch
+                return self._json(esito)
+            if path == "/api/riprendi/annulla" and method == "POST":
+                batch = (body.get("batch") or "").strip()
+                if not batch:
+                    raise actions.BadInput("serve un batch")
+                return self._json({"ripristinati": riprendi.annulla(conn, batch)})
+            m = re.match(r"^/api/riprendi/(\d+)$", path)
+            if m and method == "POST":
+                task = actions.task_get(conn, int(m.group(1)))
+                if not task:
+                    # LOTTO-L3-RITOCCO punto 12: stesso codice e stesso corpo
+                    # della GET qui sopra (404, {"errore": "task inesistente"}),
+                    # non actions.BadInput -> 400: un id inesistente e' lo
+                    # stesso "non trovato" sia che lo si legga sia che ci si
+                    # scriva sopra.
+                    return self._error(404, "task inesistente")
+                if body.get("apri"):
+                    return self._json(riprendi.apri(task, conn))
+                if body.get("background"):
+                    # Il fork (verdetto §B, "In background"): se il task ha
+                    # gia' una sessione viva o chiusa, cantiere.avvia() la
+                    # riprende (--resume/exec resume, con --fork-session per
+                    # Claude: vedi plancia/cantiere.py._comando, non toccato
+                    # da questo lotto) invece di ripartire da un prompt
+                    # scritto a mano. "Persa" non ha niente da forkare:
+                    # sessione resta None e componi_prompt() scrive il
+                    # contesto lei.
+                    s = riprendi.stato(conn, task)
+                    sessione = riprendi.sessione_da_riprendere(s)
+                    esito = cantiere.avvia(
+                        conn, task.get("title") or "", "", task.get("project_key"),
+                        body.get("istruzioni", ""), s.get("agent") or task.get("agent") or "claude",
+                        bool(body.get("scrive")), None, task["id"],
+                        recap.lang_or_default(body.get("lang")), sessione=sessione)
+                    return self._json(esito)
+                raise actions.BadInput("serve 'apri' o 'background'")
             m = re.match(r"^/api/runs/(\d+)/annulla$", path)
             if m and method == "POST":
                 return self._json({"annullato": cantiere.annulla(conn, int(m.group(1)))})
@@ -518,6 +693,8 @@ class Handler(BaseHTTPRequestHandler):
                 data.pop("dati", None)
                 return self._json(data)
             if path == "/api/sync" and method == "POST":
+                if _NO_SYNC_ATTIVO:
+                    return self._json({"avviato": False, "motivo": "--no-sync"})
                 started = start_sync(bool(body.get("full")))
                 return self._json({"avviato": started, "stato": SYNC_STATE})
             if path == "/api/tasks" and method == "POST":
@@ -565,10 +742,14 @@ class Handler(BaseHTTPRequestHandler):
         if path in ("/", "/index.html"):
             html = (config.WEB_DIR / "index.html").read_text("utf-8")
             html = html.replace("__PLANCIA_TOKEN__", config.get_token())
-            # marca css e js con la loro data: un aggiornamento non lascia in
-            # giro la versione vecchia nella cache del browser
+            # marca css, js e i font con la loro data: un aggiornamento non
+            # lascia in giro la versione vecchia nella cache del browser. I
+            # woff2 sono piatti in WEB_DIR (niente sottocartelle, vedi sotto),
+            # quindi un glob basta a trovarli tutti senza elencarli per nome.
+            marcati = ["style.css", "app.js"] + sorted(
+                p.name for p in config.WEB_DIR.glob("*.woff2"))
             stamp = int(max((config.WEB_DIR / n).stat().st_mtime
-                            for n in ("style.css", "app.js")))
+                            for n in marcati))
             html = html.replace("__PLANCIA_V__", str(stamp))
             return self._send(200, html, "text/html; charset=utf-8")
         m = re.match(r"^/audio/([0-9a-f]{8,32}\.wav)$", path)
@@ -583,7 +764,13 @@ class Handler(BaseHTTPRequestHandler):
         target = config.WEB_DIR / name
         if not target.is_file():
             return self._error(404, "non trovato")
-        ctype = mimetypes.guess_type(str(target))[0] or "application/octet-stream"
+        if name.endswith(".woff2"):
+            # Python 3.9 non ha .woff2 nella sua tabella mime: senza questo
+            # mimetypes.guess_type torna None e il font arriverebbe come
+            # application/octet-stream, che alcuni browser rifiutano.
+            ctype = "font/woff2"
+        else:
+            ctype = mimetypes.guess_type(str(target))[0] or "application/octet-stream"
         return self._send(200, target.read_bytes(), ctype)
 
 
@@ -603,26 +790,43 @@ def serve(port=None, open_browser=False, sync_first=True) -> None:
     except Exception:
         pass
     conn.close()
+    # `sync_first` (da cli.py: `not args.no_sync`) non vuol dire solo "il primo
+    # giro": e' l'interruttore di ogni sync di questo processo. Prima il
+    # ticker partiva comunque, fuori da questo `if`: tre tester indipendenti
+    # (residuo dell'ondata 2, 16/09/2026) hanno visto `plancia serve
+    # --no-sync` riempire lo stesso i db di prova con progetti veri della
+    # macchina due minuti dopo l'avvio, e `tools/scatti.sh` corre lo stesso
+    # rischio (nomi veri negli screenshot del sito). Con `--no-sync` niente
+    # sync all'avvio E niente ticker: nessun sync parte da solo per tutta la
+    # vita del processo.
+    global _NO_SYNC_ATTIVO
+    _NO_SYNC_ATTIVO = not sync_first
     if sync_first:
         start_sync(False)
 
-    # Due ritmi: il caldo costa un centesimo di secondo e tiene aggiornato
-    # quello che stai facendo, il freddo costa un secondo e rilegge il resto.
-    caldo = max(1, int(cfg.get("sync_caldo_minuti", 2)))
-    freddo = max(5, int(cfg.get("sync_freddo_minuti", 30)))
+        # Due ritmi: il caldo costa un centesimo di secondo e tiene aggiornato
+        # quello che stai facendo, il freddo costa un secondo e rilegge il resto.
+        caldo = max(1, int(cfg.get("sync_caldo_minuti", 2)))
+        freddo = max(5, int(cfg.get("sync_freddo_minuti", 30)))
 
-    def ticker():
-        import time
-        passati = 0
-        while True:
-            time.sleep(caldo * 60)
-            passati += caldo
-            if passati >= freddo:
-                passati = 0
-                start_sync(False, "freddo")
-            else:
-                start_sync(False, "caldo")
-    threading.Thread(target=ticker, daemon=True).start()
+        def ticker():
+            import time
+            passati = 0
+            # PLANCIA_TICKER_SECONDI (solo per le prove: tools/prove/serve-no-sync.py):
+            # forza il periodo del ticker a un numero di SECONDI invece dei
+            # minuti veri, cosi' una prova puo' aspettare pochi secondi
+            # invece di 2-30 minuti per vedere se il ticker parte.
+            secondi_prova = os.environ.get("PLANCIA_TICKER_SECONDI")
+            periodo = float(secondi_prova) if secondi_prova else caldo * 60
+            while True:
+                time.sleep(periodo)
+                passati += caldo
+                if passati >= freddo:
+                    passati = 0
+                    start_sync(False, "freddo")
+                else:
+                    start_sync(False, "caldo")
+        threading.Thread(target=ticker, daemon=True).start()
 
     httpd = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     url = f"http://127.0.0.1:{port}"

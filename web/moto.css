@@ -1,0 +1,61 @@
+/* LOTTO-L4-MEMORIA: solo le animazioni del vortice e la spia "aggiornato
+   alle" - vedi il commento in cima a web/app.js, sezione "memoria", per il
+   perché. Questo foglio non dichiara MAI un colore di superficie o di
+   vetro: quelli sono di L4-VETRO, in web/style.css. Le uniche variabili di
+   colore che questo foglio legge sono --muted e --warn (già dichiarate lì),
+   per il testo della spia.
+
+   Regola che vale anche qui, osservata già altrove nel progetto (vedi
+   [data-in] in web/style.css): le keyframes muovono solo `transform`, mai
+   `opacity`. Il motivo è specifico di questo lotto: quando la finestra è in
+   background il sistema può sospendere le animazioni CSS a metà, e una card
+   ferma a `opacity: 0` in quel momento resterebbe invisibile per sempre - il
+   contrario esatto di "mai vuota", che è la ragione per cui questo lotto
+   esiste. `prefers-reduced-motion` spegne tutto quello che c'è qui sotto:
+   chi lo chiede non vuole vedere niente muoversi, nemmeno il vortice. */
+
+/* Il FLIP (punto 3): app.js misura le posizioni, sostituisce l'html, mette
+   il transform "vecchio meno nuovo" via inline style sull'elemento
+   sopravvissuto, poi aggiunge questa classe e azzera il transform - è la
+   transizione che porta l'elemento dalla posizione vecchia (il transform
+   iniziale) a quella nuova (0, la sua posizione reale nel nuovo html). */
+.vortice-muove {
+  transition: transform 420ms var(--ease-out);
+}
+
+/* Gli elementi nuovi (chiave non vista un momento fa): non c'è uno
+   spostamento da cui animare, quindi entrano con una rotazione e una
+   piccola scala verso l'identità. --i lo mette app.js (uno per elemento, in
+   ordine di comparsa fra i nuovi arrivati), fermo a un tetto che tiene il
+   ritardo totale sotto i 320ms anche con più di tredici card nuove insieme. */
+.vortice-entra {
+  animation: vortice-entra 360ms var(--ease-out) both;
+  animation-delay: calc(var(--i, 0) * 24ms);
+}
+@keyframes vortice-entra {
+  from { transform: rotate(-6deg) scale(.96) translateY(12px); }
+  to { transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vortice-muove { transition: none; }
+  .vortice-entra { animation: none; }
+}
+
+/* La spia (punto 4): una pillola piccola in topbar, mono per l'ora. Nessun
+   fondo, nessun bordo: questo lotto non possiede web/style.css e non deve
+   introdurre un colore di superficie o di vetro tutto suo (vedi il
+   commento in cima al file) - solo testo, con i due token di colore che il
+   lotto ha il permesso di usare. */
+.spia-memoria {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  letter-spacing: .01em;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.spia-memoria.avviso {
+  color: var(--warn);
+}

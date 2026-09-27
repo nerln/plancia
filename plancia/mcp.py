@@ -10,8 +10,8 @@ import json
 import sys
 import traceback
 
-from . import (actions, briefing, cantiere, config, eventi, lavagna, recap, store,
-               turni, voice)
+from . import (actions, briefing, cantiere, config, eventi, lavagna, recap, sessione,
+               store, turni, voice)
 
 PROTOCOL = "2025-06-18"
 SUPPORTED = {"2024-11-05", "2025-03-26", "2025-06-18"}
@@ -189,6 +189,21 @@ _TUTTI = [
         "description": "Re-scan sessions, memory, repos. Fast when incremental; pass full=true to rebuild from scratch.",
         "inputSchema": _s("", full={"type": "boolean"}, skip_git={"type": "boolean"}),
     },
+    {
+        "name": "plancia_riprendi",
+        "description": (
+            "Resume a Plancia task from where its own session left off (viva/chiusa/"
+            "persa: still open, closed with a transcript, or nothing to resume), or "
+            "just check that state. id is required. apri=true launches the resume "
+            "command in a visible terminal, or reports the clipboard message when the "
+            "session is still open (viva). background=true dispatches it in the "
+            "background instead, forking the existing session when there is one "
+            "(scrive=true lets it modify files, istruzioni adds instructions). Without "
+            "apri or background it only reports the state, the ready command and the "
+            "message, without launching anything."),
+        "inputSchema": _s("", id=INT, apri={"type": "boolean"}, background={"type": "boolean"},
+                          scrive={"type": "boolean"}, istruzioni=STR),
+    },
 ]
 
 
@@ -205,7 +220,7 @@ _TUTTI = [
 # Quindi restano di prima classe i cinque che portano l'uso vero, piu' search,
 # che e' la ragione per cui l'archivio esiste: senza, 427 sessioni e 41 memorie
 # non servono a niente. Tutto il resto continua a funzionare identico, ma dietro
-# un tool solo, e paga un solo schema invece di quattordici.
+# un tool solo, e paga un solo schema invece di quindici.
 # --------------------------------------------------------------------------
 
 PRIMI = ("plancia_search", "plancia_task_add", "plancia_task_update",
@@ -216,7 +231,7 @@ CODA = {t["name"].removeprefix("plancia_"): t for t in _TUTTI if t["name"] not i
 
 
 #: Un indizio per azione, corto quanto basta a sceglierla. Il manuale completo
-#: costa quattordici schemi, ed e' esattamente la spesa che questo tool evita:
+#: costa quindici schemi, ed e' esattamente la spesa che questo tool evita:
 #: chi ha bisogno degli argomenti chiede azione='aiuto' e li paga una volta sola.
 INDIZI = {
     "briefing": "state of his work now",
@@ -233,6 +248,7 @@ INDIZI = {
     "lanci": "state of dispatched runs",
     "eventi": "append-only event log, what shipped since",
     "sync": "re-scan sessions, memory, repos",
+    "riprendi": "resume a task's own session, or check its state",
 }
 
 TOOLS = [t for t in _TUTTI if t["name"] in PRIMI] + [{
@@ -246,7 +262,7 @@ TOOLS = [t for t in _TUTTI if t["name"] in PRIMI] + [{
         "properties": {"azione": {"type": "string", "enum": sorted(CODA) + ["aiuto"]}},
         "required": ["azione"],
         # Gli argomenti veri sono quelli dell'azione scelta, e stanno in CODA.
-        # Ripeterli qui vorrebbe dire ripagare i quattordici schemi che questo
+        # Ripeterli qui vorrebbe dire ripagare i quindici schemi che questo
         # tool esiste per non pagare.
         "additionalProperties": True,
     },
@@ -336,9 +352,34 @@ def call_tool(name: str, args: dict) -> str:
                                            int(args.get("limit") or 50)))
 
         if name == "plancia_task_add":
+            # Chi ha chiamato adesso: L0-SESSIONE, cosi' "Riprendi" (ondata 2)
+            # ha una sessione a cui tornare invece di un task orfano
+            # (docs/CONSIGLIO-2026-09-16-verdetto.md, "La prima cosa da fare").
+            # Cintura di sicurezza: corrente() legge os.getcwd(), che solleva
+            # se la cartella in cui il server e' partito e' stata cancellata
+            # nel frattempo (scenario reale: copie di lotto in
+            # ~/dev/plancia-copie/<lotto> cancellate a fine lotto con la
+            # sessione ancora viva). Senza questo try il task non viene
+            # scritto affatto: meglio scriverlo con i campi vuoti.
+            try:
+                s = sessione.corrente()
+            except Exception:
+                err(traceback.format_exc())
+                s = {}
+            if s.get("origine") == "nessuna":
+                # Non e' un errore (il task si scrive comunque, con i campi
+                # che ci sono), ma vale la pena saperlo: soprattutto per
+                # agent="codex", dove nessun server lanciato da Codex era
+                # vivo al momento di questo lotto per misurare se la cwd del
+                # server coincide con quella del rollout (e' un'inferenza,
+                # non una misura: vedi plancia/sessione.py).
+                err("sessione.corrente() non ha trovato niente: agent=%r cwd=%r" %
+                    (s.get("agent"), s.get("cwd")))
             return _fmt(actions.task_add(
                 conn, args.get("title"), args.get("body", ""), args.get("project"),
-                args.get("priority", 2), args.get("due"), source="claude"))
+                args.get("priority", 2), args.get("due"), source="claude",
+                session_id=s.get("session_id"), cwd=s.get("cwd"), agent=s.get("agent"),
+                host=s.get("host")))
 
         if name == "plancia_task_update":
             return _fmt(actions.task_update(
@@ -443,6 +484,40 @@ def call_tool(name: str, args: dict) -> str:
             res = ingest.sync(full=bool(args.get("full")),
                               skip_git=bool(args.get("skip_git")))
             return _fmt(res)
+
+        if name == "plancia_riprendi":
+            tid = args.get("id")
+            if tid is None:
+                raise actions.BadInput("serve id")
+            task = actions.task_get(conn, int(tid))
+            if not task:
+                raise actions.BadInput(f"task {tid} inesistente")
+            from . import riprendi as _riprendi
+            s = _riprendi.stato(conn, task)
+            if args.get("apri"):
+                return _fmt(_riprendi.apri(task, conn))
+            if args.get("background"):
+                # Stessa logica del ramo background di api.py e cmd_riprendi:
+                # fork della sessione quando c'e' (viva o chiusa), altrimenti
+                # cantiere.avvia() scrive da solo un prompt da zero (persa).
+                # Nome locale `sessione_fork`, non `sessione`: il modulo
+                # `sessione` (plancia/sessione.py) e' importato in cima a
+                # questo file e usato piu' sopra, in plancia_task_add
+                # (`sessione.corrente()`) - una variabile locale chiamata
+                # come lui lo ombreggia per l'INTERA funzione `call_tool`
+                # (regola di scoping di Python: un'assegnazione in un punto
+                # qualsiasi del corpo rende il nome locale ovunque nel
+                # corpo), e task_add falliva con UnboundLocalError perche'
+                # leggeva quel nome prima che questo ramo lo assegnasse mai.
+                sessione_fork = _riprendi.sessione_da_riprendere(s)
+                return _fmt(cantiere.avvia(
+                    conn, task.get("title") or "", "", task.get("project_key"),
+                    args.get("istruzioni", ""), s.get("agent") or task.get("agent") or "claude",
+                    bool(args.get("scrive")), None, task["id"], sessione=sessione_fork))
+            argv = _riprendi.comando(task, s, conn)
+            return _fmt({"stato": s.get("stato"), "motivo": s.get("motivo"),
+                        "sessione": s.get("session_id"), "cwd": s.get("cwd"),
+                        "comando": argv, "messaggio": _riprendi.messaggio(task)})
 
         raise actions.BadInput(f"tool sconosciuto: {name}")
     finally:

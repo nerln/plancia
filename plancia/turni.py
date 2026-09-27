@@ -22,7 +22,16 @@ import json
 import os
 from pathlib import Path
 
-RADICE = Path.home() / ".claude" / "projects"
+from . import config
+
+# Prima si leggeva `Path.home() / ".claude" / "projects"` congelato una volta
+# per tutte all'importazione del modulo: su una macchina con
+# `CLAUDE_CONFIG_DIR` puntato altrove (o in una prova che sposta
+# `config.CLAUDE_DIR` per isolarsi, come fa tools/prove/sessione.py)
+# l'indicizzazione guardava sempre `~/.claude/projects` vero e non trovava
+# niente (residuo dei tester dell'ondata 2, L1-INGEST-B, 16/09/2026). Niente
+# costante di modulo: si legge `config.CLAUDE_DIR` a ogni chiamata, come fanno
+# già `ingest.py` e `sessione.py` per lo stesso motivo.
 
 SCHEMA = """
 CREATE VIRTUAL TABLE IF NOT EXISTS turni_fts USING fts5(
@@ -146,7 +155,7 @@ def indicizza(conn, completo: bool = False, radice: Path | None = None) -> dict:
     "fatto" non permette di accorgersi che ha saltato tutto.
     """
     prepara(conn)
-    radice = radice or RADICE
+    radice = radice or (config.CLAUDE_DIR / "projects")
     if completo:
         conn.execute("DELETE FROM turni_fts")
         conn.execute("DELETE FROM turni_file")
