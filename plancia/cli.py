@@ -649,6 +649,43 @@ def cmd_esclusi(args):
         print(f"  {chiave}: {n}")
 
 
+def cmd_guardiano(args):
+    """Il registro e lo stato del guardiano dei compartimenti (sola lettura:
+    non scrive config.json ne' il registro)."""
+    from . import compartimenti
+    dati = str(config.DATA_DIR)
+    if args.registro is not None:
+        righe = compartimenti.leggi_registro(dati, args.registro)
+        if not righe:
+            print("(registro vuoto)")
+        for r in righe:
+            print("%s  %-14s  [%s] %s  %s  %s" % (
+                str(r.get("ts", "?")).replace("T", " ").rstrip("Z"),
+                r.get("esito", "?"), r.get("compartimento") or "-",
+                r.get("strumento") or "-", r.get("bersaglio") or "-",
+                r.get("motivo") or ""))
+        return
+    st = compartimenti.stato(dati)
+    print(f"modalita: {st['modo']}")
+    if st["config"] == "rotta":
+        print(f"{st['errore']}: "
+              + ("uso l'ultima config valida" if st["usa_copia"]
+                 else "nessuna copia valida, solo-registro per tutti"))
+    print("compartimenti:")
+    if not st["compartimenti"]:
+        print("  (nessuno)")
+    for c in st["compartimenti"]:
+        if c["nome"] == "predefinito":
+            print(f"  predefinito: {c['divieti']} divieti, {c['comandi_vietati']} "
+                  f"comandi vietati, manifesto {'si' if c['manifesto'] else 'no'}")
+        else:
+            print(f"  {c['nome']}: {c['cartelle']} cartelle, {c['sessioni']} sessioni, "
+                  f"{c['drive_ids']} id Drive")
+    r = st["registro_24h"]
+    print(f"registro, ultime 24 ore: {r['negato'] + r['avrebbe-negato'] + r['altro']} righe "
+          f"({r['negato']} negate, {r['avrebbe-negato']} avrebbe-negato, {r['altro']} note)")
+
+
 def cmd_doctor(args):
     from . import setup_claude
     for line in setup_claude.doctor():
@@ -866,6 +903,13 @@ def build_parser():
     s = sub.add_parser("esclusi", help="cartelle e sessioni private: elenco e pulizia")
     s.add_argument("--prova", action="store_true", help="conta senza toccare l'archivio")
     s.set_defaults(func=cmd_esclusi)
+
+    s = sub.add_parser("guardiano", help="il guardiano dei compartimenti: stato e registro")
+    s.add_argument("--registro", nargs="?", const=20, type=int, metavar="N",
+                   help="le ultime N decisioni non ammesse (default 20)")
+    s.add_argument("--stato", action="store_true",
+                   help="modalita', compartimenti e righe recenti (il default)")
+    s.set_defaults(func=cmd_guardiano)
 
     s = sub.add_parser("doctor", help="controlla lo stato")
     s.set_defaults(func=cmd_doctor)
