@@ -28,7 +28,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import config, eventi, recap, store
+from . import config, eventi, piattaforma, recap, store
 
 LOG_DIR = config.DATA_DIR / "cantiere"
 
@@ -422,13 +422,12 @@ def _chiudi(conn, run_id, stato, esito, acc, titolo, progetto, task_id, scrive):
 # --------------------------------------------------------------------------
 
 def _vivo(pid) -> bool:
+    """Il processo del lancio c'è ancora? Per `piattaforma.pid_vivo`: su Windows
+    mandare un segnale non controlla, uccide. Un processo di un altro utente non
+    è il nostro lancio (il pid è stato riusato): non conta come vivo."""
     if not pid:
         return False
-    try:
-        os.kill(int(pid), 0)
-        return True
-    except Exception:
-        return False
+    return piattaforma.pid_vivo(pid, non_nostro=False)
 
 
 def riconcilia(conn) -> int:

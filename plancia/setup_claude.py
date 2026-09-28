@@ -1023,8 +1023,12 @@ def doctor() -> list:
     try:
         from . import voice
         v = voice.stato()
-        lines.append(f"ok  voce: {v['motore']} · {v['voce_attuale'] or 'voce predefinita del sistema'} · "
-                     f"{'Voicebox attivo' if v['voicebox_vivo'] else 'voci di sistema'}")
+        manca = piattaforma.voce_mancante()
+        if manca and not (v["voicebox_vivo"] or voice.pocket_vivo()):
+            lines.append(f"no  voce: {manca} (il testo funziona lo stesso, senza la voce)")
+        else:
+            lines.append(f"ok  voce: {v['motore']} · {v['voce_attuale'] or 'voce predefinita del sistema'} · "
+                         f"{'Voicebox attivo' if v['voicebox_vivo'] else 'voci di sistema'}")
     except Exception as exc:
         lines.append(f"no  voce: {exc}")
     try:

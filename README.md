@@ -103,11 +103,15 @@ What does not exist outside macOS: the native app, its menu bar item, the
 `plancia://` URL actions and the hands-free voice panel. `plancia jarvis "..."`
 from a terminal still works. If a piece is missing on your machine the rest
 carries on: no notification tool means no notification, and no clipboard tool
-means nothing is copied. With no speech engine, the command line and the MCP
-tools still return the text and report the voice engine as "nessuno" (none).
-The dashboard is the exception for now: its recap button always asks for the
-voice, and without a speech engine the request fails with that message instead
-of showing the text. On Windows the server starts at login but is not restarted after a crash, and
+means nothing is copied. With no speech engine, `plancia say`, `plancia voice
+prova` and `plancia recap --speak` say so and what to install, the MCP `speak`
+action answers `letto: false` with the reason, and `plancia doctor` reports the
+voice as missing. The dashboard keeps working too: the recap, "Ask" and Jarvis
+answer with the text and a `voce: null` field plus a `nota_voce` explaining that
+there is no speech engine, and only the playback is skipped. On Windows,
+Resume needs Windows Terminal for a lost task when `claude` is a `.cmd` file (an
+npm install): its multi-line prompt cannot be handed to `cmd.exe` safely, and
+Resume says so instead of opening a broken command. On Windows the server starts at login but is not restarted after a crash, and
 its errors are not logged (launchd on macOS and systemd on Linux do restart it).
 The commands Plancia builds for each system are covered by the suite, but Windows and
 Linux have had far less real use than macOS: `plancia doctor` tells you what is
@@ -475,7 +479,7 @@ Reads are open: it is your data, already on your disk.
 git config core.hooksPath .githooks
 ```
 
-Turns on the hook that runs `python3 tools/prova.py` before every push: 1228
+Turns on the hook that runs `python3 tools/prova.py` before every push: 1303
 checks in about twenty seconds, against a throwaway archive that never touches
 yours. They cover the schema, the board, the proposals, the search index, the
 recap, the MCP surface and its token budget, every read route of the HTTP API,

@@ -52,7 +52,16 @@ def cmd_recap(args):
         cmd_notifica("Plancia", data["testo"])
     if args.speak or (args.daily and config.load_config().get("riepilogo_voce")):
         info = voice.parla(data["testo"], data["lingua"], args.voce, attendi=not args.background)
-        print(f"\n[voce: {info['motore']} · {info['file']}]", file=sys.stderr)
+        if info["motore"] == "nessuno":
+            print("\n[voce non disponibile: %s]" % _perche_senza_voce(info), file=sys.stderr)
+        else:
+            print(f"\n[voce: {info['motore']} · {info['file']}]", file=sys.stderr)
+
+
+def _perche_senza_voce(info) -> str:
+    """Perché `voice.parla` non ha detto niente (motore "nessuno"): la frase con
+    cosa installare, non un "[nessuno] None"."""
+    return info.get("errore") or "nessun motore vocale su questa macchina"
 
 
 def cmd_notifica(titolo, testo):
@@ -95,7 +104,10 @@ def cmd_say(args):
     from . import recap, voice
     testo = " ".join(args.testo)
     info = voice.parla(testo, recap.lang_or_default(args.lang), args.voce, attendi=True)
-    print(f"[{info['motore']}] {info['file']}")
+    if info["motore"] == "nessuno":
+        print("non ho detto niente: %s" % _perche_senza_voce(info), file=sys.stderr)
+        return 1
+    print(f"[{info['motore']}]" + (f" {info['file']}" if info.get("file") else ""))
 
 
 def cmd_voice(args):
@@ -113,7 +125,11 @@ def cmd_voice(args):
                  "es": "Plancia está lista. Te leo el resumen cuando quieras."}.get(
                      lang, "Plancia is ready.")
         info = voice.parla(frase, lang, args.voce, attendi=True)
-        print(f"[{info['motore']} · {voice.voce_per(lang)}] ok")
+        if info["motore"] == "nessuno":
+            print("prova non riuscita, nessuna voce: %s" % _perche_senza_voce(info),
+                  file=sys.stderr)
+            return 1
+        print(f"[{info['motore']} · {voice.voce_per(lang) or 'voce predefinita'}] ok")
 
 
 def cmd_task(args):
@@ -235,6 +251,11 @@ def cmd_riprendi(args):
             if esito.get("stato") == "viva":
                 print(f"  messaggio (da mettere negli appunti a mano): {esito['messaggio']}")
             else:
+                if esito.get("lanciato") is False:
+                    # non e' partito niente: dirlo, non scrivere "lanciato"
+                    print(f"  non lanciato: {esito.get('errore') or 'nessun terminale'}")
+                    print(f"  da lanciare a mano: {esito.get('riga', '')}")
+                    return 1
                 print(f"  lanciato: {esito.get('riga', '')}")
                 if esito.get("errore"):
                     print(f"  attenzione: {esito['errore']}")

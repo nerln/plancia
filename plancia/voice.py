@@ -5,11 +5,11 @@ e regge bene le lingue. Altrimenti le voci di sistema, che non chiedono niente e
 partono in un decimo di secondo: `say` su macOS, il sintetizzatore di Windows
 (System.Speech, via PowerShell), `espeak-ng` o `espeak` su Linux. I comandi li
 costruisce `piattaforma`. Dove non c'è niente di tutto questo la voce lo dice
-(`NessunMotoreVoce`). Da CLI e da MCP (`parla`) il resto continua: il testo
-arriva e la risposta dice che la voce manca. Dalla dashboard oggi no: il
-riepilogo con la voce passa da `api.py`, che non cattura `NessunMotoreVoce` e
-risponde con un errore (la dashboard non ha una voce sua nel browser, riproduce
-il file che il server produce).
+(`NessunMotoreVoce`) e il resto continua: da CLI e da MCP (`parla`) il testo
+arriva e la risposta dice che la voce manca; dalla dashboard (`api.py`, che
+cattura `NessunMotoreVoce`) il riepilogo, "Chiedi" e Jarvis rispondono col testo,
+con `voce: null` e una `nota_voce` (la dashboard non ha una voce sua nel browser,
+riproduce il file che il server produce, e senza file salta solo l'ascolto).
 """
 
 import hashlib
@@ -333,7 +333,8 @@ def parla(testo: str, lang: str = "it", motore: str = None, attendi=True) -> dic
     macOS un `say` che fallisce solleva ancora, come prima.
 
     Vale per chi chiama `parla` (la CLI e il server MCP). Chi chiama `sintesi`
-    direttamente, come il server web (`api.py`), riceve `NessunMotoreVoce`."""
+    direttamente, come il server web (`api.py`), riceve `NessunMotoreVoce` e lo
+    cattura da sé."""
     try:
         info = sintesi(testo, lang, motore)
         riproduci(info["file"], attendi=attendi)

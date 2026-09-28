@@ -33,6 +33,7 @@ Solo libreria standard, python 3.9.
 """
 
 import base64
+import csv
 import ntpath
 import os
 import shlex
@@ -139,6 +140,102 @@ def avvia_distaccato(argv, piatt=None, cwd=None, nuova_console=False):
     terminale resta aperta finche' la chiude chi la usa. Sostituibile dalle
     prove."""
     return subprocess.Popen(argv, **opzioni_distacco(piatt, cwd, nuova_console))
+
+
+# --------------------------------------------------------------------------
+# "questo processo e' vivo?"
+# --------------------------------------------------------------------------
+
+# Windows: PROCESS_QUERY_LIMITED_INFORMATION, STILL_ACTIVE, ERROR_ACCESS_DENIED.
+_QUERY_LIMITED = 0x1000
+_STILL_ACTIVE = 259
+_ACCESSO_NEGATO = 5
+
+
+def _kernel32():
+    """`(kernel32, get_last_error)` con i tipi dichiarati. Solo su Windows, dove
+    `ctypes.WinDLL` esiste; le prove lo sostituiscono con uno finto."""
+    import ctypes
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.OpenProcess.argtypes = [ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32]
+    k32.OpenProcess.restype = ctypes.c_void_p
+    k32.GetExitCodeProcess.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+    k32.GetExitCodeProcess.restype = ctypes.c_int
+    k32.CloseHandle.argtypes = [ctypes.c_void_p]
+    k32.CloseHandle.restype = ctypes.c_int
+    return k32, ctypes.get_last_error
+
+
+def _pid_vivo_ctypes(pid, non_nostro=True) -> bool:
+    """Windows: si APRE il processo in sola interrogazione e si legge il codice di
+    uscita (`STILL_ACTIVE` se gira ancora). Non si manda nessun segnale: su
+    Windows `os.kill(pid, 0)` non controlla, TERMINA il processo."""
+    import ctypes
+    k32, ultimo_errore = _kernel32()
+    handle = k32.OpenProcess(_QUERY_LIMITED, 0, pid)
+    if not handle:
+        # accesso negato: il processo c'e', semplicemente non e' nostro; ogni
+        # altro errore (parametro non valido) vuol dire che non c'e'
+        return bool(non_nostro) if ultimo_errore() == _ACCESSO_NEGATO else False
+    try:
+        codice = ctypes.c_uint32(0)
+        if not k32.GetExitCodeProcess(handle, ctypes.byref(codice)):
+            return False
+        return codice.value == _STILL_ACTIVE
+    finally:
+        k32.CloseHandle(handle)
+
+
+def _pid_vivo_tasklist(pid) -> bool:
+    """Il ripiego di Windows: `tasklist /FI "PID eq N"`. Passa da `esegui`, che le
+    prove sostituiscono."""
+    try:
+        res = esegui(["tasklist", "/FI", "PID eq %d" % pid, "/NH", "/FO", "CSV"],
+                     capture_output=True, text=True, timeout=15,
+                     stdin=subprocess.DEVNULL)
+    except Exception:
+        return False
+    for campi in csv.reader((res.stdout or "").splitlines()):
+        # "immagine.exe","1234","Console","1","12.345 KB"
+        if len(campi) > 1 and campi[1].strip() == str(pid):
+            return True
+    return False
+
+
+def pid_vivo(pid, piatt=None, non_nostro=True, nt=None) -> bool:
+    """True se `pid` e' un processo vivo su questa macchina. L'unico punto in cui
+    Plancia lo controlla: chi ha bisogno di saperlo passa da qui.
+
+    macOS e Linux: `os.kill(pid, 0)`, che non manda niente e dice solo se il
+    processo esiste (un processo di un altro utente c'e', ma non e' nostro: vale
+    `non_nostro`). Windows: MAI `os.kill`, perche' li' ogni segnale che non sia
+    Ctrl+C o Ctrl+Break chiama TerminateProcess e UCCIDE il processo che si voleva
+    solo controllare. Si usa `ctypes` (OpenProcess e GetExitCodeProcess) e,
+    dove `ctypes` non e' disponibile o fallisce, `tasklist`.
+    """
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if pid <= 0:
+        return False
+    if _p(piatt) == WINDOWS:
+        su_nt = os.name == "nt" if nt is None else nt
+        if su_nt:
+            try:
+                return _pid_vivo_ctypes(pid, non_nostro)
+            except Exception:
+                pass
+        return _pid_vivo_tasklist(pid)
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return bool(non_nostro)
+    except OSError:
+        return False
+    return True
 
 
 def _trova(cerca_fn, candidati):
@@ -283,10 +380,23 @@ def _arg_wt(argomento) -> str:
     return str(argomento).replace(";", "\\;")
 
 
+_CARATTERI_CMD = "\r\n&|<>^%\""
+
+
+def _passa_da_cmd(comando) -> bool:
+    """Il programma e' uno script `.cmd`/`.bat` (quindi passa da cmd.exe) e un
+    argomento contiene qualcosa che cmd.exe non sa ricevere in sicurezza."""
+    if not comando or not str(comando[0]).lower().endswith((".cmd", ".bat")):
+        return False
+    return any(c in str(a) for a in comando[1:] for c in _CARATTERI_CMD)
+
+
 def piano_terminale(cwd, argv, piatt=None, cerca_fn=None):
     """Come aprire una finestra di terminale in `cwd` con `argv` dentro: un
     dizionario `{"argv", "cwd", "nuova_console"}`, o None se su questo sistema non
-    si trova nessun terminale.
+    si trova nessun terminale. Su Windows senza `wt` e con un `claude.cmd` che
+    dovrebbe ricevere un testo pericoloso per cmd.exe torna lo stesso dizionario
+    con `argv` a None e un `errore` che dice di installare Windows Terminal.
 
     `cwd` e' la cartella in cui deve partire il processo lanciato (solo Windows
     senza `wt`, dove non c'e' un terminale che sappia scegliere la cartella) e
@@ -318,6 +428,18 @@ def piano_terminale(cwd, argv, piatt=None, cerca_fn=None):
         trovato = trova(comando[0]) if comando else None
         if trovato:
             comando[0] = str(trovato)
+        if _passa_da_cmd(comando):
+            # `claude` installato con npm e' un `claude.cmd`: CreateProcess lo
+            # esegue attraverso cmd.exe, che spezza un argomento con un ritorno a
+            # capo e interpreta `&`, `%` e le virgolette. Il prompt di un task
+            # "persa" e' multi-riga: senza Windows Terminal (che passa ogni
+            # argomento cosi' com'e') non si lancia, e lo si dice.
+            return {"argv": None, "cwd": None, "nuova_console": False,
+                    "errore": ("serve Windows Terminal (wt.exe) per questo comando: "
+                               "claude e' un .cmd e il testo del task ha ritorni a capo "
+                               "o caratteri che cmd.exe interpreta. Installa Windows "
+                               "Terminal (winget install Microsoft.WindowsTerminal) "
+                               "oppure lancia il task in background dalla dashboard")}
         return piano(comando, str(cwd), True)
     scelta = _trova(cerca_fn, [
         ["x-terminal-emulator"], ["gnome-terminal"], ["konsole"], ["xterm"]])
@@ -472,6 +594,27 @@ def comando_riproduzione(percorso, piatt=None, cerca_fn=None):
                                ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet"],
                                ["play", "-q"]])
     return scelta + [str(percorso)] if scelta else None
+
+
+def voce_mancante(piatt=None, cerca_fn=None):
+    """None se su questa macchina si puo' dire una frase ad alta voce, altrimenti
+    la frase che spiega cosa manca e cosa installare. E' la verita' che dicono
+    `doctor`, `say` e `voice prova`: non basta che ci sia un elenco di voci.
+
+    Si puo' parlare con un motore che scrive un file piu' un lettore audio, oppure
+    con `spd-say` (Linux), che dice la frase da solo. Su macOS `say` e `afplay`
+    ci sono sempre."""
+    piatt = _p(piatt)
+    if piatt == MAC:
+        return None
+    if comando_dire("x", "it", True, piatt, cerca_fn):
+        return None
+    if comando_sintesi("x", "it", "", 185, "x.wav", piatt, cerca_fn) is None:
+        return motore_voce_assente(piatt)
+    if comando_riproduzione("x.wav", piatt, cerca_fn) is None:
+        return ("nessun lettore audio: installa paplay, aplay o ffplay "
+                "per sentire la voce")
+    return None
 
 
 def motore_voce_assente(piatt=None) -> str:

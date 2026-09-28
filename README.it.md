@@ -101,11 +101,15 @@ Cosa non esiste fuori da macOS: l'app nativa, la sua voce nella barra dei menu, 
 azioni `plancia://` e il pannello vocale a mani libere. `plancia jarvis "..."` da
 terminale funziona comunque. Se sulla tua macchina manca un pezzo il resto va
 avanti: senza strumento per le notifiche niente notifica, senza strumento per gli
-appunti niente copia. Senza un motore vocale, la riga di comando e i tool MCP
-restituiscono comunque il testo e indicano come motore della voce "nessuno". La
-dashboard per ora è l'eccezione: il pulsante del riepilogo chiede sempre la voce,
-e senza un motore vocale la richiesta fallisce con quel messaggio invece di
-mostrare il testo. Su Windows il server parte all'accesso ma non riparte dopo un
+appunti niente copia. Senza un motore vocale, `plancia say`, `plancia voice prova`
+e `plancia recap --speak` lo dicono e dicono cosa installare, l'azione MCP `speak`
+risponde `letto: false` con il motivo e `plancia doctor` segnala la voce come
+mancante. Anche la dashboard continua a funzionare: il riepilogo, "Chiedi" e Jarvis
+rispondono col testo e con un campo `voce: null` più una `nota_voce` che spiega che
+manca il motore vocale, e si salta solo l'ascolto. Su Windows Riprendi ha bisogno di
+Windows Terminal per un task perso quando `claude` è un file `.cmd` (installazione
+con npm): il suo prompt su più righe non si può passare a `cmd.exe` in sicurezza, e
+Riprendi lo dice invece di aprire un comando rotto. Su Windows il server parte all'accesso ma non riparte dopo un
 crash, e i suoi errori non finiscono in un log (su macOS lo riavvia launchd, su
 Linux systemd). I comandi che Plancia costruisce per ogni sistema sono coperti
 dalla suite, ma Windows e Linux hanno avuto molto meno uso reale di macOS: `plancia doctor`
@@ -580,7 +584,7 @@ git config core.hooksPath .githooks
 ```
 
 Accende il gancio che fa girare `python3 tools/prova.py` prima di ogni push:
-1228 controlli in una ventina di secondi, su un archivio finto che non tocca
+1303 controlli in una ventina di secondi, su un archivio finto che non tocca
 il tuo.
 
 ## Licenza

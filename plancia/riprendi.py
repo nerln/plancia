@@ -88,22 +88,9 @@ def _parse_ts(s):
 # --------------------------------------------------------------------------
 
 def _pid_vivo(pid) -> bool:
-    """True se `pid` è un processo vivo su questa macchina."""
-    try:
-        pid = int(pid)
-    except (TypeError, ValueError):
-        return False
-    if pid <= 0:
-        return False
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True  # il processo c'è, semplicemente non è nostro
-    except OSError:
-        return False
-    return True
+    """True se `pid` è un processo vivo su questa macchina. Passa da
+    `piattaforma.pid_vivo`: su Windows mandare un segnale a un processo lo uccide."""
+    return piattaforma.pid_vivo(pid)
 
 
 def _registro_sessioni_claude() -> list:
@@ -437,8 +424,10 @@ def apri(task, conn=None) -> dict:
         comando_lancio = piano["argv"] if piano else None
     esito = {"stato": s["stato"], "argv": argv, "cwd": cwd, "riga": riga}
     if comando_lancio is None:
-        esito["errore"] = ("nessun terminale trovato: installa uno fra x-terminal-emulator, "
-                           "gnome-terminal, konsole o xterm, oppure imposta PLANCIA_TERMINALE")
+        esito["errore"] = ((piano or {}).get("errore")
+                           or "nessun terminale trovato: installa uno fra x-terminal-emulator, "
+                              "gnome-terminal, konsole o xterm, oppure imposta PLANCIA_TERMINALE")
+        esito["lanciato"] = False
         return esito
     if lanciatore or piattaforma.nome() == piattaforma.MAC:
         # `osascript` (o il lanciatore finto delle prove) torna subito: qui si
@@ -458,6 +447,7 @@ def apri(task, conn=None) -> dict:
                                          nuova_console=piano["nuova_console"])
         except OSError as exc:
             esito["errore"] = "non riesco ad aprire il terminale: %s" % exc
+            esito["lanciato"] = False
     return esito
 
 

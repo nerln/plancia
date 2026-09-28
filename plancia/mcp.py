@@ -488,7 +488,12 @@ def call_tool(name: str, args: dict) -> str:
             data = recap.build(conn, args.get("day"), args.get("lang"))
             if args.get("speak"):
                 info = voice.parla(data["testo"], data["lingua"], attendi=False)
-                data["voce"] = info["motore"]
+                if info["motore"] == "nessuno":
+                    # il testo arriva lo stesso: la voce non c'e', e si dice perche'
+                    data["voce"] = None
+                    data["nota_voce"] = info.get("errore") or "nessun motore vocale"
+                else:
+                    data["voce"] = info["motore"]
             data.pop("dati", None)
             return _fmt(data)
 
@@ -497,6 +502,10 @@ def call_tool(name: str, args: dict) -> str:
             if not testo:
                 raise actions.BadInput("serve un testo")
             info = voice.parla(testo, recap.lang_or_default(args.get("lang")), attendi=False)
+            if info["motore"] == "nessuno":
+                # nessun motore ha parlato: dirlo, o l'agente racconta di aver letto
+                return _fmt({"letto": False, "motore": None, "lingua": info["lingua"],
+                             "motivo": info.get("errore") or "nessun motore vocale"})
             return _fmt({"letto": True, "motore": info["motore"], "lingua": info["lingua"]})
 
         if name == "plancia_lavagna":
