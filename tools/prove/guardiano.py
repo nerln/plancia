@@ -20,6 +20,16 @@ subagenti), 6 (strumenti di sessione incrociati, nei due sensi), 7
 chiamata, la rotazione del registro, il sottocomando `plancia guardiano` e
 la compatibilita' con Python 3.9. Le prove 4 e 5 (briefing/richiamo e boa)
 sono di altri lotti.
+
+Gli strumenti di sessione si provano con gli id che l'app manda davvero
+(`local_<uuid>`, nomi, `self`, `main`), risolti da un registro dell'app finto
+nella HOME temporanea (`claude-code-sessions/*/*/local_<uuid>.json`), con l'id
+`local_` DIVERSO dal `cliSessionId`: e' cosi' anche nel registro vero, e una
+prova con id uguali al `session_id` non proverebbe niente. Ogni controllo che
+dice "non succede niente" (nessuna scrittura, nessuna uscita) e' legato, nello
+stesso controllo, a una condizione positiva (uscita 0, esito atteso, o lo
+stesso ambiente che altrove scrive davvero): senza il codice, che qui non
+esiste, resterebbe verde per il motivo sbagliato.
 """
 
 import ast
@@ -48,6 +58,22 @@ S_DB_ALFA = "d0d0d0d0-0000-4000-8000-000000000005"    # nella tabella, cwd in al
 S_DB_COMUNE = "d0d0d0d0-0000-4000-8000-000000000006"  # nella tabella, cwd comune
 S_IGNOTA = "e0e0e0e0-0000-4000-8000-000000000007"     # in nessun posto
 S_MADRE = "f0f0f0f0-0000-4000-8000-000000000008"      # madre di un subagente
+
+# Id dell'app (`local_...`) e `cliSessionId` DIVERSI, come nel registro vero.
+L_ALFA = "local_aaaa0000-0000-4000-8000-00000000000a"
+S_REG_ALFA = "a2a2a2a2-0000-4000-8000-00000000000b"
+L_ALFA_ID = "local_aaaa0000-0000-4000-8000-00000000000c"   # cli = S_ALFA, cwd nel comune
+L_COMUNE = "local_cccc0000-0000-4000-8000-00000000000d"    # cli = S_COMUNE
+L_COMUNE2 = "local_cccc0000-0000-4000-8000-00000000000e"
+S_REG_COMUNE2 = "c3c3c3c3-0000-4000-8000-00000000000f"
+L_BETA = "local_bbbb0000-0000-4000-8000-000000000010"      # cli = S_BETA
+L_IGNOTA = "local_eeee0000-0000-4000-8000-000000000011"    # non nel registro
+L_CFG = "local_dddd0000-0000-4000-8000-000000000012"       # scritto in alfa.sessioni
+S_CFG = "d1d1d1d1-0000-4000-8000-000000000013"             # il suo cliSessionId
+L_DUP1 = "local_9999aaaa-0000-4000-8000-000000000014"
+L_DUP2 = "local_9999aaaa-0000-4000-8000-000000000015"
+S_DUP1 = "91919191-0000-4000-8000-000000000016"
+S_DUP2 = "92929292-0000-4000-8000-000000000017"
 
 RAMO = "ramo-condiviso-x"
 ID_DRIVE_ALFA = "drive-alfa-1"
@@ -105,9 +131,22 @@ class Ambiente:
         self.alfa3 = self.albero / "alfa-tre"
         self.comune = r / "comune"
         self.condiviso = self.comune / "condiviso"
+        # due alberi isolati, ognuno con UN solo divieto di config (fuori dal
+        # manifesto): uno letterale e uno con un glob. Servono a vedere rossi,
+        # separatamente, i due rami "la ricerca include un percorso vietato".
+        self.albero_lett = r / "albero-lett"
+        self.albero_glob = r / "albero-glob"
         for d in (self.home, self.dati, self.claude / "projects", self.alfa1,
-                  self.alfa2, self.alfa3, self.beta1, self.condiviso):
+                  self.alfa2, self.alfa3, self.beta1, self.condiviso,
+                  self.condiviso / "repo", self.albero_lett / "lett-vietato",
+                  self.albero_glob):
             d.mkdir(parents=True, exist_ok=True)
+        (self.condiviso / "repo" / "README").write_text("repo comune", "utf-8")
+        (self.condiviso / "PR-7.md").write_text("pr comune", "utf-8")
+        (self.albero_lett / "lett-vietato" / "f.txt").write_text("x", "utf-8")
+        (self.albero_lett / "libero.txt").write_text("x", "utf-8")
+        (self.albero_glob / "GLOB-uno.txt").write_text("x", "utf-8")
+        (self.albero_glob / "libero.txt").write_text("x", "utf-8")
         (self.alfa1 / "segreto.txt").write_text("dentro alfa", "utf-8")
         (self.alfa1 / "sotto").mkdir()
         (self.alfa1 / "sotto" / "f.txt").write_text("x", "utf-8")
@@ -139,7 +178,9 @@ class Ambiente:
             "beta": {"cartelle": [str(self.beta1)], "sessioni": [S_BETA],
                      "drive_ids": [ID_DRIVE_BETA]},
             "predefinito": {"manifesto_divieti": str(self.manifesto),
-                            "divieti": [str(self.comune / "riservato")],
+                            "divieti": [str(self.comune / "riservato"),
+                                        str(self.albero_lett / "lett-vietato"),
+                                        str(self.albero_glob / "GLOB-*")],
                             "comandi_vietati": [RAMO]}}}
         cfg.update(extra)
         return cfg
@@ -201,6 +242,15 @@ class Ambiente:
         if not p.exists():
             return []
         return [json.loads(x) for x in p.read_text("utf-8").splitlines() if x.strip()]
+
+    def registra_app(self, local, cli, cwd, titolo, origine=None):
+        """Una voce del registro dell'app, nella HOME temporanea."""
+        d = (self.home / "Library" / "Application Support" / "Claude"
+             / "claude-code-sessions" / "u1" / "u2")
+        d.mkdir(parents=True, exist_ok=True)
+        (d / f"{local}.json").write_text(json.dumps({
+            "sessionId": local, "cliSessionId": cli, "cwd": str(cwd),
+            "originCwd": str(origine or cwd), "title": titolo}), "utf-8")
 
     def crea_db(self):
         """Il database di Plancia con lo schema VERO (lo crea `store`, in un
@@ -367,16 +417,40 @@ def _prove_nominato(prova, a: Ambiente):
     prova("1: alfa, Bash con virgolette che non tornano (ripiego su split): "
           "il percorso fuori si vede lo stesso",
           alfa("Bash", {"command": f"cat <<EOF\ndon't\nEOF\ncat {fuori}"}).negato)
-    prova("1: alfa con la cwd fuori dai permessi: le parole senza barre (echo, ls) non sono percorsi",
-          a.chiama(a.pl("Bash", {"command": "echo ciao && ls"}, sid=S_ALFA, aperta_in=a.comune)).ammesso)
+    # Un nominato per id e' aperto FUORI dalle sue cartelle: la cwd fuori dai
+    # permessi e' un percorso toccato da ogni comando (le parole senza barre,
+    # `.` e i glob di shell leggono la cwd senza nominarla).
+    for cmd in ("cat nota.txt", "ls", "grep -rn comune .", "head -5 *", "echo ciao && ls"):
+        r = a.chiama(a.pl("Bash", {"command": cmd}, sid=S_ALFA, aperta_in=a.comune))
+        prova(f"1: alfa con la cwd fuori dai permessi, Bash `{cmd}`: negato, "
+              "con l'indicazione di change_directory",
+              r.negato and "change_directory" in r.motivo and str(a.alfa1) in r.motivo, repr(r))
+    for cmd in ("cat segreto.txt", "ls", "grep -rn x .", "head -5 segreto.txt"):
+        r = alfa("Bash", {"command": cmd})
+        prova(f"1: alfa con la cwd dentro le sue cartelle, Bash `{cmd}`: ammesso", r.ammesso, repr(r))
+    r = a.chiama(a.pl("Bash", {"command": "cat due.txt"}, sid=S_ALFA, aperta_in=a.comune, cwd=a.alfa2))
+    prova("1: alfa aperta fuori ma spostata con change_directory in una sua cartella: "
+          "Bash ammesso", r.ammesso, repr(r))
+    r = a.chiama(a.pl("mcp__ccd_directory__change_directory", {"path": str(a.alfa2)},
+                      sid=S_ALFA, aperta_in=a.comune))
+    prova("1: ...e change_directory verso una sua cartella da una cwd fuori: ammesso "
+          "(la via per rientrare non e' bloccata)", r.ammesso, repr(r))
     prova("1: alfa, Bash senza percorsi: ammesso",
           alfa("Bash", {"command": "echo ciao && python3 --version"}).ammesso)
     # id di sessione dichiarato: alfa anche se aperta altrove
     r = a.chiama(a.pl("Read", {"file_path": fuori}, sid=S_ALFA, aperta_in=a.comune))
     prova("1: una sessione in alfa.sessioni aperta nella cartella del predefinito e' "
           "comunque alfa: Read del file comune negato", r.negato, repr(r))
-    prova("1: ...e la sua memoria (memory) resta ammessa",
-          a.chiama(a.pl("Read", {"file_path": str(a.claude / "projects" / _codifica(a.comune) / "memory" / "M.md")},
+    memoria = str(a.claude / "projects" / _codifica(a.comune) / "memory" / "MEMORY.md")
+    r = a.chiama(a.pl("Read", {"file_path": memoria}, sid=S_ALFA, aperta_in=a.comune))
+    prova("1: ...la `memory` della cartella che condivide con il predefinito NON e' sua: "
+          "Read negata (canale 7: leggerebbe i ricordi del predefinito)", r.negato, repr(r))
+    r = a.chiama(a.pl("Write", {"file_path": memoria, "content": "x"}, sid=S_ALFA, aperta_in=a.comune))
+    prova("1: ...e Write in quella `memory` negata (un MEMORY.md che il predefinito "
+          "caricherebbe da solo)", r.negato, repr(r))
+    prova("1: ...la propria cartella di sessione (<sid>/subagents/...) resta ammessa",
+          a.chiama(a.pl("Read", {"file_path": str(a.claude / "projects" / _codifica(a.comune)
+                                                  / S_ALFA / "subagents" / "agent-q.jsonl")},
                         sid=S_ALFA, aperta_in=a.comune)).ammesso)
     prova("1: ...ma le trascrizioni delle ALTRE sessioni della stessa cartella no",
           a.chiama(a.pl("Read", {"file_path": str(a.claude / "projects" / _codifica(a.comune) / "altra.jsonl")},
@@ -439,6 +513,24 @@ def _prove_predefinito(prova, a: Ambiente):
     prova("2: predefinito, Grep da un albero che contiene SOLO una cartella di alfa: negato "
           "(la ricerca include la cartella di un nominato)",
           r.negato and "include" in r.motivo and "alfa-tre" in r.motivo, repr(r))
+    r = pred("Grep", {"pattern": "x", "path": str(a.albero_lett)})
+    prova("2: predefinito, Grep da un albero con SOLO un divieto letterale (config `divieti`) "
+          "sotto: negato (ramo letterale della regola)",
+          r.negato and "restringi" in r.motivo, repr(r))
+    r = pred("Grep", {"pattern": "x", "path": str(a.albero_glob)})
+    prova("2: predefinito, Grep che parte proprio dal prefisso letterale di un divieto con glob "
+          "(<albero>/GLOB-*): negato, include i file che combaciano (ramo dei glob)",
+          r.negato and "restringi" in r.motivo, repr(r))
+    prova("2: ...anche con `glob` di Grep: la ricerca in quella cartella e' negata",
+          pred("Grep", {"pattern": "x", "path": str(a.albero_glob), "glob": "GLOB-*"}).negato)
+    prova("2: ...e Glob che parte da quella cartella",
+          pred("Glob", {"pattern": "*.txt", "path": str(a.albero_glob)}).negato)
+    prova("2: ...ma Read di un file della stessa cartella che non combacia col modello: ammesso",
+          pred("Read", {"file_path": str(a.albero_glob / "libero.txt")}).ammesso)
+    prova("2: ...e Read di uno che combacia (GLOB-uno.txt): negato",
+          pred("Read", {"file_path": str(a.albero_glob / "GLOB-uno.txt")}).negato)
+    prova("2: predefinito, Read nell'albero con il divieto letterale, fuori dal divieto: ammesso",
+          pred("Read", {"file_path": str(a.albero_lett / "libero.txt")}).ammesso)
     prova("2: predefinito, Glob relativo da quell'albero: negato",
           pred("Glob", {"pattern": "**/*.py", "path": str(a.albero)}).negato)
     prova("2: predefinito, Read di un file dell'albero fuori da alfa-tre: ammesso",
@@ -463,6 +555,25 @@ def _prove_predefinito(prova, a: Ambiente):
           pred("Bash", {"command": "git -C alfa-uno log"}, aperta_in=a.comune, cwd=a.radice).negato)
     prova("2: predefinito, Bash `ls comune` da una cwd che sta sopra (non e' vietata, `ls` non e' ricorsivo): ammesso",
           pred("Bash", {"command": "ls comune"}, aperta_in=a.comune, cwd=a.radice).ammesso)
+    # Bash ricorsivo: lo stesso incidente ordinario di Grep e Glob, dalla shell
+    for cmd in ("grep -rn x .", "grep -R x", "rg x", "find . -name x", "ls -R", "tree",
+                "tar -cf x.tar condiviso", "rsync -a condiviso/ dest/", "git grep x",
+                "cp -r condiviso dest", "cd comune 2>/dev/null; grep -rn x ."):
+        r = pred("Bash", {"command": cmd}, aperta_in=a.comune)
+        prova(f"2: predefinito dalla cartella comune, Bash `{cmd}`: negato (la ricerca "
+              "include un percorso vietato)", r.negato, repr(r))
+    for cmd in ("cat condiviso/*", "head -3 condiviso/PR-*", "cat condiviso/repo/README"):
+        r = pred("Bash", {"command": cmd}, aperta_in=a.comune)
+        prova(f"2: predefinito, Bash `{cmd}` (il glob di shell si espande sul disco): negato",
+              r.negato, repr(r))
+    for cmd in ("cat nota.txt", "grep x nota.txt", "ls condiviso", "echo find tree",
+                "grep -rn x progetto", "ls -R progetto", "find progetto -name x"):
+        r = pred("Bash", {"command": cmd}, aperta_in=a.comune)
+        prova(f"2: predefinito dalla cartella comune, Bash `{cmd}`: ammesso", r.ammesso, repr(r))
+    for cmd in ("grep -rn x .", "rg x", "find . -name x", "ls -R", "cat *"):
+        r = pred("Bash", {"command": cmd}, aperta_in=a.progetto)
+        prova(f"2: predefinito da una cartella senza divieti sotto, Bash `{cmd}`: ammesso",
+              r.ammesso, repr(r))
     prova("2: predefinito, Bash con un nome di file vietato da un modello di nome (dato.segreto): negato",
           pred("Bash", {"command": "cat dato.segreto"}, aperta_in=a.progetto).negato)
     prova("2: predefinito, Bash con python -c su un file di alfa: negato",
@@ -625,6 +736,221 @@ def _prove_sessioni_e_drive(prova, a: Ambiente):
           drv("mcp__uuid-finto__sposta_file", {"fileId": ID_DRIVE_COMUNE}).negato)
 
 
+def _prove_sessioni_app(prova, a: Ambiente):
+    """Gli strumenti di sessione con gli id che l'app manda DAVVERO: `local_<uuid>`
+    (diverso dal `cliSessionId`), nomi, `self` e `main`. Un registro dell'app
+    finto nella HOME temporanea li risolve. Senza il registro tutti i bersagli
+    risultano sconosciuti: e' quello che la prova 6 con id uguali al session_id
+    non poteva vedere."""
+    a.registra_app(L_ALFA, S_REG_ALFA, a.alfa1, "Lavoro alfa")
+    a.registra_app(L_ALFA_ID, S_ALFA, a.comune, "Alfa per id")   # alfa solo per id
+    a.registra_app(L_COMUNE, S_COMUNE, a.comune, "Principale")
+    a.registra_app(L_COMUNE2, S_REG_COMUNE2, a.comune, "Altra comune")
+    a.registra_app(L_BETA, S_BETA, a.beta1, "Lavoro beta")
+    a.registra_app(L_CFG, S_CFG, a.comune, "Scritta in config")
+    a.registra_app(L_DUP1, S_DUP1, a.alfa1, "Duplicato")
+    a.registra_app(L_DUP2, S_DUP2, a.comune, "Duplicato")
+    cfg = a.config()
+    cfg["compartimenti"]["alfa"]["sessioni"] = [S_ALFA, L_CFG, "local_zzzz0000-0000-4000-8000-000000000099"]
+    a.scrivi_config(cfg)
+    ss = "mcp__ccd_session_mgmt__"
+
+    def pred(tool, ti, **kw):
+        return a.chiama(a.pl(tool, ti, sid=S_COMUNE, **kw))
+
+    def alfa(tool, ti, **kw):
+        return a.chiama(a.pl(tool, ti, sid=S_ALFA, aperta_in=a.alfa1, **kw))
+
+    r = pred(ss + "get_session", {"session_id": L_ALFA})
+    prova("6-app: predefinito -> get_session di un id `local_` di alfa (per cartella): negato",
+          r.negato and "appartiene a alfa" in r.motivo, repr(r))
+    prova("6-app: predefinito -> list_events di un id `local_` il cui cliSessionId e' in alfa.sessioni: negato",
+          pred(ss + "list_events", {"id": L_ALFA_ID}).negato)
+    prova("6-app: predefinito -> send_message a un id `local_` di beta: negato",
+          pred(ss + "send_message", {"sessionId": L_BETA, "message": "x"}).negato)
+    prova("6-app: predefinito -> export_transcript di un id `local_` di alfa: negato",
+          pred(ss + "export_transcript", {"session_id": L_ALFA}).negato)
+    prova("6-app: predefinito -> SendMessage a un NOME (il titolo) di una sessione di alfa: negato",
+          pred("SendMessage", {"to": "Lavoro alfa", "message": "x"}).negato)
+    prova("6-app: ...il titolo senza badare alle maiuscole",
+          pred("SendMessage", {"to": "lavoro ALFA", "message": "x"}).negato)
+    prova("6-app: predefinito -> get_session di un id `local_` del predefinito: ammesso",
+          pred(ss + "get_session", {"session_id": L_COMUNE2}).ammesso)
+    prova("6-app: predefinito -> SendMessage a un nome del predefinito: ammesso",
+          pred("SendMessage", {"to": "Principale", "message": "x"}).ammesso)
+    prova("6-app: predefinito -> id `local_` sconosciuto: ammesso (come da specifica)",
+          pred(ss + "get_session", {"session_id": L_IGNOTA}).ammesso)
+    prova("6-app: predefinito -> get_session `self`: ammesso",
+          pred(ss + "get_session", {"session_id": "self"}).ammesso)
+    r = alfa(ss + "get_session", {"session_id": L_COMUNE})
+    prova("6-app: alfa -> get_session di un id `local_` del predefinito: negato, e dice che "
+          "appartiene al predefinito (non che e' sconosciuto)",
+          r.negato and "appartiene a predefinito" in r.motivo, repr(r))
+    prova("6-app: alfa -> get_session `self`: ammesso",
+          alfa(ss + "get_session", {"session_id": "self"}).ammesso)
+    prova("6-app: alfa -> export_transcript `self`: ammesso",
+          alfa(ss + "export_transcript", {"session_id": "self"}).ammesso)
+    prova("6-app: alfa -> get_session di un altro id `local_` di alfa: ammesso",
+          alfa(ss + "get_session", {"session_id": L_ALFA}).ammesso)
+    prova("6-app: alfa -> get_session del PROPRIO id `local_` (il cui cliSessionId e' il suo session_id): ammesso",
+          alfa(ss + "get_session", {"session_id": L_ALFA_ID}).ammesso)
+    r = alfa(ss + "get_session", {"session_id": L_BETA})
+    prova("6-app: alfa -> get_session di un id `local_` di beta: negato",
+          r.negato and "beta" in r.motivo, repr(r))
+    prova("6-app: alfa -> id `local_` sconosciuto: negato",
+          alfa(ss + "list_events", {"session_id": L_IGNOTA}).negato)
+    prova("6-app: alfa -> SendMessage a un nome di alfa: ammesso",
+          alfa("SendMessage", {"to": "Lavoro alfa", "message": "x"}).ammesso)
+    prova("6-app: alfa -> SendMessage a un nome del predefinito: negato",
+          alfa("SendMessage", {"to": "Principale", "message": "x"}).negato)
+    prova("6-app: alfa (sessione principale, non un subagente) -> SendMessage a `main`: "
+          "nome sconosciuto, negato",
+          alfa("SendMessage", {"to": "main", "message": "x"}).negato)
+    sub = dict(sid="agent-x", madre=S_ALFA)
+    prova("6-app: un SUBAGENTE di alfa -> SendMessage a `main` (il modo documentato di "
+          "parlare alla madre): ammesso",
+          a.chiama(a.pl("SendMessage", {"to": "main", "message": "x"}, aperta_in=a.alfa1, **sub)).ammesso)
+    prova("6-app: un subagente di alfa -> get_session `self`: ammesso",
+          a.chiama(a.pl(ss + "get_session", {"session_id": "self"}, aperta_in=a.alfa1, **sub)).ammesso)
+    prova("6-app: un subagente di alfa -> SendMessage a un nome del predefinito: negato",
+          a.chiama(a.pl("SendMessage", {"to": "Principale", "message": "x"}, aperta_in=a.alfa1, **sub)).negato)
+    prova("6-app: un subagente del predefinito -> SendMessage a `main`: ammesso",
+          a.chiama(a.pl("SendMessage", {"to": "main", "message": "x"}, aperta_in=a.comune,
+                        sid="agent-y", madre=S_COMUNE)).ammesso)
+    prova("6-app: titolo ripetuto (una sessione di alfa e una del predefinito): il predefinito "
+          "e' negato (una delle due non e' sua)",
+          pred("SendMessage", {"to": "Duplicato", "message": "x"}).negato)
+    prova("6-app: ...e alfa e' negata (l'altra non e' sua)",
+          alfa("SendMessage", {"to": "Duplicato", "message": "x"}).negato)
+    # un id `local_` scritto in alfa.sessioni si traduce nel cliSessionId
+    r = a.chiama(a.pl("Read", {"file_path": str(a.comune / "nota.txt")}, sid=S_CFG, aperta_in=a.comune))
+    prova("6-app: un id `local_` in alfa.sessioni vale per la sessione che ha quel cliSessionId "
+          "(Read del file comune negato)", r.negato, repr(r))
+    prova("6-app: ...e un id `local_` in alfa.sessioni che il registro non conosce non rompe niente "
+          "(il predefinito legge nel comune)",
+          a.chiama(a.pl("Read", {"file_path": str(a.comune / "nota.txt")}, sid=S_COMUNE)).ammesso)
+    r = pred(ss + "get_session", {"session_id": L_CFG})
+    prova("6-app: predefinito -> get_session dell'id `local_` scritto in alfa.sessioni: negato",
+          r.negato, repr(r))
+
+
+def _prove_misura(prova, a: Ambiente):
+    """Le chiamate senza bersaglio che il predefinito puo' fare: non si negano,
+    ma in solo-registro lasciano una riga."""
+    ss = "mcp__ccd_session_mgmt__"
+    chiamate = [(ss + "list_sessions", {}), (ss + "search_session_transcripts", {"query": "x"}),
+                ("ListAgents", {})]
+    a.togli_config()
+    a.scrivi_config(a.config("solo-registro"))
+    esiti = [a.chiama(a.pl(t, ti, sid=S_COMUNE)) for t, ti in chiamate]
+    righe = a.registro()
+    prova("misura: in solo-registro il predefinito che elenca/cerca fra tutte le sessioni e' "
+          "ammesso e lascia una riga `avrebbe-negato` per strumento",
+          all(e.ammesso for e in esiti) and len(righe) == 3
+          and {x["strumento"] for x in righe} == {t for t, _ in chiamate}
+          and all(x["esito"] == "avrebbe-negato" for x in righe), str(righe))
+    a.chiama(a.pl(ss + "get_usage", {}, sid=S_COMUNE))
+    prova("misura: get_usage (non guarda altre sessioni) non lascia righe", len(a.registro()) == 3)
+    a.togli_config()
+    a.scrivi_config(a.config("bloccante"))
+    esiti = [a.chiama(a.pl(t, ti, sid=S_COMUNE)) for t, ti in chiamate]
+    prova("misura: in bloccante non si nega (limite dichiarato) e non si scrive niente",
+          all(e.ammesso for e in esiti) and a.registro() == [], repr(esiti))
+    a.togli_config()
+    cfg = a.config("solo-registro")
+    cfg["compartimenti"] = {"predefinito": cfg["compartimenti"]["predefinito"]}
+    a.scrivi_config(cfg)
+    e = a.chiama(a.pl(ss + "list_sessions", {}, sid=S_COMUNE))
+    prova("misura: senza compartimenti nominati non c'e' niente da misurare (nessuna riga)",
+          e.ammesso and a.registro() == [], repr(e))
+    a.togli_config()
+
+
+def _prove_protezione(prova, a: Ambiente):
+    """Un agente fermato dal guardiano non lo spegne da solo: i file del
+    guardiano non si modificano da nessuna sessione. Leggerli resta ammesso."""
+    a.togli_config()
+    a.scrivi_config(a.config("bloccante"))
+    a.chiama(a.pl("Read", {"file_path": str(a.comune / "nota.txt")}, sid=S_COMUNE))  # scrive la copia
+    copia = a.dati / "compartimenti.ultima-valida.json"
+    config = a.dati / "config.json"
+
+    def pred(tool, ti):
+        return a.chiama(a.pl(tool, ti, sid=S_COMUNE))
+
+    prova("protezione: la copia dell'ultima valida esiste (il bloccante l'ha scritta)", copia.exists())
+    for etichetta, percorso in (("config.json", config), ("la copia dell'ultima valida", copia),
+                                ("il manifesto", a.manifesto), ("il registro", a.dati / "guardiano.log"),
+                                ("bin/plancia-guardiano", GUARDIANO),
+                                ("plancia/compartimenti.py", RADICE / "plancia" / "compartimenti.py")):
+        r = pred("Edit", {"file_path": str(percorso), "old_string": "a", "new_string": "b"})
+        prova(f"protezione: predefinito, Edit di {etichetta}: negato", r.negato and "guardiano" in r.motivo, repr(r))
+    prova("protezione: predefinito, Write di config.json: negato",
+          pred("Write", {"file_path": str(config), "content": "{}"}).negato)
+    prova("protezione: ...anche con un percorso che passa da `..`",
+          pred("Write", {"file_path": str(a.dati / "x" / ".." / "config.json"), "content": "{}"}).negato)
+    prova("protezione: predefinito, Read di config.json: ammesso",
+          pred("Read", {"file_path": str(config)}).ammesso)
+    prova("protezione: predefinito, Write di un altro file della cartella dati: ammesso",
+          pred("Write", {"file_path": str(a.dati / "altro.txt"), "content": "x"}).ammesso)
+    for cmd in (f"echo '{{}}' > {config}", f"sed -i s/a/b/ {config}", f"rm {copia}",
+                f"mv {a.manifesto} /dev/null", f"echo x | tee {config}"):
+        r = pred("Bash", {"command": cmd})
+        prova(f"protezione: predefinito, Bash `{cmd[:40]}...`: negato", r.negato, repr(r))
+    for cmd in (f"cat {config}", f"cat {config} 2>/dev/null", f"grep guardiano {config} > /dev/null",
+                f"python3 -c \"import json; json.load(open('{config}'))\"", f"echo x > {a.dati}/altro.txt"):
+        r = pred("Bash", {"command": cmd})
+        prova(f"protezione: predefinito, Bash `{cmd[:40]}...`: ammesso", r.ammesso, repr(r))
+    # Artifact: `files` come mappa e `root`
+    def art(ti, sid=S_ALFA_LIBERA, aperta=None, **kw):
+        return a.chiama(a.pl("Artifact", ti, sid=sid, aperta_in=aperta or a.alfa1, **kw))
+
+    fuori = str(a.comune / "nota.txt")
+    dentro = str(a.alfa1 / "segreto.txt")
+    prova("artifact: alfa, `files` come mappa con un sorgente fuori: negato",
+          art({"file_path": dentro, "files": {"a.txt": fuori}}).negato)
+    prova("artifact: alfa, `files` con {\"from\": fuori}: negato",
+          art({"file_path": dentro, "files": {"a.txt": {"from": fuori}}}).negato)
+    prova("artifact: alfa, `root` fuori: negato",
+          art({"file_path": dentro, "root": str(a.comune), "files": {"a.txt": "nota.txt"}}).negato)
+    r = art({"file_path": dentro, "files": {"a.txt": dentro, "b.txt": {"from": str(a.alfa2 / "due.txt")}}})
+    prova("artifact: alfa, `files` tutti dentro le sue cartelle: ammesso", r.ammesso, repr(r))
+    r = art({"file_path": dentro, "files": {"a.js": {"artifact": "https://esempio.test/a", "path": "x.js"}}})
+    prova("artifact: alfa, un valore {artifact, path} copia da un altro artifact e non tocca il disco: ammesso",
+          r.ammesso, repr(r))
+    prova("artifact: predefinito, `files` con un sorgente dentro alfa: negato",
+          a.chiama(a.pl("Artifact", {"file_path": fuori, "files": {"a.txt": dentro}}, sid=S_COMUNE)).negato)
+    prova("artifact: predefinito, `files` nel comune: ammesso",
+          a.chiama(a.pl("Artifact", {"file_path": fuori, "files": {"a.txt": fuori}}, sid=S_COMUNE)).ammesso)
+    a.togli_config()
+
+
+def _prove_relativi(prova, a: Ambiente):
+    """Le righe con una barra ma non assolute si risolvono rispetto alla
+    cartella del manifesto (le sue) e dei dati (`divieti`), non alla cwd
+    dell'hook, che cambia da sessione a sessione."""
+    a.togli_config()
+    righe = a.righe_manifesto() + ["relativo/segreto", "relativo/*.tmp"]
+    a.scrivi_manifesto(righe)
+    cfg = a.config("bloccante")
+    cfg["compartimenti"]["predefinito"]["divieti"].append("riserva-dati/x")
+    a.scrivi_config(cfg)
+
+    def leggi(p):
+        return a.chiama(a.pl("Read", {"file_path": str(p)}, sid=S_COMUNE))
+
+    prova("relativi: una riga del manifesto `relativo/segreto` vale rispetto alla cartella del manifesto",
+          leggi(a.radice / "relativo" / "segreto" / "f").negato)
+    prova("relativi: un modello del manifesto `relativo/*.tmp` con una barra vale allo stesso modo",
+          leggi(a.radice / "relativo" / "dato.tmp").negato)
+    prova("relativi: ...e un file vicino che non combacia e' ammesso",
+          leggi(a.radice / "relativo" / "altro.txt").ammesso)
+    prova("relativi: una riga relativa di `divieti` vale rispetto alla cartella dei dati",
+          leggi(a.dati / "riserva-dati" / "x" / "f").negato)
+    a.scrivi_manifesto(a.righe_manifesto())
+    a.togli_config()
+
+
 def _prove_change_directory(prova, a: Ambiente):
     """Prova 7."""
     a.scrivi_config(a.config())
@@ -736,8 +1062,40 @@ def _prove_modi(prova, a: Ambiente):
     r = a.chiama(viola)
     prova("modi: `spento` esce 0 senza uscita e senza riga di registro",
           r.ammesso and a.registro() == [], repr(r))
-    prova("modi: `spento` non scrive nemmeno la copia dell'ultima config valida",
-          not (a.dati / "compartimenti.ultima-valida.json").exists())
+    # La copia: nello stesso ambiente, subito prima, un bloccante la scrive; poi,
+    # senza copia, uno spento non la crea.
+    copia = a.dati / "compartimenti.ultima-valida.json"
+    a.scrivi_config(a.config("bloccante"))
+    rb = a.chiama(viola)
+    scritta = copia.exists()
+    a.togli_config()
+    a.scrivi_config(a.config("spento"))
+    rs = a.chiama(viola)
+    prova("modi: `spento` non scrive la copia dell'ultima config valida (mentre un bloccante, "
+          "nello stesso ambiente, la scrive)",
+          rb.negato and scritta and rs.ammesso and not copia.exists(), f"{rb!r} {scritta} {rs!r}")
+    # `spento` e' un interruttore stabile: una config rotta dopo lo spegnimento
+    # non rimette in piedi il vecchio bloccante.
+    a.togli_config()
+    a.scrivi_config(a.config("bloccante"))
+    r0 = a.chiama(viola)
+    a.scrivi_config(a.config("spento"))
+    r1 = a.chiama(viola)
+    nota_pred = a.pl("Read", {"file_path": str(a.alfa1 / "segreto.txt")}, sid=S_COMUNE)
+    a.scrivi_config("{ rotto")
+    r2 = a.chiama(viola)
+    r3 = a.chiama(nota_pred)
+    prova("modi: bloccante, poi `spento`, poi config rotta: resta spento (ne' l'alfa ne' il "
+          "predefinito vengono negati con le regole vecchie)",
+          r0.negato and r1.ammesso and r2.ammesso and r3.ammesso and a.registro()[-1].get("esito") == "negato"
+          and len(a.registro()) == 1, f"{r0!r} {r1!r} {r2!r} {r3!r}")
+    prova("modi: ...e la copia dell'ultima valida e' diventata `spento`",
+          _testo(copia) != "" and json.loads(_testo(copia)).get("guardiano") == "spento")
+    a.togli_config()
+    a.scrivi_config(a.config("bloccante"))
+    prova("modi: ...riacceso a bloccante con una config valida, si torna a negare",
+          a.chiama(viola).negato)
+    a.togli_config()
     cfg = a.config("spento")
     cfg["compartimenti"] = ["rotto"]
     a.scrivi_config(cfg)
@@ -758,9 +1116,10 @@ def _prove_modi(prova, a: Ambiente):
           and riga.get("bersaglio") == fuori and riga.get("sessione") == S_ALFA_LIBERA
           and "alfa" in riga.get("motivo", "") and riga.get("ts"), str(riga))
     n = len(a.registro())
-    a.chiama(ammessa)
-    prova("modi: una chiamata ammessa non scrive niente nel registro",
-          len(a.registro()) == n)
+    r = a.chiama(ammessa)
+    prova("modi: una chiamata ammessa (uscita 0, nessun output) non scrive niente nel registro "
+          "che, con la chiamata di prima, ha gia' una riga",
+          r.ammesso and n >= 1 and len(a.registro()) == n, f"{r!r} {n}")
     # bloccante
     a.togli_config()
     a.scrivi_config(a.config("bloccante"))
@@ -783,6 +1142,7 @@ def _prove_modi(prova, a: Ambiente):
 
     # stdin rotto, in ogni modalita'
     righe_prima = len(a.registro())
+    stdin_ok = []
     for modo in ("spento", "solo-registro", "bloccante"):
         a.scrivi_config(a.config(modo))
         for nome, dati in (("vuoto", b""), ("non JSON", b"non e' json {"),
@@ -792,9 +1152,12 @@ def _prove_modi(prova, a: Ambiente):
                            ("tool_input di tipo sbagliato",
                             b'{"tool_name":"Read","tool_input":["x"],"session_id":5}')):
             r = a.esegui_testo(dati)
+            stdin_ok.append(r.ammesso)
             prova(f"modi: {modo}, stdin {nome}: exit 0 e nessuna uscita", r.ammesso, repr(r))
-    prova("modi: gli stdin rotti non hanno scritto niente nel registro",
-          len(a.registro()) == righe_prima)
+    prova("modi: gli stdin rotti (18 chiamate, tutte uscite 0 senza output) non hanno scritto "
+          "niente nel registro, che aveva gia' delle righe",
+          righe_prima >= 1 and len(stdin_ok) == 18 and all(stdin_ok)
+          and len(a.registro()) == righe_prima, f"{righe_prima} {stdin_ok}")
 
     # rotazione
     a.togli_config()
@@ -938,28 +1301,44 @@ def _prove_errore_interno(prova):
 
 
 def _prove_tempo(prova, a: Ambiente):
+    a.togli_config()
     a.scrivi_config(a.config("bloccante"))
     bash = a.pl("Bash", {"command": f"cat {a.alfa1}/segreto.txt | head; ls {a.alfa2} 2>/dev/null"},
                 sid=S_ALFA_LIBERA, aperta_in=a.alfa1)
     leggi = a.pl("Read", {"file_path": str(a.comune / "nota.txt")}, sid=S_COMUNE)
+    nega = a.pl("Read", {"file_path": str(a.comune / "nota.txt")}, sid=S_ALFA_LIBERA,
+                aperta_in=a.alfa1)
     for _ in range(3):  # riscalda i .pyc e la cache del disco
         a.chiama(bash)
-    tempi = []
-    for i in range(20):
-        tempi.append(a.chiama(bash if i % 2 else leggi).secondi * 1000)
+    tempi, giuste, negate = [], True, 0
+    for i in range(21):
+        # Il tempo si misura solo se la chiamata ha l'esito che deve avere: un
+        # Python che non trova il file esce in pochi ms con un errore, e
+        # passerebbe qualunque soglia.
+        quale = (bash, leggi, nega)[i % 3]
+        r = a.chiama(quale)
+        tempi.append(r.secondi * 1000)
+        if quale is nega:
+            negate += 1
+            giuste = giuste and r.negato
+        else:
+            giuste = giuste and r.ammesso
     tempi.sort()
     med, mx = tempi[len(tempi) // 2], tempi[-1]
     t0 = time.time()
     subprocess.run([PYTHON, "-c", "pass"], env=a.env(), capture_output=True)
     base = (time.time() - t0) * 1000
     prova(f"tempo: per chiamata mediana {med:.0f} ms, massimo {mx:.0f} ms "
-          f"(avvio di Python a vuoto {base:.0f} ms); soglia 150 ms",
-          med < 150, f"mediana {med:.0f} ms")
+          f"(avvio di Python a vuoto {base:.0f} ms); soglia 150 ms; ogni chiamata misurata "
+          f"ha l'esito atteso e {negate} sono negate",
+          med < 150 and giuste and negate >= 1, f"mediana {med:.0f} ms, esiti giusti {giuste}")
     a.scrivi_config(a.config("spento"))
     for _ in range(3):
         a.chiama(bash)
-    tempi = sorted(a.chiama(bash).secondi * 1000 for _ in range(10))
-    prova(f"tempo: `spento` mediana {tempi[5]:.0f} ms", tempi[5] < 150, f"{tempi[5]:.0f} ms")
+    corse = [a.chiama(bash) for _ in range(11)]
+    tempi = sorted(c.secondi * 1000 for c in corse)
+    prova(f"tempo: `spento` mediana {tempi[5]:.0f} ms (ogni chiamata esce 0 senza output)",
+          tempi[5] < 150 and all(c.ammesso for c in corse), f"{tempi[5]:.0f} ms")
 
 
 def _prove_cli(prova, a: Ambiente):
@@ -971,9 +1350,12 @@ def _prove_cli(prova, a: Ambiente):
     env = dict(a.env())
     env["PYTHONPATH"] = str(RADICE)
 
+    codici = []
+
     def plancia(*args):
         p = subprocess.run([sys.executable, str(RADICE / "bin" / "plancia"), "guardiano", *args],
                            env=env, cwd=str(RADICE), capture_output=True, timeout=60)
+        codici.append(p.returncode)
         return p.returncode, p.stdout.decode("utf-8", "replace") + p.stderr.decode("utf-8", "replace")
 
     rc, out = plancia("--stato")
@@ -981,8 +1363,9 @@ def _prove_cli(prova, a: Ambiente):
           rc == 0 and "solo-registro" in out and "alfa: 3 cartelle" in out
           and "beta: 1 cartelle" in out and "predefinito:" in out
           and "2 righe" in out and "2 avrebbe-negato" in out, out)
-    prova("cli: --stato NON stampa i percorsi delle cartelle",
-          str(a.radice) not in out and "alfa-uno" not in out, out)
+    prova("cli: --stato (uscita 0, con l'elenco dei compartimenti) NON stampa i percorsi delle cartelle",
+          rc == 0 and "alfa: 3 cartelle" in out and str(a.radice) not in out
+          and "alfa-uno" not in out, out)
     rc, out = plancia("--registro", "50")
     prova("cli: `--registro 50` mostra le decisioni in chiaro (esito, compartimento, strumento, percorso)",
           rc == 0 and out.count("avrebbe-negato") == 2 and "[alfa] Read" in out
@@ -1001,29 +1384,34 @@ def _prove_cli(prova, a: Ambiente):
     prova("cli: config rotta e senza copia: lo dice", rc == 0 and "solo-registro" in out
           and "nessuna copia valida" in out, out)
     a.togli_config()
-    # e non scrive niente
-    prova("cli: il sottocomando non crea ne' scrive config.json, copia o registro",
-          not any((a.dati / f).exists() for f in
-                  ("config.json", "compartimenti.ultima-valida.json", "guardiano.log")))
+    # e non scrive niente: dopo aver girato in ogni stato (config valida, assente,
+    # rotta, registro vuoto), tutte con uscita 0 e l'uscita attesa
+    rc, out = plancia("--stato")
+    prova("cli: il sottocomando non crea ne' scrive config.json, copia o registro "
+          "(dopo 8 esecuzioni in tutti gli stati, tutte uscita 0)",
+          len(codici) == 8 and all(c == 0 for c in codici) and "modalita: spento" in out
+          and not any((a.dati / f).exists() for f in
+                      ("config.json", "compartimenti.ultima-valida.json", "guardiano.log")),
+          f"{codici}")
 
 
 def _prove_forma(prova):
     """Il file, la versione di Python, la privacy del repo pubblico."""
-    file_del_lotto = [f for f in (GUARDIANO, RADICE / "plancia" / "compartimenti.py",
-                                  Path(__file__)) if f.exists()]
+    attesi = [GUARDIANO, RADICE / "plancia" / "compartimenti.py", Path(__file__)]
+    file_del_lotto = [f for f in attesi if f.exists()]
     prova("forma: bin/plancia-guardiano e plancia/compartimenti.py esistono",
           len(file_del_lotto) == 3, str(file_del_lotto))
     prova("forma: bin/plancia-guardiano e' eseguibile e ha lo shebang `env python3`",
           GUARDIANO.exists() and os.access(GUARDIANO, os.X_OK)
           and GUARDIANO.read_text("utf-8").splitlines()[0] == "#!/usr/bin/env python3")
-    for f in file_del_lotto:
+    for f in attesi:
         try:
             ast.parse(f.read_text("utf-8"), filename=str(f), feature_version=(3, 9))
             ok = True
-        except SyntaxError as e:
+        except (SyntaxError, OSError) as e:
             ok = False
             print("   ", f, e)
-        prova(f"forma: {f.name} e' Python 3.9 valido (niente match, niente X | Y)", ok)
+        prova(f"forma: {f.name} esiste ed e' Python 3.9 valido (niente match, niente X | Y)", ok)
     v = "True"
     if PYTHON == "/usr/bin/python3":
         v = subprocess.run([PYTHON, "-c", "import sys; print(sys.version_info[:2] <= (3, 9))"],
@@ -1060,10 +1448,11 @@ def _prove_forma(prova):
         for n, riga in enumerate(f.read_text("utf-8").splitlines(), 1):
             if rx.search(riga):
                 trovati.append(f"{f.name}:{n}")
-    prova("privacy: nessun nome vero ne' percorso reale nei file del guardiano", not trovati,
-          str(trovati))
-    for f in file_del_lotto:
-        prova(f"forma: niente em dash in {f.name}", "\u2014" not in f.read_text("utf-8"))
+    prova("privacy: nessun nome vero ne' percorso reale nei file del guardiano (tutti e tre presenti)",
+          len(file_del_lotto) == 3 and not trovati, str(trovati))
+    for f in attesi:
+        prova(f"forma: {f.name} esiste e non ha em dash",
+              f.exists() and "\u2014" not in f.read_text("utf-8"))
 
 
 def esegui(prova):
@@ -1075,11 +1464,15 @@ def esegui(prova):
         _prove_predefinito(prova, a)
         _prove_subagenti(prova, a)
         _prove_sessioni_e_drive(prova, a)
+        _prove_sessioni_app(prova, a)
         _prove_change_directory(prova, a)
         _prove_manifesto(prova, a)
         _prove_symlink(prova, a)
         _prove_modi(prova, a)
         _prove_config_malformata(prova, a)
+        _prove_misura(prova, a)
+        _prove_protezione(prova, a)
+        _prove_relativi(prova, a)
         _prove_tempo(prova, a)
         _prove_cli(prova, a)
     finally:

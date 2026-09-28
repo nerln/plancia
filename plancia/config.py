@@ -55,9 +55,19 @@ DEFAULTS = {
     # davvero). `compartimenti` e' {nome: {"cartelle", "sessioni",
     # "drive_ids"}} per i compartimenti nominati (elenchi di permessi) e la
     # voce speciale "predefinito": {"manifesto_divieti", "divieti",
-    # "comandi_vietati"} (elenco di divieti). L'hook legge config.json da solo,
-    # senza importare questo modulo (che crea cartelle): qui le chiavi stanno
-    # perche' `plancia config` le mostri e perche' un solo posto le elenchi.
+    # "comandi_vietati"} (elenco di divieti). In `sessioni` va il `session_id`
+    # dell'hook, cioe' il nome del file .jsonl in ~/.claude/projects (il
+    # "cliSessionId" del registro dell'app), e' l'unico che Plancia e l'hook
+    # conoscono. Si accetta anche l'id `local_<uuid>` che l'app mostra negli
+    # strumenti di sessione: l'hook lo traduce leggendo il registro dell'app
+    # (claude-code-sessions/*/*/local_<uuid>.json). Le righe di `divieti` e del
+    # manifesto con una barra ma non assolute si risolvono rispetto alla cartella
+    # dati (le prime) o a quella del manifesto (le seconde), mai rispetto alla
+    # cwd dell'hook, che cambia da sessione a sessione. L'hook legge config.json
+    # da solo, senza importare questo modulo (che all'import costruisce molti
+    # Path e importa secrets: un costo da non pagare a ogni strumento): qui le
+    # chiavi stanno perche' `plancia config` le mostri e perche' un solo posto
+    # le elenchi.
     "guardiano": "spento",
     "compartimenti": {},
 }

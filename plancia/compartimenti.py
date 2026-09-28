@@ -26,24 +26,49 @@ Limiti da dire chiari (non sono difetti da correggere qui):
   farlo diventare un confine vero: quello serve un utente separato.
 - L'estrazione dei percorsi da un comando Bash e' euristica (vedi
   `_candidati_comando`): token e sottostringhe che sembrano percorsi.
-- Una ricerca RICORSIVA lanciata da Bash su un antenato di una cartella
-  vietata (`grep -r` o `find` dalla cartella sopra) non si vede: i percorsi
-  sono quelli scritti nel comando. Grep e Glob invece si vedono (partono da un
-  `path` esplicito o dalla cwd), e una ricerca che include un percorso vietato
-  e' negata.
+- Una ricerca RICORSIVA lanciata da Bash (`grep -r`, `rg`, `find`, `ls -R`,
+  `tree`, `tar`, `zip`, `cp -r`, `rsync`, `git grep`) si riconosce dal nome del
+  comando e vale come Grep: le cartelle nominate nel comando e la cwd sono
+  trattate come radici di una ricerca, e una ricerca che include un percorso
+  vietato e' negata. Il riconoscimento e' sul testo del comando: un programma
+  che cammina l'albero per conto suo (uno script, `make`) non si vede. Grep e
+  Glob si vedono sempre (partono da un `path` esplicito o dalla cwd).
+- Un divieto scritto come modello di nome senza barre (`*.segreto`,
+  `NOTA-X.md`) vale per un percorso solo quando il nome compare in quel
+  percorso: la regola "la ricerca include un percorso vietato" non scatta mai
+  per lui, perche' non ha una cartella da cui una ricerca possa partire.
+- I token di shell con un glob (`cat cartella/*`) si espandono sul disco
+  (fino a 200 voci per token) prima del confronto.
 - Il confronto dei percorsi e' senza distinzione di maiuscole (APFS non le
   distingue): su un volume che le distingue puo' negare di piu', mai di meno.
 - Gli strumenti che elencano o cercano senza un bersaglio esplicito
-  (`search_files`, `search_session_transcripts`, ...) non si possono valutare
-  per il predefinito: passano. Per un nominato sono negati.
+  (`search_files`, `search_session_transcripts`, `list_sessions`,
+  `ListAgents`, ...) non si possono valutare per il predefinito: passano, anche
+  in `bloccante`. Per un nominato sono negati. Per `list_sessions`,
+  `search_session_transcripts` e `ListAgents`, quando esistono nominati, in
+  `solo-registro` resta una riga `avrebbe-negato` (vedi `_misura`), per sapere
+  quanto si usano: chi accende E1 deve saperlo, perche' e' un canale aperto.
+- Gli strumenti di sessione ricevono l'id dell'app (`local_<uuid>`) o un nome
+  (il titolo), non il `session_id` dell'hook: si risolvono leggendo il registro
+  dell'app (`_voci_app`). Un id o un titolo che il registro e la tabella di
+  Plancia non conoscono e' "sconosciuto" (negato a un nominato).
+- Un `Artifact` con `files` come mappa e `root` si controlla sui valori
+  (i sorgenti locali) e su `root`; un altro strumento MCP che legge un file
+  con un nome di parametro nuovo no, finche' il nome non e' in `CHIAVI_PERCORSO`.
+- I file del guardiano (config, copia, registro, manifesto, hook, questo
+  modulo) non si modificano da nessuna sessione: `_valuta_protetti`. Da Bash e'
+  euristico. Vale solo in `bloccante`, come ogni diniego: chi vuole cambiare la
+  config con l'aiuto di una sessione deve prima passare a `solo-registro`.
 - L'appartenenza dell'id Drive e' per id esatto, senza risalire agli antenati
   (la verifica degli antenati non e' affidabile da qui).
 
 Leggero apposta: gira su OGNI strumento di OGNI sessione. Solo `json`, `os`,
 `re` e `time` all'avvio; `shlex`, `fnmatch`, `sqlite3` solo quando servono.
-Non importa `plancia.config` (che crea cartelle e importa `secrets`): la
-posizione della cartella dati e' la stessa regola, ripetuta in
-`percorso_dati()`, e una prova le confronta.
+Non importa `plancia.config`: quel modulo, all'import, costruisce decine di
+oggetti `pathlib` e importa `secrets` (che tira dentro `hmac` e `hashlib`), un
+costo che un hook globale non deve pagare a ogni strumento. La posizione della
+cartella dati e' la stessa regola, ripetuta in `percorso_dati()`, e una prova
+le confronta.
 """
 
 import json
@@ -115,10 +140,27 @@ SESSIONI_SENZA_BERSAGLIO_OK = ("get_usage",)
 
 # Chiavi di tool_input che portano un percorso (o una lista di percorsi).
 CHIAVI_PERCORSO = ("file_path", "path", "notebook_path", "directory", "cwd",
-                   "dir")
+                   "dir", "root")
 CHIAVI_LISTA_PERCORSI = ("files", "paths", "file_paths")
 
-MAX_PERCORSI_COMANDO = 60
+MAX_PERCORSI_COMANDO = 300
+MAX_ESPANSIONE_GLOB = 200
+
+# Le sessioni "misurate": strumenti dell'app che cercano o elencano fra TUTTE
+# le sessioni, senza un bersaglio. Per il predefinito non si possono negare
+# (limite dichiarato), ma in `solo-registro` se ne scrive una riga, per sapere
+# quanto si usano prima di decidere cosa farne.
+SESSIONI_DA_MISURARE = ("list_sessions", "search_session_transcripts")
+
+# Strumenti che scrivono un file con `file_path`/`notebook_path`.
+STRUMENTI_SCRITTURA = ("Write", "Edit", "MultiEdit", "NotebookEdit")
+
+# Il registro dell'app: `<home>/Library/Application Support/Claude/
+# claude-code-sessions/*/*/local_<uuid>.json`, con `sessionId` (l'id `local_`
+# che gli strumenti di sessione ricevono), `cliSessionId` (il `session_id`
+# dell'hook: e' il nome del .jsonl), `cwd`, `originCwd` e `title`.
+_RX_LOCAL = re.compile(r"^local_[0-9A-Za-z-]{1,80}$")
+MAX_FILE_REGISTRO_APP = 5000
 
 _UUID = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
@@ -172,6 +214,61 @@ def _dentro(p: str, radice: str) -> bool:
 
 def _ha_glob(s: str) -> bool:
     return any(c in s for c in "*?[")
+
+
+# --------------------------------------------------------------------------
+# il registro dell'app: da un id `local_...` (o da un titolo) alla sessione
+# --------------------------------------------------------------------------
+
+def _leggi_voce_app(percorso: str):
+    try:
+        if os.path.getsize(percorso) > 4 * 1024 * 1024:
+            return None
+        with open(percorso, "r", encoding="utf-8") as f:
+            d = json.load(f)
+    except (OSError, ValueError, UnicodeDecodeError, RecursionError):
+        return None
+    if not isinstance(d, dict):
+        return None
+
+    def testo(k):
+        v = d.get(k)
+        return v if isinstance(v, str) else ""
+    return {"local": testo("sessionId"), "cli": testo("cliSessionId"),
+            "cwd": testo("cwd"), "origine": testo("originCwd"),
+            "titolo": testo("title")}
+
+
+def _voci_app(home: str, chiave=None, titolo=None) -> list:
+    """Le sessioni del registro dell'app che corrispondono a un id `local_`
+    (`chiave`) o a un titolo (senza distinzione di maiuscole). Il titolo
+    costringe a leggere tutti i file del registro (poche centinaia): si fa
+    solo per gli strumenti di sessione che ricevono un nome. Un id `local_`
+    e' un solo file."""
+    import glob
+    base = os.path.join(glob.escape(home), "Library", "Application Support",
+                        "Claude", "claude-code-sessions", "*", "*")
+    if chiave is not None:
+        if not _RX_LOCAL.match(chiave):
+            return []
+        pattern = os.path.join(base, chiave + ".json")
+    else:
+        pattern = os.path.join(base, "local_*.json")
+    voci = []
+    try:
+        trovati = sorted(glob.glob(pattern))
+    except OSError:
+        return []
+    for percorso in trovati[:MAX_FILE_REGISTRO_APP]:
+        v = _leggi_voce_app(percorso)
+        if not v:
+            continue
+        if titolo is not None and v["titolo"].lower() != titolo.lower():
+            continue
+        if not v["local"] and chiave:
+            v["local"] = chiave
+        voci.append(v)
+    return voci
 
 
 # --------------------------------------------------------------------------
@@ -308,7 +405,8 @@ def _salva_copia_se_diversa(data_dir: str, cfg: dict) -> None:
 def carica(data_dir: str) -> dict:
     """La configurazione EFFETTIVA del guardiano, con le regole di guasto.
 
-    - config assente o `guardiano: "spento"`: spento, non si legge altro.
+    - config assente o `guardiano: "spento"`: spento, non si legge altro
+      (se esiste la copia dell'ultima valida la si riscrive come spento).
     - config valida: si usa, e (se non spento) se ne tiene la copia.
     - config rotta CON copia valida: si usa la copia, modo compreso: un
       nominato resta confinato (fail-closed per i nominati).
@@ -319,7 +417,18 @@ def carica(data_dir: str) -> dict:
     Torna `{"modo", "compartimenti", "strumenti_drive", "stato", "nota"}`.
     `nota` e' il testo della riga di registro da scrivere, o None."""
     c = leggi_config(data_dir, rapida=True)
-    if c["stato"] == "assente" or (c["stato"] == "ok" and c["modo"] == "spento"):
+    if c["stato"] == "ok" and c["modo"] == "spento":
+        # `spento` e' una config valida come le altre: se c'e' una copia
+        # dell'ultima valida la si aggiorna, altrimenti una virgola in piu' in
+        # config.json (a mano, il file e' condiviso con il resto di Plancia)
+        # rimetterebbe in piedi il vecchio `bloccante` che l'utente aveva
+        # spento. Senza copia non se ne crea una: spento non scrive niente.
+        if os.path.exists(_percorso_copia(data_dir)):
+            _salva_copia_se_diversa(data_dir, {
+                "modo": "spento", "compartimenti": {}, "strumenti_drive": []})
+        return {"modo": "spento", "compartimenti": {}, "strumenti_drive": [],
+                "stato": "ok", "nota": None}
+    if c["stato"] == "assente":
         return {"modo": "spento", "compartimenti": {}, "strumenti_drive": [],
                 "stato": c["stato"], "nota": None}
     if c["stato"] == "ok":
@@ -461,9 +570,11 @@ def stato(data_dir: str) -> dict:
 class Ambito:
     """I compartimenti di una config, con i percorsi gia' risolti."""
 
-    def __init__(self, comp: dict, strumenti_drive=None, home=None, uid=None):
+    def __init__(self, comp: dict, strumenti_drive=None, home=None, uid=None,
+                 data_dir=None):
         self.home = home or os.path.expanduser("~")
         self.uid = os.getuid() if uid is None else uid
+        self.data_dir = data_dir or ""
         self.strumenti_drive = set(STRUMENTI_DRIVE) | set(strumenti_drive or [])
         self.nominati = {}
         for nome, c in comp.items():
@@ -479,9 +590,19 @@ class Ambito:
                 # risolta: Claude Code codifica la cwd com'e' stata aperta.
                 codifiche.add(_codifica(os.path.expanduser(raw)).lower())
                 codifiche.add(_codifica(n).lower())
+            # `sessioni` accetta il `session_id` dell'hook (il nome del .jsonl)
+            # e l'id `local_<uuid>` dell'app: questo si traduce nel
+            # `cliSessionId` leggendo il registro dell'app, cosi' chi chiama
+            # (che ha solo il session_id) si riconosce in tutti e due i modi.
+            sessioni = set(c["sessioni"])
+            for s in c["sessioni"]:
+                if s.startswith("local_"):
+                    for v in _voci_app(self.home, chiave=s):
+                        if v["cli"]:
+                            sessioni.add(v["cli"])
             self.nominati[nome] = {
                 "cartelle": cartelle, "codifiche": codifiche,
-                "sessioni": set(c["sessioni"]),
+                "sessioni": sessioni,
                 "drive_ids": set(c["drive_ids"]),
             }
         pred = comp.get(PREDEFINITO) or {}
@@ -506,23 +627,30 @@ class Ambito:
         leggere)."""
         if self._divieti is not None:
             return self._divieti
-        righe = list(self.divieti_raw)
+        # Ogni riga con la cartella rispetto a cui si risolve se e' relativa
+        # con una barra: quella dei dati per `divieti`, quella del manifesto per
+        # le sue righe. Mai la cwd dell'hook: cambia da una sessione all'altra e
+        # un divieto relativo colpirebbe posti diversi a seconda di dove si e'.
+        righe = [(r, self.data_dir) for r in self.divieti_raw]
         if self.manifesto:
+            man = os.path.expanduser(self.manifesto)
             try:
-                with open(os.path.expanduser(self.manifesto), "r",
-                          encoding="utf-8") as f:
+                with open(man, "r", encoding="utf-8") as f:
                     for linea in f.read().splitlines():
                         linea = linea.strip()
                         if linea and not linea.startswith("#"):
-                            righe.append(linea)
+                            righe.append((linea, os.path.dirname(
+                                os.path.abspath(man))))
             except (OSError, UnicodeDecodeError):
                 # Un manifesto illeggibile non blocca il predefinito (vedi
                 # `carica`): perde solo quelle righe, e la prova del
                 # manifesto e' li' apposta per accorgersene.
                 pass
         out = []
-        for riga in righe:
+        for riga, base in righe:
             riga = os.path.expanduser(riga)
+            if base and "/" in riga and not os.path.isabs(riga):
+                riga = os.path.join(base, riga)
             if _ha_glob(riga):
                 out.append((_prefisso_letterale(riga), _norm_glob(riga)))
             else:
@@ -622,6 +750,23 @@ def _codifica_di_x(cod: str, c: dict) -> bool:
                              for e in c["codifiche"])
 
 
+def _nomi_da_segnali(ambito: Ambito, ids=(), cwds=(), codifiche=()) -> list:
+    """I nomi dei compartimenti nominati a cui puntano i segnali: un id in
+    `sessioni`, una cwd dentro le cartelle, una cartella di apertura
+    codificata. Ne basta uno per compartimento (prudenza)."""
+    ids = {x for x in ids if x}
+    codifiche = [c.lower() for c in codifiche if c]
+    nomi = []
+    for nome in sorted(ambito.nominati):
+        c = ambito.nominati[nome]
+        if (ids & c["sessioni"]
+                or any(_codifica_di_x(cod, c) for cod in codifiche)
+                or any(cw and _dentro(cw, f) for cw in cwds
+                       for f in c["cartelle"])):
+            nomi.append(nome)
+    return nomi
+
+
 def chiamante(payload: dict, ambito: Ambito) -> dict:
     """A quali compartimenti appartiene la sessione che chiama.
 
@@ -643,23 +788,19 @@ def chiamante(payload: dict, ambito: Ambito) -> dict:
     un'appartenenza, mai toglierla.
 
     Torna `{"nomi": [...], "sessione", "madre", "codificata",
-    "cartella_progetto", "cwd"}`. `nomi` vuoto = predefinito."""
+    "cartella_progetto", "cwd", "subagente"}`. `nomi` vuoto = predefinito."""
     sid = payload.get("session_id")
     sid = sid if isinstance(sid, str) else ""
     madre, codificata, progetto = _da_trascrizione(payload.get("transcript_path"))
-    ids = {x for x in (sid, madre) if x}
     cwd_raw = payload.get("cwd")
     cwd = _norm(cwd_raw) if isinstance(cwd_raw, str) and cwd_raw else ""
-    cod = codificata.lower()
-    nomi = []
-    for nome in sorted(ambito.nominati):
-        c = ambito.nominati[nome]
-        if ids & c["sessioni"] or _codifica_di_x(cod, c) or (
-                cwd and any(_dentro(cwd, f) for f in c["cartelle"])):
-            nomi.append(nome)
+    nomi = _nomi_da_segnali(ambito, (sid, madre), (cwd,), (codificata,))
+    tp = payload.get("transcript_path")
+    subagente = bool(payload.get("agent_id")) or (
+        isinstance(tp, str) and "/subagents/" in tp.replace("\\", "/"))
     return {"nomi": nomi, "sessione": sid or madre, "madre": madre,
             "codificata": codificata, "cartella_progetto": progetto,
-            "cwd": cwd}
+            "cwd": cwd, "subagente": subagente}
 
 
 def _scratch_ok(p: str, chi: dict, ambito: Ambito) -> bool:
@@ -677,15 +818,17 @@ def _progetto_ok(p: str, chi: dict, dalla_cartella: bool) -> bool:
     """La propria cartella sotto `~/.claude/projects`. Se la sessione e' li'
     perche' la sua cartella di apertura e' di X, e' tutta sua. Se invece e'
     di X solo per id (aperta in una cartella normale che condivide con altre
-    sessioni), solo `memory`, la propria trascrizione e la propria cartella di
-    sessione: le trascrizioni degli altri non sono sue."""
+    sessioni), solo la propria trascrizione e la propria cartella di
+    sessione: le trascrizioni degli altri non sono sue, e neanche `memory`.
+    `memory` e' la memoria di TUTTE le sessioni del predefinito aperte in quella
+    cartella: leggerla mostrerebbe i loro ricordi al nominato, e scriverci
+    metterebbe i suoi in un `MEMORY.md` che Claude Code carica da solo in ogni
+    sessione del predefinito (il canale 7 della specifica, nei due sensi)."""
     prog = _norm(chi["cartella_progetto"]) if chi["cartella_progetto"] else ""
     if not prog:
         return False
     if dalla_cartella:
         return _dentro(p, prog)
-    if _dentro(p, os.path.join(prog, "memory")):
-        return True
     for x in (chi["sessione"], chi["madre"]):
         if x and (_dentro(p, os.path.join(prog, x))
                   or p.lower() == os.path.join(prog, x + ".jsonl").lower()):
@@ -774,23 +917,102 @@ def _candidati_comando(cmd: str):
     return out, nomi
 
 
+def _espandi_glob(c: str, cwd) -> list:
+    """Le voci del disco che un token con un glob di shell (`cartella/*`,
+    `PR-?.md`) espanderebbe, rispetto alla cwd. Vuoto se non c'e' glob o non
+    combacia niente: il token letterale si controlla comunque."""
+    if not _ha_glob(c):
+        return []
+    import glob
+    modello = os.path.expanduser(c)
+    if not os.path.isabs(modello):
+        modello = os.path.join(cwd or os.getcwd(), modello)
+    try:
+        return sorted(glob.glob(modello))[:MAX_ESPANSIONE_GLOB]
+    except (OSError, ValueError):
+        return []
+
+
 def _percorsi_da_comando(cmd: str, cwd, nomi_semplici=False):
     """I percorsi di un comando Bash, risolti. Con `nomi_semplici` anche i
     token senza barre (`cd cartella`) risolti sulla cwd: solo per il
     predefinito, dove servono a vedere `cd cartella-di-un-nominato` da una
     cwd che sta sopra. Non per un nominato: con la cwd fuori dai suoi permessi
-    ogni parola (`echo`, `ls`) risolverebbe fuori e nessun comando passerebbe
-    piu'."""
+    ogni parola (`echo`, `ls`) risolverebbe fuori (ma vedi `valuta`: per un
+    nominato la cwd stessa e' un percorso toccato da ogni comando). I token con
+    un glob si espandono sul disco (`cat cartella/*`)."""
     out, visti = [], set()
     perc, nomi = _candidati_comando(cmd)
-    for c in perc + (nomi if nomi_semplici else []):
-        n = _norm(c, cwd)
+
+    def aggiungi(testo, n):
         if n and n not in visti:
             visti.add(n)
-            out.append((c, n))
+            out.append((testo, n))
+
+    for c in perc + (nomi if nomi_semplici else []):
+        aggiungi(c, _norm(c, cwd))
+        for e in _espandi_glob(c, cwd):
+            aggiungi(e, _norm(e, cwd))
         if len(out) >= MAX_PERCORSI_COMANDO:
             break
     return out
+
+
+# I comandi che camminano un albero intero. Riconosciuti dal NOME del comando
+# (primo token di ogni segmento della riga, dopo i prefissi `sudo`, `xargs`,
+# `VAR=x`...), non da una parola qualsiasi nel testo: `echo find` non e' una
+# ricerca.
+_RICORSIVI_SEMPRE = ("rg", "ag", "ack", "fd", "find", "tree", "tar", "zip",
+                     "rsync")
+_PREFISSI_COMANDO = ("sudo", "time", "nice", "env", "command", "xargs", "exec",
+                     "nohup")
+_RX_SEGMENTI = re.compile(r"[;&|\n`()]+")
+
+
+def _comando_ricorsivo(cmd: str) -> bool:
+    """Vero se la riga contiene un comando che cerca o copia ricorsivamente
+    (grep -r, rg, find, ls -R, tree, tar, zip, cp -r, rsync, git grep)."""
+    import shlex
+    for seg in _RX_SEGMENTI.split(cmd):
+        try:
+            t = shlex.split(seg)
+        except ValueError:
+            t = seg.split()
+        while t and (t[0] in _PREFISSI_COMANDO or re.match(r"^\w+=", t[0])
+                     or (t[0].startswith("-") and len(t) > 1)):
+            t = t[1:]
+        if not t:
+            continue
+        nome, args = os.path.basename(t[0]), t[1:]
+        if nome in _RICORSIVI_SEMPRE:
+            return True
+        if nome in ("grep", "egrep", "fgrep"):
+            if any(re.match(r"^-[A-Za-z]*[rR][A-Za-z]*$", a) or a in (
+                    "--recursive", "--dereference-recursive",
+                    "--directories=recurse") for a in args):
+                return True
+            if "-d" in args and "recurse" in args:
+                return True
+        elif nome == "ls":
+            if any(re.match(r"^-[A-Za-z]*R", a) or a == "--recursive"
+                   for a in args):
+                return True
+        elif nome == "cp":
+            if any(re.match(r"^-[A-Za-z]*[rRa][A-Za-z]*$", a) or a in (
+                    "--recursive", "--archive") for a in args):
+                return True
+        elif nome == "git":
+            salta = False
+            for a in args:
+                if salta:
+                    salta = False
+                elif a in ("-C", "-c", "--git-dir", "--work-tree"):
+                    salta = True
+                elif not a.startswith("-"):
+                    if a == "grep":
+                        return True
+                    break
+    return False
 
 
 def percorsi_richiesti(nome: str, ti: dict, cwd, nomi_semplici=False):
@@ -803,8 +1025,12 @@ def percorsi_richiesti(nome: str, ti: dict, cwd, nomi_semplici=False):
     corto = _nome_corto(nome)
     ricerca = corto in ("Grep", "Glob")
 
-    def aggiungi(testo, ricorsivo=False):
-        n = _norm(testo, cwd)
+    # `Artifact` risolve i file sorgente rispetto a `root`, se c'e'.
+    root = ti.get("root")
+    base_file = _norm(root, cwd) if isinstance(root, str) and root else None
+
+    def aggiungi(testo, ricorsivo=False, base=None):
+        n = _norm(testo, base or cwd)
         if n:
             out.append((testo, n, ricorsivo))
 
@@ -817,11 +1043,22 @@ def percorsi_richiesti(nome: str, ti: dict, cwd, nomi_semplici=False):
         if isinstance(v, list):
             for x in v:
                 if isinstance(x, str) and x:
-                    aggiungi(x)
+                    aggiungi(x, base=base_file)
                 elif isinstance(x, dict):
                     for kk in CHIAVI_PERCORSO:
                         if isinstance(x.get(kk), str) and x[kk]:
-                            aggiungi(x[kk])
+                            aggiungi(x[kk], base=base_file)
+    # `files` come mappa {percorso pubblicato: sorgente} (Artifact): il valore
+    # e' il file locale, stringa o {"from": ...}. Il percorso pubblicato (la
+    # chiave) non e' un file locale. Un valore {"artifact", "path"} copia da
+    # un altro artifact e non tocca il disco.
+    fm = ti.get("files")
+    if isinstance(fm, dict):
+        for val in fm.values():
+            src = val if isinstance(val, str) else (
+                val.get("from") if isinstance(val, dict) else None)
+            if isinstance(src, str) and src:
+                aggiungi(src, base=base_file)
     if ricerca:
         pth = ti.get("path")
         base = pth if isinstance(pth, str) and pth else (cwd or os.getcwd())
@@ -839,8 +1076,19 @@ def percorsi_richiesti(nome: str, ti: dict, cwd, nomi_semplici=False):
                     aggiungi(os.path.join(os.path.expanduser(base), d), True)
     cmd = ti.get("command")
     if isinstance(cmd, str) and cmd:
-        for testo, n in _percorsi_da_comando(cmd, cwd, nomi_semplici):
-            out.append((testo, n, False))
+        ric = _comando_ricorsivo(cmd)
+        trovati = _percorsi_da_comando(cmd, cwd, nomi_semplici)
+        for testo, n in trovati:
+            out.append((testo, n, ric))
+        if ric and cwd and not any(os.path.exists(n) for _, n in trovati):
+            # Una ricerca senza una cartella o un file operando che esista
+            # (`rg x`, `git grep x`) parte dalla cwd. Con un operando che
+            # esiste (`grep -r x progetto`) parte da li', e la cwd non c'entra.
+            # (`x`, il modello, non e' un percorso che esiste: risolto sulla
+            # cwd non combacia con niente.)
+            n = _norm(cwd)
+            if n:
+                out.append((cwd, n, True))
     return out
 
 
@@ -848,21 +1096,18 @@ def percorsi_richiesti(nome: str, ti: dict, cwd, nomi_semplici=False):
 # sessioni: da id a compartimento
 # --------------------------------------------------------------------------
 
-def compartimenti_sessione(chiave: str, ambito: Ambito, data_dir: str):
-    """I compartimenti della sessione `chiave` (un id o un titolo): `["x"]` se
-    e' nominata, `[PREDEFINITO]` se la conosce solo Plancia, `None` se e'
-    sconosciuta.
+def _gruppo(nomi) -> list:
+    return list(nomi) or [PREDEFINITO]
 
-    Prima `X.sessioni`; poi la tabella `sessions` di Plancia (cwd e file della
-    sessione), aperta in SOLA LETTURA (`mode=ro`) e solo qui, per non pagare
-    sqlite a ogni strumento. Un database bloccato o assente e' "sconosciuta":
-    chi decide sa cosa fare (vedi `_sessione_bersaglio`)."""
-    for nome in sorted(ambito.nominati):
-        if chiave in ambito.nominati[nome]["sessioni"]:
-            return [nome]
+
+def _gruppo_da_tabella(chiave: str, ambito: Ambito, data_dir: str) -> list:
+    """I gruppi di compartimenti delle sessioni che la tabella `sessions` di
+    Plancia conosce sotto `chiave` (un `session_id` o un titolo), uno per
+    sessione. Sola lettura (`mode=ro`), aperta solo qui per non pagare sqlite
+    a ogni strumento. Un database bloccato o assente e' "nessuna riga"."""
     db = os.path.join(data_dir, "plancia.db")
     if not os.path.exists(db):
-        return None
+        return []
     try:
         import sqlite3
         from urllib.parse import quote
@@ -882,25 +1127,81 @@ def compartimenti_sessione(chiave: str, ambito: Ambito, data_dir: str):
             conn = sqlite3.connect("file:%s?mode=ro&immutable=1" % quote(db),
                                    uri=True, timeout=0.3)
         try:
-            riga = conn.execute(
+            righe = conn.execute(
                 "SELECT cwd, file FROM sessions WHERE session_id=? LIMIT 1",
-                (chiave,)).fetchone()
-            if riga is None and not _UUID.match(chiave):
-                riga = conn.execute(
+                (chiave,)).fetchall()
+            if not righe and not _UUID.match(chiave):
+                righe = conn.execute(
                     "SELECT cwd, file FROM sessions WHERE lower(title)=lower(?) "
-                    "LIMIT 1", (chiave,)).fetchone()
+                    "LIMIT 20", (chiave,)).fetchall()
         finally:
             conn.close()
-    except Exception:  # noqa: BLE001 - un db illeggibile e' "sconosciuta"
-        return None
-    if riga is None:
-        return None
-    cwd = _norm(riga[0]) if riga[0] else ""
-    cod = _da_trascrizione(riga[1])[1].lower()
-    nomi = [nome for nome in sorted(ambito.nominati)
-            if (cwd and any(_dentro(cwd, f) for f in ambito.nominati[nome]["cartelle"]))
-            or _codifica_di_x(cod, ambito.nominati[nome])]
-    return nomi or [PREDEFINITO]
+    except Exception:  # noqa: BLE001 - un db illeggibile e' "nessuna riga"
+        return []
+    gruppi = []
+    for cwd_raw, file_ in righe:
+        cwd = _norm(cwd_raw) if cwd_raw else ""
+        gruppi.append(_gruppo(_nomi_da_segnali(
+            ambito, (), (cwd,), (_da_trascrizione(file_)[1],))))
+    return gruppi
+
+
+def compartimenti_sessione(chiave: str, ambito: Ambito, data_dir: str):
+    """I compartimenti della sessione (o delle sessioni) che `chiave` indica:
+    una lista di GRUPPI, uno per sessione trovata, ciascuno la lista dei nomi
+    nominati a cui la sessione appartiene (`[PREDEFINITO]` se la conosce solo
+    Plancia). `None` se non se ne trova nessuna (sconosciuta).
+
+    `chiave` e' quello che gli strumenti veri mandano: un id `local_<uuid>`
+    dell'app, un nome (il titolo della sessione), oppure un `session_id`
+    dell'hook. Le fonti, tutte:
+
+    1. `X.sessioni` (per `session_id` o per id `local_` come scritto);
+    2. il registro dell'app (`_voci_app`): un id `local_` si traduce nel
+       `cliSessionId`, e la cwd e la cartella di apertura di quella sessione
+       danno l'appartenenza per cartella; un nome si cerca fra i titoli;
+    3. la tabella `sessions` di Plancia (cwd e file della sessione), per un
+       `session_id` o un titolo. Un id `local_` non ci compare mai.
+
+    Con piu' sessioni dello stesso titolo valgono tutte: chi decide le vuole
+    tutte compatibili."""
+    gruppi = []
+    diretto = _nomi_da_segnali(ambito, (chiave,))
+    if diretto:
+        gruppi.append(diretto)
+    if chiave.startswith("local_"):
+        voci = _voci_app(ambito.home, chiave=chiave)
+    elif not _UUID.match(chiave):
+        voci = _voci_app(ambito.home, titolo=chiave)
+    else:
+        voci = []
+    for v in voci:
+        gruppi.append(_gruppo(_nomi_da_segnali(
+            ambito, (v["local"], v["cli"], chiave),
+            (_norm(v["cwd"]), _norm(v["origine"])),
+            (_codifica(os.path.expanduser(v["cwd"])) if v["cwd"] else "",
+             _codifica(os.path.expanduser(v["origine"])) if v["origine"] else ""))))
+    if not chiave.startswith("local_"):
+        gruppi += _gruppo_da_tabella(chiave, ambito, data_dir)
+    return gruppi or None
+
+
+def _e_proprio(chiave: str, chi: dict, ambito: Ambito) -> bool:
+    """`chiave` indica la sessione che chiama (o la sua madre).
+
+    Oltre agli id dell'hook: `self`, che gli strumenti di sessione accettano
+    per "questa sessione"; `main`, che un subagente usa per parlare alla
+    sessione che l'ha lanciato (e' il modo documentato di SendMessage); e un id
+    `local_` il cui `cliSessionId` e' quello di chi chiama."""
+    mie = (chi["sessione"], chi["madre"])
+    if chiave in mie or chiave == "self":
+        return True
+    if chiave == "main" and chi["subagente"]:
+        return True
+    if chiave.startswith("local_"):
+        return any(v["cli"] and v["cli"] in mie
+                   for v in _voci_app(ambito.home, chiave=chiave))
+    return False
 
 
 def _agente_proprio(chiave: str, chi: dict) -> bool:
@@ -938,6 +1239,10 @@ def valuta(payload: dict, ambito: Ambito, chi: dict, data_dir: str):
     nominato = bool(chi["nomi"])
     mio = ",".join(chi["nomi"]) if nominato else PREDEFINITO
 
+    # 0) i file del guardiano stesso: nessuna sessione li modifica
+    v = _valuta_protetti(nome, ti, ambito, chi, data_dir, mio)
+    if v:
+        return v
     # 1) sessioni: strumenti dell'app che leggono o scrivono altre sessioni
     v = _valuta_sessioni(nome, ti, ambito, chi, data_dir, mio)
     if v:
@@ -954,6 +1259,23 @@ def valuta(payload: dict, ambito: Ambito, chi: dict, data_dir: str):
                 return {"bersaglio": s, "proprietario": "un compartimento nominato",
                         "motivo": "compartimento %s: il comando nomina %r, che "
                                   "appartiene a un compartimento nominato" % (mio, s)}
+    # 3b) un nominato con la cwd fuori dai suoi permessi: ogni comando parte da
+    # li' e legge la cwd con parole senza barre (`cat nota.txt`, `ls`,
+    # `grep -r x .`, `head *`) che l'estrazione dei percorsi non vede. La cwd e'
+    # quindi un percorso toccato da ogni comando: se sta fuori, il comando si
+    # nega e si dice come rientrare. (Una sessione e' di un nominato "solo per
+    # id" proprio quando e' aperta fuori dalle sue cartelle: e' il caso normale.)
+    if nominato and isinstance(cmd, str) and chi["cwd"]:
+        v = _percorso_nominato(chi["cwd"], chi, ambito, mio)
+        if v:
+            cartelle = [f for n in chi["nomi"] for f in ambito.nominati[n]["cartelle"]]
+            return {"bersaglio": chi["cwd"], "proprietario": v["proprietario"],
+                    "motivo": "compartimento %s: la cartella di lavoro %s e' fuori "
+                              "dai permessi di %s, e un comando da li' leggerebbe "
+                              "file fuori dai permessi: sposta la sessione con "
+                              "change_directory in una cartella del compartimento "
+                              "(%s)" % (mio, chi["cwd"], mio,
+                                        ", ".join(cartelle) or "nessuna configurata")}
     # 4) percorsi
     for testo, p, ricorsivo in percorsi_richiesti(nome, ti, chi["cwd"] or None,
                                                   nomi_semplici=not nominato):
@@ -963,6 +1285,55 @@ def valuta(payload: dict, ambito: Ambito, chi: dict, data_dir: str):
             v = _percorso_predefinito(p, ricorsivo, ambito, mio)
         if v:
             return v
+    return None
+
+
+_RX_DEVNULL = re.compile(r"\d*&?>>?\s*/dev/null|\d*>&\d+")
+_RX_SCRIVE = re.compile(
+    r"\btee\b|\bsed\b[^;&|]*\s-[A-Za-z]*i|\bmv\b|\brm\b|\btruncate\b"
+    r"|\bdd\b|\bln\b|\bchmod\b")
+
+
+def _protetti(ambito: Ambito, data_dir: str) -> list:
+    """I file che tengono in piedi il guardiano: la config, la copia
+    dell'ultima valida, il registro, il manifesto dei divieti, l'hook e questo
+    modulo. Un agente fermato dal guardiano non deve poterlo spegnere da solo."""
+    qui = os.path.realpath(__file__)
+    elenco = [os.path.join(data_dir, "config.json"), _percorso_copia(data_dir),
+              _percorso_registro(data_dir), _percorso_registro(data_dir) + ".1",
+              os.path.join(os.path.dirname(os.path.dirname(qui)), "bin",
+                           "plancia-guardiano"),
+              qui]
+    if ambito.manifesto:
+        elenco.append(os.path.expanduser(ambito.manifesto))
+    return [n for n in (_norm(p) for p in elenco) if n]
+
+
+def _valuta_protetti(nome, ti, ambito, chi, data_dir, mio):
+    """Scrivere (o cancellare, o spostare) un file del guardiano e' negato a
+    TUTTE le sessioni. Sono in scrittura: leggerli resta ammesso. Con Bash e'
+    euristico (un percorso del guardiano nel comando piu' una redirezione o un
+    comando che scrive), come il resto dell'estrazione dai comandi. Si modifica
+    a mano, fuori da una sessione."""
+    corto = _nome_corto(nome)
+    cwd = chi["cwd"] or None
+    cmd = ti.get("command")
+    candidati = []
+    if corto in STRUMENTI_SCRITTURA:
+        candidati = [_norm(ti.get(k), cwd) for k in ("file_path", "notebook_path", "path")
+                     if isinstance(ti.get(k), str)]
+    elif isinstance(cmd, str) and cmd and (
+            ">" in _RX_DEVNULL.sub(" ", cmd) or _RX_SCRIVE.search(cmd)):
+        candidati = [n for _, n in _percorsi_da_comando(cmd, cwd, True)]
+    if not candidati:
+        return None
+    protetti = {p.lower() for p in _protetti(ambito, data_dir)}
+    for n in candidati:
+        if n and n.lower() in protetti:
+            return {"bersaglio": n, "proprietario": "il guardiano",
+                    "motivo": "compartimento %s: %s e' un file del guardiano dei "
+                              "compartimenti, non si modifica da una sessione: "
+                              "modificalo a mano" % (mio, n)}
     return None
 
 
@@ -1022,7 +1393,10 @@ def _percorso_predefinito(p, ricorsivo, ambito, mio):
         else:
             if _combacia_glob(glob, p):
                 return _divieto(p, mio)
-            if ricorsivo and letterale and letterale != p and _dentro(letterale, p):
+            # Una ricerca che parte proprio dal prefisso letterale del modello
+            # (`<cartella>/PR-*`, ricerca in `<cartella>`) include i file che
+            # combaciano: negata anche con p == letterale.
+            if ricorsivo and letterale and _dentro(letterale, p):
                 return _divieto(p, mio, _RICERCA_INCLUDE)
     return None
 
@@ -1034,7 +1408,7 @@ def _valuta_sessioni(nome, ti, ambito, chi, data_dir, mio):
             return {"bersaglio": "ListAgents", "proprietario": "altri compartimenti",
                     "motivo": "compartimento %s: ListAgents elenca sessioni di altri "
                               "compartimenti" % mio}
-        return None
+        return _misura(ambito, "ListAgents", mio)
     if nome == "SendMessage":
         a = ti.get("to")
         if not isinstance(a, str) or not a:
@@ -1043,8 +1417,9 @@ def _valuta_sessioni(nome, ti, ambito, chi, data_dir, mio):
             return {"bersaglio": "SendMessage", "proprietario": "sconosciuto",
                     "motivo": "compartimento %s: SendMessage senza un destinatario "
                               "verificabile" % mio}
-        return _sessione_bersaglio(a, ambito, chi, data_dir, mio,
-                                   proprio=_agente_proprio(a, chi))
+        return _sessione_bersaglio(
+            a, ambito, chi, data_dir, mio,
+            proprio=_e_proprio(a, chi, ambito) or _agente_proprio(a, chi))
     if not nome.startswith(PREFISSO_SESSIONI):
         return None
     ids = _stringhe(ti, CHIAVI_ID_SESSIONE)
@@ -1058,13 +1433,30 @@ def _valuta_sessioni(nome, ti, ambito, chi, data_dir, mio):
                     "motivo": "compartimento %s: %s senza una sessione bersaglio "
                               "elenca o cerca fra sessioni di altri compartimenti"
                               % (mio, corto)}
+        if corto in SESSIONI_DA_MISURARE:
+            return _misura(ambito, corto, mio)
         return None
     for i in ids:
         v = _sessione_bersaglio(i, ambito, chi, data_dir, mio,
-                                proprio=i in (chi["sessione"], chi["madre"]))
+                                proprio=_e_proprio(i, chi, ambito))
         if v:
             return v
     return None
+
+
+def _misura(ambito, strumento, mio):
+    """Una chiamata che il predefinito puo' fare senza un bersaglio
+    (`list_sessions`, `search_session_transcripts`, `ListAgents`): non si puo'
+    negare (limite dichiarato nel docstring), ma se esistono compartimenti
+    nominati si fa scrivere una riga in `solo-registro`, per sapere quanto si
+    usa prima di decidere. Non nega mai, nemmeno in `bloccante`."""
+    if not ambito.nominati:
+        return None
+    return {"bersaglio": strumento, "proprietario": "un compartimento nominato",
+            "solo_misura": True,
+            "motivo": "compartimento %s: %s cerca o elenca fra tutte le sessioni, "
+                      "anche di un compartimento nominato (solo misura, non si "
+                      "nega)" % (mio, strumento)}
 
 
 def _sessione_bersaglio(chiave, ambito, chi, data_dir, mio, proprio):
@@ -1073,23 +1465,25 @@ def _sessione_bersaglio(chiave, ambito, chi, data_dir, mio, proprio):
     Un nominato raggiunge solo sessioni che sono almeno dei suoi stessi
     compartimenti; una sessione sconosciuta e' negata. Il predefinito
     raggiunge le sessioni predefinite e quelle sconosciute (id sconosciuto:
-    ammesso, come da specifica), non quelle di un nominato."""
+    ammesso, come da specifica), non quelle di un nominato. `chiave` puo'
+    indicare piu' sessioni (titolo ripetuto): tutte devono essere raggiungibili."""
     if proprio:
         return None
     nominato = bool(chi["nomi"])
-    comp = compartimenti_sessione(chiave, ambito, data_dir)
-    if comp is None:
+    gruppi = compartimenti_sessione(chiave, ambito, data_dir)
+    if gruppi is None:
         if not nominato:
             return None
         return {"bersaglio": chiave, "proprietario": "sconosciuto",
                 "motivo": "compartimento %s: la sessione %s e' sconosciuta a un "
                           "compartimento nominato" % (mio, chiave)}
-    ok = set(chi["nomi"]) <= set(comp) if nominato else comp == [PREDEFINITO]
-    if ok:
-        return None
-    return {"bersaglio": chiave, "proprietario": ",".join(comp),
-            "motivo": "compartimento %s: la sessione %s appartiene a %s"
-                      % (mio, chiave, ",".join(comp))}
+    for comp in gruppi:
+        ok = set(chi["nomi"]) <= set(comp) if nominato else comp == [PREDEFINITO]
+        if not ok:
+            return {"bersaglio": chiave, "proprietario": ",".join(comp),
+                    "motivo": "compartimento %s: la sessione %s appartiene a %s"
+                              % (mio, chiave, ",".join(comp))}
+    return None
 
 
 def _valuta_drive(nome, ti, ambito, chi, mio):
@@ -1184,7 +1578,8 @@ def hook(testo: str, data_dir: str) -> str:
                 "motivo": cfg["nota"], "esito": "nota"})
         if not cfg["compartimenti"]:
             return ""
-        ambito = Ambito(cfg["compartimenti"], cfg["strumenti_drive"])
+        ambito = Ambito(cfg["compartimenti"], cfg["strumenti_drive"],
+                        data_dir=data_dir)
         chi = chiamante(payload, ambito)
         v = valuta(payload, ambito, chi, data_dir)
     except Exception as exc:  # noqa: BLE001 - un hook globale non rompe niente
@@ -1197,7 +1592,9 @@ def hook(testo: str, data_dir: str) -> str:
             return ""
     if not v:
         return ""
-    blocca = modo == "bloccante"
+    if v.get("solo_misura") and modo != "solo-registro":
+        return ""
+    blocca = modo == "bloccante" and not v.get("solo_misura")
     sid = payload.get("session_id")
     scrivi_registro(data_dir, {
         "modalita": modo, "sessione": sid if isinstance(sid, str) else "",
