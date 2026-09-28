@@ -7,10 +7,10 @@
       "layers": [
         {
           "glass": true,
-          "image-name": "sud.svg",
-          "name": "sud",
+          "image-name": "vetri.svg",
+          "name": "vetri",
           "position": {
-            "scale": 1.35,
+            "scale": 1.0,
             "translation-in-points": [
               0,
               0
@@ -19,10 +19,10 @@
         },
         {
           "glass": true,
-          "image-name": "nord.svg",
-          "name": "nord",
+          "image-name": "nave.svg",
+          "name": "nave",
           "position": {
-            "scale": 1.35,
+            "scale": 1.0,
             "translation-in-points": [
               0,
               0

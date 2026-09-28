@@ -1,4 +1,4 @@
-// Disegna l'icona di ripiego dell'app: l'ago di bussola, in due metà.
+// Disegna l'icona di ripiego dell'app: la plancia della nave, vista di lato.
 //
 // La strada buona per l'icona è mac/icona/Plancia.icon (Icon Composer, macOS 26+):
 // lì il vetro lo applica il sistema, strato per strato. Questo file serve quando
@@ -6,22 +6,27 @@
 // disegna a mano, con CoreGraphics, la stessa forma con un vetro imitato con
 // mano leggera, e mac/build.sh la trasforma in Plancia.icns con `iconutil`.
 //
-// Il segno è uno solo e sta nei due file allo stesso modo: due triangoli
-// (nord in ambra, sud in crema) ruotati di 40 gradi attorno al centro di una
-// tavola di 1024, ingranditi di 1,35, con gli spigoli arrotondati da un bordo di
-// 40. Le coordinate qui sotto sono quelle di mac/icona/Plancia.icon/Assets/*.svg:
-// se cambi il segno di là, cambialo anche qui (lo controlla
-// tools/prove-front/icona.py).
+// Il segno è uno solo e sta nei due file allo stesso modo: uno scafo con la
+// prua che sale, una casa e un ponte con i vetri inclinati in avanti (la nave
+// crema, un unico strato, con il buco dei vetri) e i vetri accesi d'ambra (il
+// secondo strato). Sono quattro poligoni sulla tavola di 1024 dei file SVG
+// (mac/icona/Plancia.icon/Assets/nave.svg e vetri.svg), ognuno con un raggio che
+// ne arrotonda gli spigoli: dal vertice si va verso i due vicini per `raggio`
+// unità (al più metà lato) e si chiude la curva con una quadratica che ha il
+// vertice per punto di controllo. È la stessa regola con cui sono scritti gli
+// SVG. Se cambi il segno di là, cambialo anche qui: tools/prove-front/icona.py
+// ricalcola i percorsi da queste coordinate e li confronta con gli SVG.
 //
 // Coordinate uguali non bastano, conta anche il riferimento. In Icon Composer la
 // tela da 1024 del .icon coincide con il CORPO dell'icona (il quadrato
 // arrotondato da 824 px sulla griglia di Apple): actool la rimpicciolisce dentro
 // i margini. Quindi qui la tavola si porta dentro il corpo, non dentro l'intera
-// immagine: se la si portasse sull'intera immagine l'ago uscirebbe più grande
+// immagine: se la si portasse sull'intera immagine il segno uscirebbe più grande
 // di 1024/824, cioè del 24 per cento, e con e senza Xcode 26 l'app avrebbe due
-// icone diverse (misurato sulle PNG di actool e del ripiego). Il vetro imitato è: un fondo con un gradiente
-// sobrio, un filo di luce dentro il bordo in alto, un riflesso morbido, e per
-// ogni metà un'ombra corta sotto e un bordo di luce sopra.
+// icone diverse (misurato sulle PNG di actool e del ripiego). Il vetro imitato è:
+// un fondo con un gradiente sobrio, un filo di luce dentro il bordo in alto, un
+// riflesso morbido, e per ogni strato un'ombra corta sotto e un bordo di luce
+// sopra.
 //
 // Si esegue con `swift mac/makeicon.swift <cartella-iconset>`.
 
@@ -34,17 +39,25 @@ try? FileManager.default.createDirectory(atPath: out, withIntermediateDirectorie
 
 // La tavola dei file SVG: 1024 per 1024, con l'origine in alto a sinistra.
 let tavola: CGFloat = 1024
-let rotazione: CGFloat = 40 * .pi / 180   // in senso orario, come rotate(40) di SVG
-let ingrandimento: CGFloat = 1.35        // il "scale" dello strato nel .icon
-let bordoSpigoli: CGFloat = 40            // lo stroke-width con linejoin round
+let ingrandimento: CGFloat = 1.0         // il "scale" degli strati nel .icon
 // Il margine del corpo sull'immagine intera, in frazione del lato: 0,098 è il
 // 100 px su 1024 della griglia di Apple. Una costante sola, usata dal corpo
-// (in disegna) e dalla mappa della tavola (in punto e in metà).
+// (in disegna) e dalla mappa della tavola (in punto).
 let margineCorpo: CGFloat = 0.098
 
-// nord: M512 190 L634 500 H390 Z  ·  sud: M390 524 H634 L512 834 Z
-let nord: [CGPoint] = [CGPoint(x: 512, y: 190), CGPoint(x: 634, y: 500), CGPoint(x: 390, y: 500)]
-let sud: [CGPoint] = [CGPoint(x: 390, y: 524), CGPoint(x: 634, y: 524), CGPoint(x: 512, y: 834)]
+/// Un poligono chiuso con gli spigoli arrotondati di `raggio` (unità della tavola).
+struct Forma {
+    let punti: [CGPoint]
+    let raggio: CGFloat
+}
+
+// Lo strato crema (nave.svg): scafo, casa e ponte, con il buco dei vetri.
+let scafo = Forma(punti: [CGPoint(x: 134, y: 620), CGPoint(x: 898, y: 580), CGPoint(x: 774, y: 708), CGPoint(x: 156, y: 708)], raggio: 24)
+let casa = Forma(punti: [CGPoint(x: 240, y: 640), CGPoint(x: 240, y: 474), CGPoint(x: 590, y: 474), CGPoint(x: 590, y: 640)], raggio: 18)
+let ponte = Forma(punti: [CGPoint(x: 322, y: 486), CGPoint(x: 322, y: 306), CGPoint(x: 700, y: 306), CGPoint(x: 646, y: 486)], raggio: 28)
+// Lo strato ambra (vetri.svg): i vetri della plancia, inclinati in avanti. Sono
+// anche il buco dello strato crema, così l'ambra riempie esattamente la finestra.
+let vetri = Forma(punti: [CGPoint(x: 364, y: 350), CGPoint(x: 654, y: 350), CGPoint(x: 628, y: 440), CGPoint(x: 364, y: 440)], raggio: 18)
 
 func colore(_ hex: UInt32, _ alfa: CGFloat = 1) -> CGColor {
     CGColor(red: CGFloat((hex >> 16) & 0xff) / 255, green: CGFloat((hex >> 8) & 0xff) / 255,
@@ -69,24 +82,39 @@ func punto(_ p: CGPoint, _ lato: CGFloat) -> CGPoint {
     let c = tavola / 2
     let margine = lato * margineCorpo
     let scala = scalaTavola(lato)
-    let dx = p.x - c, dy = p.y - c
-    // rotate(40) di SVG con l'asse y in giù è una rotazione oraria sullo schermo
-    let rx = dx * cos(rotazione) - dy * sin(rotazione)
-    let ry = dx * sin(rotazione) + dy * cos(rotazione)
-    let x = c + rx * ingrandimento
-    let y = c + ry * ingrandimento
+    let x = c + (p.x - c) * ingrandimento
+    let y = c + (p.y - c) * ingrandimento
     return CGPoint(x: margine + x * scala, y: margine + (tavola - y) * scala)
 }
 
-/// Il triangolo con gli spigoli arrotondati: il poligono più il suo bordo.
-func metà(_ triangolo: [CGPoint], _ lato: CGFloat) -> CGPath {
-    let poligono = CGMutablePath()
-    poligono.addLines(between: triangolo.map { punto($0, lato) })
-    poligono.closeSubpath()
-    let largo = bordoSpigoli * ingrandimento * scalaTavola(lato)
-    let bordo = poligono.copy(strokingWithWidth: largo, lineCap: .round, lineJoin: .round,
-                              miterLimit: 10)
-    return poligono.union(bordo, using: .winding)
+/// Il poligono con gli spigoli arrotondati: come i percorsi degli SVG, un tratto
+/// dritto fino a `raggio` dal vertice e una quadratica che lo gira.
+func arrotondata(_ forma: Forma, _ lato: CGFloat) -> CGPath {
+    let p = forma.punti.map { punto($0, lato) }
+    let r = forma.raggio * ingrandimento * scalaTavola(lato)
+    func verso(_ da: CGPoint, _ a: CGPoint) -> CGPoint {
+        let dx = a.x - da.x, dy = a.y - da.y
+        let lunghezza = (dx * dx + dy * dy).squareRoot()
+        let t = min(r, lunghezza / 2) / lunghezza
+        return CGPoint(x: da.x + dx * t, y: da.y + dy * t)
+    }
+    let percorso = CGMutablePath()
+    for i in 0..<p.count {
+        let prima = p[(i + p.count - 1) % p.count], qui = p[i], dopo = p[(i + 1) % p.count]
+        let entra = verso(qui, prima), esce = verso(qui, dopo)
+        if i == 0 { percorso.move(to: entra) } else { percorso.addLine(to: entra) }
+        percorso.addQuadCurve(to: esce, control: qui)
+    }
+    percorso.closeSubpath()
+    return percorso
+}
+
+/// Lo strato crema: scafo, casa e ponte fusi in una forma sola, meno i vetri.
+func nave(_ lato: CGFloat) -> CGPath {
+    let corpo = arrotondata(scafo, lato)
+        .union(arrotondata(casa, lato), using: .winding)
+        .union(arrotondata(ponte, lato), using: .winding)
+    return corpo.subtracting(arrotondata(vetri, lato), using: .winding)
 }
 
 func disegna(lato: Int) -> Data? {
@@ -141,18 +169,19 @@ func disegna(lato: Int) -> Data? {
                            options: [])
     ctx.restoreGState()
 
-    // ------------------------------------------------------------ l'ago
-    // Sotto il nord in ambra, sopra il sud in crema: come l'ordine degli strati.
-    let mezze: [(CGPath, [CGPoint], CGColor, CGColor, CGFloat)] = [
-        (metà(nord, s), nord, colore(0xe89c5c), colore(0xc7803f), 1.0),
-        (metà(sud, s), sud, colore(0xece8df), colore(0xb7b3aa), 0.94),
+    // ------------------------------------------------------------ la nave
+    // Sotto lo strato crema, sopra i vetri d'ambra: come l'ordine degli strati
+    // (nel .icon il primo è quello in cima, qui si disegna dal fondo).
+    let strati: [(CGPath, CGColor, CGColor, CGFloat)] = [
+        (nave(s), colore(0xece8df), colore(0xb7b3aa), 0.94),
+        (arrotondata(vetri, s), colore(0xe89c5c), colore(0xc7803f), 1.0),
     ]
     let lunghezza = s * 0.0065   // profondità dell'ombra corta e dello spessore del bordo di luce
 
-    for (percorso, _, alto, basso, alfa) in mezze {
+    for (percorso, alto, basso, alfa) in strati {
         let riquadro = percorso.boundingBoxOfPath
 
-        // ombra corta sotto la metà
+        // ombra corta sotto lo strato
         ctx.saveGState()
         ctx.setAlpha(alfa)
         ctx.setShadow(offset: CGSize(width: 0, height: -lunghezza * 1.4), blur: s * 0.022,
@@ -162,7 +191,7 @@ func disegna(lato: Int) -> Data? {
         ctx.fillPath()
         ctx.restoreGState()
 
-        // il corpo della metà, con un gradiente verticale e una trasparenza misurata
+        // il corpo dello strato, con un gradiente verticale e una trasparenza misurata
         ctx.saveGState()
         ctx.setAlpha(alfa)
         ctx.addPath(percorso)
@@ -172,7 +201,7 @@ func disegna(lato: Int) -> Data? {
                                end: CGPoint(x: 0, y: riquadro.minY), options: [])
         ctx.restoreGState()
 
-        // bordo di luce in alto: la parte della metà che resta fuori dalla sua copia
+        // bordo di luce in alto: la parte dello strato che resta fuori dalla sua copia
         // spostata in giù, cioè una sottile falce lungo i lati che guardano in su
         ctx.saveGState()
         ctx.addPath(percorso)
