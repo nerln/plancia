@@ -507,6 +507,22 @@ def _bersagli(conn, esclusi: dict) -> dict:
                    if sessione_esclusa(r["session_id"], r["cwd"], esclusi, r["thread"])]
     sid_set = set(sid_esclusi) | set(esclusi["sessioni"])
 
+    # sid_esclusi include anche le sessioni scoperte solo qui, guardando la
+    # cwd gia' salvata in sessions.cwd: una sessione aperta in una cartella
+    # normale e poi spostata in una privata non ha la cartella di progetto
+    # esclusa, quindi trascrizione_esclusa (usata sotto per turni_percorsi e
+    # per le memorie) non la riconoscerebbe finche' esclusi["sessioni"] non
+    # contiene anche il suo id. Senza questo, turni_fts di una sessione cosi'
+    # resterebbe intatto e cercabile per un giro intero, anche se la sua riga
+    # in sessions sparisce subito (misurato: e' esattamente il buco trovato
+    # dal tester). Un dizionario NUOVO, non una mutazione sul posto: questa
+    # funzione la usa anche conta() per --prova, che non deve scrivere ne'
+    # persistere niente. purga(), qui sotto, chiama segna_scoperto() sui id
+    # nuovi DOPO aver preso questi conteggi, cosi' esclusi_scoperti e
+    # esclusi["sessioni"] restano aggiornati anche per chi guarda dopo, nello
+    # stesso processo e nei sync successivi.
+    esclusi_ampio = {**esclusi, "sessioni": sid_set}
+
     righe_repos = conn.execute(
         "SELECT id, name, local_path FROM repos "
         "WHERE local_path IS NOT NULL AND local_path <> ''").fetchall()
@@ -519,7 +535,7 @@ def _bersagli(conn, esclusi: dict) -> dict:
 
     righe_memorie = conn.execute("SELECT path, name, project_id FROM knowledge").fetchall()
     memorie_escluse = {r["path"]: r["name"] for r in righe_memorie
-                       if trascrizione_esclusa(r["path"], esclusi)}
+                       if trascrizione_esclusa(r["path"], esclusi_ampio)}
     memorie = list(memorie_escluse)
     nomi_memorie = set(memorie_escluse.values())
 
@@ -580,7 +596,7 @@ def _bersagli(conn, esclusi: dict) -> dict:
     # e una chiamata futura a `turni.qualcosa()` più sotto fallirebbe con un
     # AttributeError su una lista invece che sul modulo.
     turni_percorsi = [r["percorso"] for r in conn.execute("SELECT percorso FROM turni_file").fetchall()
-                     if trascrizione_esclusa(r["percorso"], esclusi)]
+                     if trascrizione_esclusa(r["percorso"], esclusi_ampio)]
 
     live = store.get_meta(conn, "live_session")
     live_da_pulire = bool(live) and live in sid_set
@@ -636,6 +652,16 @@ def purga(conn, esclusi: dict = None) -> dict:
     if not configurato(esclusi):
         return {}
     b = _bersagli(conn, esclusi)
+
+    # Persiste ORA, nello stesso giro, le sessioni che _bersagli() ha appena
+    # scoperto guardando la cwd gia' salvata (non ancora in esclusi_scoperti
+    # ne' in esclusi["sessioni"], altrimenti sarebbero gia' in
+    # esclusi["sessioni"] e la differenza sarebbe vuota): senza questo, il
+    # prossimo turni.indicizza o la prossima scrittura MCP tornerebbero a non
+    # saperlo finche' qualcosa non rilegge il transcript da capo.
+    for sid in set(b["sessioni"]) - set(esclusi["sessioni"]):
+        segna_scoperto(conn, sid, esclusi)
+
     conteggi = {}
 
     def _cancella(tabella, colonna, valori):

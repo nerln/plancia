@@ -7,6 +7,7 @@ in silenzio, perché un hook rotto blocca ogni sessione.
 """
 import json
 import os
+import re
 import sys
 import time
 
@@ -17,35 +18,50 @@ DB = os.path.join(DATA, "plancia.db")
 CONFIG = os.path.join(DATA, "config.json")
 MAX_CONTEXT = 2600
 
+# Stessa regola di plancia/esclusi._ID_VALIDO: un id di sessione (Claude Code
+# o Codex) è un uuid, e un valore con un'altra forma è quasi sempre un refuso
+# di chi ha scritto config.json a mano.
+_ID_VALIDO = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+
 
 def _cartelle_e_sessioni_escluse():
     """Copia minima di plancia/esclusi.carica() + plancia/esclusi.valida():
     questo script non importa il pacchetto plancia (vedi il docstring del
     modulo, "deve essere veloce e non deve mai fallire"), quindi la regola
     vive per forza in due posti. Se una delle due cambia, cambia anche
-    l'altra.
+    l'altra: tools/prove/esclusi.py (_prova_hook_valida_come_esclusi) lancia
+    entrambe sullo stesso config.json e fallisce se non sono d'accordo.
 
     Torna `(cartelle, sessioni, valido)`. Non solleva mai. `valido=True` con
     le liste vuote vuol dire "niente configurato" (config.json assente, o
     assente la chiave): comportamento identico a prima. `valido=False` vuol
     dire che config.json esiste ma non ci si può fidare (non si legge, non è
     JSON, non è un oggetto, una delle due chiavi non è una lista di
-    stringhe): FAIL-CLOSED, non "niente escluso" — un config.json con
-    "cartelle_escluse" scritta come una stringa invece che una lista non deve
-    mai tradursi in "via libera a tutto" (misurato: iterare una stringa dà
-    dei singoli caratteri come "cartelle", e un confronto su quelli non
-    esclude niente di reale). Chi chiama, con `valido=False`, non scrive
-    niente in coda: meglio perdere una sessione per un giro (il sync la
-    recupera comunque dal transcript, che l'hook non tocca) che rischiarne
-    una privata perché la configurazione non si è capita.
+    stringhe, una cartella non è assoluta o non esiste o è troppo ampia, un
+    id di sessione non ha la forma di un uuid): FAIL-CLOSED, non "niente
+    escluso". Un config.json con "cartelle_escluse" scritta come una
+    stringa invece che una lista non deve mai tradursi in "via libera a
+    tutto" (misurato: iterare una stringa dà dei singoli caratteri come
+    "cartelle", e un confronto su quelli non esclude niente di reale). Chi
+    chiama, con `valido=False`, non scrive niente in coda: meglio perdere una
+    sessione per un giro (il sync la recupera comunque dal transcript, che
+    l'hook non tocca) che rischiarne una privata perché la configurazione non
+    si è capita.
 
-    Non fa la «grafia vera» del percorso (plancia/esclusi._grafia_vera):
-    quella cammina il filesystem componente per componente, e l'hook non deve
-    mai costare più di uno stat in croce. La differenza pratica è che qui una
-    cartella scritta con le maiuscole sbagliate rispetto al disco (raro: di
-    solito è chi scrive la sessione, cioè il sistema operativo, a dare la cwd
-    già nella grafia vera) non verrebbe riconosciuta; il sync la ripulirebbe
-    comunque al giro dopo con la validazione piena.
+    Le stesse quattro regole di esclusi.valida() sulle cartelle (assoluta,
+    esistente, non '/', non una cartella di sistema di Plancia) e sugli id
+    (forma di uuid): un config.json che una CLI accetterebbe e l'hook no (o
+    viceversa) è quello che il tester ha trovato la volta scorsa, con l'hook
+    che continuava ad applicare in parte una regola che `plancia esclusi`
+    aveva appena dichiarato inaffidabile. Non fa invece la «grafia vera» del
+    percorso (plancia/esclusi._grafia_vera): quella cammina il filesystem
+    componente per componente, e l'hook non deve mai costare più di un paio
+    di stat in croce. La differenza pratica è che qui una cartella scritta
+    con le maiuscole sbagliate rispetto al disco (raro: di solito è chi
+    scrive la sessione, cioè il sistema operativo, a dare la cwd già nella
+    grafia vera) non verrebbe riconosciuta; il sync la ripulirebbe comunque
+    al giro dopo con la validazione piena.
     """
     if not os.path.exists(CONFIG):
         return [], set(), True
@@ -68,16 +84,42 @@ def _cartelle_e_sessioni_escluse():
     if not isinstance(grezze_sessioni, list) or not all(
             isinstance(s, str) for s in grezze_sessioni):
         return [], set(), False
+
+    # Le stesse tre cartelle che esclusi.valida() protegge (HOME, la
+    # cartella di Claude Code, quella di Plancia): stessi nomi di variabile
+    # d'ambiente e stessi default di plancia/config.py, senza importarlo.
+    home = os.path.expanduser("~")
+    claude_dir = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(home, ".claude")
+    try:
+        protette = [os.path.realpath(p).rstrip("/") or "/" for p in (home, claude_dir, DATA)]
+    except Exception:
+        return [], set(), False
+
     cartelle = []
     for c in grezze_cartelle:
         try:
             assoluto = os.path.expanduser(c)
             if not os.path.isabs(assoluto):
                 return [], set(), False
-            p = os.path.realpath(assoluto).rstrip("/")
-            cartelle.append(p or "/")
+            p = os.path.realpath(assoluto).rstrip("/") or "/"
         except Exception:
             return [], set(), False
+        # esclusi._grafia_vera() controlla solo che ogni componente esista,
+        # non che l'ultimo sia proprio una cartella: stessa cosa qui, con
+        # os.path.exists e non os.path.isdir, o l'hook rifiuterebbe un
+        # config.json che esclusi.valida() accetterebbe.
+        if not os.path.exists(p):
+            return [], set(), False
+        if p == "/":
+            return [], set(), False
+        if any(p == prot or prot.startswith(p + "/") for prot in protette):
+            return [], set(), False
+        cartelle.append(p)
+
+    for sid in grezze_sessioni:
+        if not _ID_VALIDO.match(sid):
+            return [], set(), False
+
     sessioni = set(s for s in grezze_sessioni if s)
     return cartelle, sessioni, True
 

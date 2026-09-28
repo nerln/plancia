@@ -998,6 +998,217 @@ def _prova_config_rotto(prova) -> None:
         shutil.rmtree(str(base), ignore_errors=True)
 
 
+def _prova_spostata_un_giro(prova) -> None:
+    """Lo scenario esatto trovato dal tester: una trascrizione che ha GIA'
+    dentro di se', dalla prima riga, sia la cwd normale sia quella che poi
+    diventera' privata, letta tutta da un primo sync PRIMA che la cartella
+    sia esclusa (quindi sessions.cwd si ferma sull'ultima vista: quella
+    privata). Si aggiunge poi la cartella a cartelle_escluse e si lancia UN
+    SOLO sync incrementale, senza toccare piu' il file: e' il ramo veloce
+    ("la dimensione non e' cambiata, salto") che sync_sessions prende quando
+    non c'e' niente di nuovo da leggere.
+
+    Prima della correzione: la riga in `sessions` sparisce comunque (la cwd
+    era gia' salvata, e la purga la legge da li'), ma il testo resta intero
+    in turni_fts (quindi in `plancia search`/`plancia_search`), perche' la
+    sua pulizia guarda solo esclusi["sessioni"], e quell'id ci entra solo
+    quando qualcosa rilegge il transcript da capo: cosa che qui non succede
+    mai, dato che il file non cambia piu'. Dopo la correzione, la scoperta
+    fatta guardando sessions.cwd durante la stessa purga vale anche per
+    turni_fts, nello stesso giro.
+    """
+    base = Path(tempfile.mkdtemp(prefix="plancia-prova-spostata-un-giro-"))
+    try:
+        normale = base / "normale-un-giro"
+        privata = base / "privata-un-giro"
+        normale.mkdir()
+        privata.mkdir()
+        claude_dir = base / "claude-config"
+        plancia_home = base / "plancia-home"
+        codex_home = base / "codex-home"
+        for c in (claude_dir, plancia_home, codex_home):
+            c.mkdir(parents=True, exist_ok=True)
+
+        sid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        cod_normale = _codifica_cartella(normale)
+        path = claude_dir / "projects" / cod_normale / f"{sid}.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        righe = [
+            _riga("user", "UNGIROPRIMAXX apro qui, un messaggio abbastanza "
+                  "lungo da superare la soglia di indicizzazione.",
+                  "2026-01-01T00:00:00Z", cwd=str(normale)),
+            _riga("assistant", "Ho letto UNGIROPRIMAXX e continuo il lavoro "
+                  "con una risposta lunga a sufficienza.",
+                  "2026-01-01T00:00:05Z"),
+            _riga("user", "UNGIRODOPOXX ora lavoro qui invece, un messaggio "
+                  "abbastanza lungo da superare la soglia.",
+                  "2026-01-01T00:10:00Z", cwd=str(privata)),
+            _riga("assistant", "Ho letto UNGIRODOPOXX e continuo qui, "
+                  "risposta lunga a sufficienza.",
+                  "2026-01-01T00:10:05Z"),
+        ]
+        path.write_text("\n".join(righe) + "\n", "utf-8")
+
+        # Primo sync: PRIMA della regola, config.json senza le due chiavi.
+        (plancia_home / "config.json").write_text(
+            json.dumps({"gh_enabled": False, "code_roots": []}), "utf-8")
+        env = dict(os.environ, PLANCIA_HOME=str(plancia_home),
+                   CLAUDE_CONFIG_DIR=str(claude_dir), CODEX_HOME=str(codex_home))
+        script1 = (
+            f"import sys; sys.path.insert(0, {str(RADICE)!r})\n"
+            "from plancia import ingest\n"
+            "ingest.sync(modo='tutto', skip_git=True, full=True)\n")
+        r1 = subprocess.run([sys.executable, "-c", script1], capture_output=True,
+                            text=True, env=env, timeout=30)
+        if r1.returncode != 0:
+            prova("sessione spostata (un giro): il primo sync (prima della regola) "
+                  "gira senza eccezioni", False,
+                  f"stdout={r1.stdout[-500:]} stderr={r1.stderr[-500:]}")
+            return
+
+        # Si aggiunge la cartella a cartelle_escluse: il file della
+        # trascrizione non viene piu' toccato da qui in avanti.
+        (plancia_home / "config.json").write_text(json.dumps({
+            "gh_enabled": False, "code_roots": [],
+            "cartelle_escluse": [str(privata)],
+        }), "utf-8")
+
+        script2 = (
+            f"import sys, json; sys.path.insert(0, {str(RADICE)!r})\n"
+            "from plancia import ingest, store\n"
+            "ingest.sync(modo='tutto', skip_git=True)\n"
+            "conn = store.connect()\n"
+            f"sid = {sid!r}\n"
+            "n_sessioni = conn.execute(\"SELECT COUNT(*) FROM sessions WHERE session_id=?\", "
+            "(sid,)).fetchone()[0]\n"
+            "n_turni_prima = conn.execute(\"SELECT COUNT(*) FROM turni_fts WHERE turni_fts MATCH ?\", "
+            "('UNGIROPRIMAXX',)).fetchone()[0]\n"
+            "n_turni_dopo = conn.execute(\"SELECT COUNT(*) FROM turni_fts WHERE turni_fts MATCH ?\", "
+            "('UNGIRODOPOXX',)).fetchone()[0]\n"
+            "n_search_prima = conn.execute(\"SELECT COUNT(*) FROM search_fts WHERE search_fts MATCH ?\", "
+            "('UNGIROPRIMAXX',)).fetchone()[0]\n"
+            "n_search_dopo = conn.execute(\"SELECT COUNT(*) FROM search_fts WHERE search_fts MATCH ?\", "
+            "('UNGIRODOPOXX',)).fetchone()[0]\n"
+            "print(json.dumps({'sessione': n_sessioni, 'turni_prima': n_turni_prima, "
+            "'turni_dopo': n_turni_dopo, 'search_prima': n_search_prima, "
+            "'search_dopo': n_search_dopo}))\n")
+        r2 = subprocess.run([sys.executable, "-c", script2], capture_output=True,
+                            text=True, env=env, timeout=30)
+        try:
+            dati = json.loads([l for l in r2.stdout.splitlines() if l.strip()][-1])
+        except Exception:
+            prova("sessione spostata (un giro): il secondo sync (incrementale, un solo "
+                  "giro) stampa un JSON leggibile", False,
+                  f"stdout={r2.stdout[-800:]} stderr={r2.stderr[-800:]}")
+            return
+
+        prova("sessione spostata, un solo sync incrementale dopo l'esclusione: "
+              "sparisce da sessions", dati.get("sessione") == 0, str(dati))
+        prova("...nello STESSO giro sparisce anche il testo di prima dello "
+              "spostamento da turni_fts (non un giro dopo)",
+              dati.get("turni_prima") == 0, str(dati))
+        prova("...e anche il testo di dopo lo spostamento da turni_fts",
+              dati.get("turni_dopo") == 0, str(dati))
+        prova("...e da search_fts (prima dello spostamento)",
+              dati.get("search_prima") == 0, str(dati))
+        prova("...e da search_fts (dopo lo spostamento)",
+              dati.get("search_dopo") == 0, str(dati))
+    finally:
+        import shutil
+        shutil.rmtree(str(base), ignore_errors=True)
+
+
+def _prova_hook_valida_come_esclusi(prova) -> None:
+    """bin/plancia-hook e plancia/esclusi.valida() devono dire ok/non ok
+    sullo STESSO config.json. Una guardia, non solo una correzione una
+    tantum: se domani uno dei due cambia senza l'altro, questa prova se ne
+    accorge da sola.
+
+    Il segnale che si confronta e' "il file e' affidabile", non "la
+    sessione di prova e' esclusa": con una cartella_esclusa che coincide
+    con la cwd della sessione di controllo, un config.json valido fa si'
+    che l'hook NON scriva in coda (la sessione e' privata) ma stampi
+    comunque un messaggio (quello di privacy, invece dell'ancoraggio): lo
+    stdout non vuoto e' la spia di "valido", a prescindere da quale dei due
+    messaggi sia.
+    """
+    base = Path(tempfile.mkdtemp(prefix="plancia-prova-hook-valida-"))
+    try:
+        esiste = base / "cartella-esistente"
+        esiste.mkdir()
+        claude_dir = base / "claude-config"
+        codex_home = base / "codex-home"
+        for c in (claude_dir, codex_home):
+            c.mkdir(parents=True, exist_ok=True)
+
+        sid_valido = "12345678-1234-1234-1234-123456789abc"
+        casi = {
+            "valido": {"cartelle_escluse": [str(esiste)], "sessioni_escluse": [sid_valido]},
+            "liste_vuote": {},
+            "cartella_stringa_al_posto_di_lista": {"cartelle_escluse": str(esiste)},
+            "cartella_relativa": {"cartelle_escluse": ["relativa/x"]},
+            "cartella_inesistente": {"cartelle_escluse": [str(base / "non-esiste-davvero")]},
+            "cartella_troppo_ampia_claude_dir": {"cartelle_escluse": [str(claude_dir)]},
+            "cartella_troppo_ampia_home": {"cartelle_escluse": [str(Path.home())]},
+            "sessione_non_uuid": {"cartelle_escluse": [str(esiste)],
+                                  "sessioni_escluse": ["non-e-un-uuid"]},
+        }
+
+        script_valida = (
+            f"import sys, json; sys.path.insert(0, {str(RADICE)!r})\n"
+            "from plancia import esclusi\n"
+            "cfg = json.loads(sys.stdin.read())\n"
+            "ok, errore, _, _ = esclusi.valida(cfg)\n"
+            "print(json.dumps({'ok': ok, 'errore': errore}))\n")
+
+        for nome, cfg in casi.items():
+            plancia_home = base / f"home-{nome}"
+            plancia_home.mkdir(parents=True, exist_ok=True)
+            # Solo le tre tabelle che ancoraggio() interroga, vuote: senza
+            # questo la connessione in sola lettura dell'hook fallirebbe (il
+            # file non esiste ancora), l'eccezione verrebbe ingoiata (giusto:
+            # l'hook non deve mai sollevare) e lo stdout resterebbe vuoto per
+            # un motivo che non c'entra niente con la validita' di
+            # config.json, mascherando il confronto.
+            conn_min = sqlite3.connect(str(plancia_home / "plancia.db"))
+            conn_min.executescript(
+                "CREATE TABLE repos(local_path TEXT, project_id INTEGER);"
+                "CREATE TABLE projects(id INTEGER PRIMARY KEY, key TEXT);"
+                "CREATE TABLE project_links(value TEXT, kind TEXT, project_id INTEGER);")
+            conn_min.commit()
+            conn_min.close()
+            (plancia_home / "config.json").write_text(json.dumps(cfg), "utf-8")
+            env = dict(os.environ, PLANCIA_HOME=str(plancia_home),
+                       CLAUDE_CONFIG_DIR=str(claude_dir), CODEX_HOME=str(codex_home))
+
+            r_val = subprocess.run([sys.executable, "-c", script_valida],
+                                   input=json.dumps(cfg), capture_output=True,
+                                   text=True, env=env, timeout=15)
+            try:
+                dati_valida = json.loads(
+                    [l for l in r_val.stdout.splitlines() if l.strip()][-1])
+            except Exception:
+                prova(f"esclusi.valida() ({nome}) stampa un JSON leggibile", False,
+                      f"stdout={r_val.stdout!r} stderr={r_val.stderr!r}")
+                continue
+            ok_valida = dati_valida.get("ok")
+
+            payload = json.dumps({"hook_event_name": "SessionStart",
+                                  "session_id": sid_valido, "cwd": str(esiste)}).encode()
+            r_hook = subprocess.run([str(RADICE / "bin" / "plancia-hook")], input=payload,
+                                    capture_output=True, env=env, timeout=15)
+            prova(f"hook ({nome}): esce comunque con 0", r_hook.returncode == 0)
+            ok_hook = bool(r_hook.stdout.decode("utf-8", "replace").strip())
+
+            prova(f"hook e esclusi.valida() d'accordo sullo stesso config.json ({nome})",
+                  ok_hook == ok_valida,
+                  f"valida.ok={ok_valida} ({dati_valida.get('errore')}) "
+                  f"hook_considera_valido={ok_hook}")
+    finally:
+        import shutil
+        shutil.rmtree(str(base), ignore_errors=True)
+
+
 def esegui(prova) -> None:
     base = Path(tempfile.mkdtemp(prefix="plancia-prova-esclusi-"))
     try:
@@ -1202,6 +1413,8 @@ def esegui(prova) -> None:
     _prova_git_locale(prova)
     _prova_mcp_scrittura(prova)
     _prova_config_rotto(prova)
+    _prova_spostata_un_giro(prova)
+    _prova_hook_valida_come_esclusi(prova)
 
     # ---------------------------------------------------------- liste vuote
     base_vuoto = Path(tempfile.mkdtemp(prefix="plancia-prova-esclusi-vuoto-"))
