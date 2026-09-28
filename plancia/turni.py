@@ -22,7 +22,7 @@ import json
 import os
 from pathlib import Path
 
-from . import config
+from . import config, esclusi
 
 # Prima si leggeva `Path.home() / ".claude" / "projects"` congelato una volta
 # per tutte all'importazione del modulo: su una macchina con
@@ -148,7 +148,7 @@ def _leggi(percorso: Path, radice: Path):
             }
 
 
-def indicizza(conn, completo: bool = False, radice: Path | None = None) -> dict:
+def indicizza(conn, completo: bool = False, radice: Path | None = None, escl: dict | None = None) -> dict:
     """Aggiorna l'indice. Incrementale: un file già visto e non cambiato si salta.
 
     Torna il conto di cosa è successo, perché un indicizzatore che dice solo
@@ -156,6 +156,7 @@ def indicizza(conn, completo: bool = False, radice: Path | None = None) -> dict:
     """
     prepara(conn)
     radice = radice or (config.CLAUDE_DIR / "projects")
+    escl = escl if escl is not None else esclusi.carica()
     if completo:
         conn.execute("DELETE FROM turni_fts")
         conn.execute("DELETE FROM turni_file")
@@ -165,6 +166,12 @@ def indicizza(conn, completo: bool = False, radice: Path | None = None) -> dict:
 
     esito = {"file_nuovi": 0, "file_aggiornati": 0, "file_saltati": 0, "turni": 0}
     for percorso in sorted(radice.rglob("*.jsonl")):
+        # Cartella o sessione privata: fuori dall'indice a testo pieno prima
+        # ancora di guardare mtime/dimensione. `radice` è la stessa che
+        # `_componenti_progetti` userà per il confronto: nelle prove che la
+        # spostano è quella, non la costante di modulo, a dover corrispondere.
+        if esclusi.trascrizione_esclusa(percorso, escl, radice=radice):
+            continue
         chiave = str(percorso)
         try:
             st = percorso.stat()

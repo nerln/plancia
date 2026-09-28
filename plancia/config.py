@@ -42,6 +42,12 @@ DEFAULTS = {
     "sync_interval_minutes": 15,
     "gh_enabled": True,
     "locale": "it",
+    # Cartelle private: tutto quello che sta sotto una di queste non deve mai
+    # entrare nell'archivio (vedi plancia/esclusi.py, che legge queste due
+    # chiavi e basta). Vuote di default: con le liste vuote il comportamento
+    # non cambia di un byte.
+    "cartelle_escluse": [],
+    "sessioni_escluse": [],
 }
 
 

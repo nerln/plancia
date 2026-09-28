@@ -12,7 +12,7 @@ import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import attribuzione, config, slot, store
+from . import attribuzione, config, esclusi, slot, store
 
 # Oltre questa soglia una riga è quasi sempre un tool_result enorme: leggerla
 # con json.loads costa più di quello che vale. Se ne ricava il minimo a byte.
@@ -174,12 +174,18 @@ def infer_project_by_keywords(text: str, keywords: dict):
 # 2. memoria di Claude
 # --------------------------------------------------------------------------
 
-def sync_memory(conn, progress=None) -> int:
+def sync_memory(conn, progress=None, escl=None) -> int:
+    escl = escl if escl is not None else esclusi.carica()
     seed = load_seed()
     methods = set(seed.get("method_memories", []))
     count = 0
     for md in sorted(config.CLAUDE_PROJECTS.glob("*/memory/*.md")):
         if md.name == "MEMORY.md":
+            continue
+        # Cartella privata: questa memoria non entra, punto. Lo stesso
+        # predicato di sync_sessions/turni.indicizza, sullo stesso percorso
+        # (i file di memoria vivono sotto lo stesso `<progetto>/` codificato).
+        if esclusi.trascrizione_esclusa(md, escl):
             continue
         try:
             text = md.read_text("utf-8", errors="replace")
@@ -664,11 +670,18 @@ def conta_percorsi(path: Path, radici, offset: int = 0) -> dict:
     return acc
 
 
-def sync_sessions(conn, keywords, progress=None, full=False) -> int:
+def sync_sessions(conn, keywords, progress=None, full=False, escl=None) -> int:
+    escl = escl if escl is not None else esclusi.carica()
     files = sorted(config.CLAUDE_PROJECTS.glob("*/*.jsonl"))
     radici, generiche = radici_e_generiche(conn)
     updated = 0
     for i, path in enumerate(files):
+        # Cartella o sessione privata: si salta prima di aprire il file, non
+        # solo prima di scrivere. Un file già visto (quindi con una riga in
+        # `sessions`) e poi escluso non viene più riletto da qui: se la riga
+        # vecchia resta, `esclusi.purga()` la toglie al giro dopo.
+        if esclusi.trascrizione_esclusa(path, escl):
+            continue
         sid = path.stem
         try:
             size = path.stat().st_size
@@ -966,7 +979,8 @@ def _git_stato(percorso: str, chiedi_stato: bool):
     return head, ramo, sporchi
 
 
-def sync_local_git(conn, progress=None) -> int:
+def sync_local_git(conn, progress=None, escl=None) -> int:
+    escl = escl if escl is not None else esclusi.carica()
     cfg = config.load_config()
     roots = [expand(r) for r in cfg.get("code_roots", [])]
     drive = drive_root()
@@ -983,7 +997,10 @@ def sync_local_git(conn, progress=None) -> int:
             continue
         for entry in entries:
             if (entry.is_dir() and not entry.name.startswith(".")
-                    and os.path.isdir(os.path.join(entry.path, ".git"))):
+                    and os.path.isdir(os.path.join(entry.path, ".git"))
+                    # Cartella privata sotto un code_root: niente scheda,
+                    # niente `git status`/`git log` nemmeno letti.
+                    and not esclusi.percorso_escluso(entry.path, escl)):
                 cartelle.append((entry.name, entry.path))
 
     limite = (datetime.now(timezone.utc)
@@ -1038,7 +1055,8 @@ def sync_local_git(conn, progress=None) -> int:
 # 6. coda degli hook (sessioni aperte in tempo reale)
 # --------------------------------------------------------------------------
 
-def drain_queue(conn, progress=None) -> int:
+def drain_queue(conn, progress=None, escl=None) -> int:
+    escl = escl if escl is not None else esclusi.carica()
     path = config.QUEUE_FILE
     if not path.exists():
         return 0
@@ -1057,6 +1075,13 @@ def drain_queue(conn, progress=None) -> int:
         event = rec.get("event", "hook")
         cwd = rec.get("cwd") or ""
         sid = rec.get("session_id") or ""
+        # bin/plancia-hook già non mette in coda una sessione esclusa, ma
+        # legge config.json a mano (non importa il pacchetto, vedi il suo
+        # docstring): questo controllo è il ripiego per una riga scritta
+        # prima che la cartella o la sessione fosse esclusa, o da una
+        # versione dell'hook senza il controllo.
+        if esclusi.sessione_esclusa(sid, cwd, escl):
+            continue
         pid = resolve_path_project(conn, cwd) if cwd else None
         titles = {"SessionStart": "sessione aperta", "SessionEnd": "sessione chiusa"}
         store.add_event(conn, ts, "hook", titles.get(event, event),
@@ -1164,14 +1189,16 @@ def sync(full=False, progress=None, skip_git=False, modo="tutto",
     result = {}
     caldo = modo in ("tutto", "caldo")
     freddo = modo in ("tutto", "freddo")
+    # Una volta per sync, non una volta per file: vedi esclusi.carica().
+    escl = esclusi.carica()
 
     keywords = sync_seed(conn, progress) if freddo else raccogli_keywords(conn)
 
     if caldo:
-        result["hook"] = drain_queue(conn, progress)
-        result["sessioni"] = sync_sessions(conn, keywords, progress, full=full)
+        result["hook"] = drain_queue(conn, progress, escl=escl)
+        result["sessioni"] = sync_sessions(conn, keywords, progress, full=full, escl=escl)
         from . import codex, lavagna
-        result["codex"] = codex.sync(conn, keywords, progress, full=full)
+        result["codex"] = codex.sync(conn, keywords, progress, full=full, escl=escl)
         result["lavagna"] = lavagna.sync(conn, progress)
 
     # Dopo il giro caldo, cosi' ricalcola anche le sessioni appena arrivate, e
@@ -1181,11 +1208,11 @@ def sync(full=False, progress=None, skip_git=False, modo="tutto",
         result["riattribuite"] = riattribuisci(conn, progress)
 
     if freddo:
-        result["memoria"] = sync_memory(conn, progress)
+        result["memoria"] = sync_memory(conn, progress, escl=escl)
         result["capacita"] = sync_capabilities(conn, progress)
         if not skip_git:
             result["repo"] = sync_repos(conn, progress)
-            result["git_locali"] = sync_local_git(conn, progress)
+            result["git_locali"] = sync_local_git(conn, progress, escl=escl)
         result["archiviati"] = cura_progetti(conn, progress)
         result["commit_attribuiti"] = attribuisci_commit(conn, progress)
         # Un lancio può morire anche senza che il server si fermi: se il
@@ -1212,10 +1239,16 @@ def sync(full=False, progress=None, skip_git=False, modo="tutto",
         # un confronto con la stringa "full", che `modo` non vale mai (tutto,
         # caldo, freddo), quindi la rilettura completa non partiva nemmeno con
         # `plancia sync --full`.
-        esito = turni.indicizza(conn, completo=full)
+        esito = turni.indicizza(conn, completo=full, escl=escl)
         result["turni_indicizzati"] = esito["turni"]
     except Exception as exc:  # un indice mancato non deve far fallire il sync
         result["turni_errore"] = f"{type(exc).__name__}: {exc}"
+
+    # Quello che un punto d'ingresso non ha visto in tempo (una cartella
+    # esclusa dopo che ci aveva già lavorato dentro, una riga in coda scritta
+    # prima della regola). No-op immediato con le liste vuote: vedi il
+    # docstring di esclusi.purga().
+    result["esclusi"] = esclusi.purga(conn, escl)
 
     store.set_meta(conn, "last_sync", inizio)
     store.set_meta(conn, "last_sync_end", store.now())

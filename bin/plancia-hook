@@ -14,7 +14,49 @@ DATA = os.environ.get("PLANCIA_HOME") or os.path.join(os.path.expanduser("~"), "
 QUEUE = os.path.join(DATA, "queue", "hooks.jsonl")
 BRIEFING = os.path.join(DATA, "briefing.md")
 DB = os.path.join(DATA, "plancia.db")
+CONFIG = os.path.join(DATA, "config.json")
 MAX_CONTEXT = 2600
+
+
+def _cartelle_e_sessioni_escluse():
+    """Copia minima di plancia/esclusi.carica(): questo script non importa il
+    pacchetto plancia (vedi il docstring del modulo, "deve essere veloce e
+    non deve mai fallire"), quindi la regola vive per forza in due posti. Se
+    una delle due cambia, cambia anche l'altra.
+
+    Non solleva mai: un config.json illeggibile o assente vuol dire "niente
+    escluso", non un errore.
+    """
+    try:
+        with open(CONFIG, encoding="utf-8") as fh:
+            cfg = json.load(fh)
+    except Exception:
+        cfg = {}
+    cartelle = []
+    for c in (cfg.get("cartelle_escluse") or []):
+        try:
+            p = os.path.realpath(os.path.expanduser(c)).rstrip("/")
+            cartelle.append(p or "/")
+        except Exception:
+            continue
+    sessioni = set(s for s in (cfg.get("sessioni_escluse") or []) if s)
+    return cartelle, sessioni
+
+
+def _escluso(cwd, session_id, cartelle, sessioni):
+    """Stessa regola di plancia/esclusi.sessione_esclusa(): per id esplicito,
+    o perché la cartella da cui la sessione è partita è esclusa (o sta sotto
+    una cartella esclusa)."""
+    if session_id and session_id in sessioni:
+        return True
+    if not cwd or not cartelle:
+        return False
+    try:
+        p = os.path.realpath(os.path.expanduser(cwd)).rstrip("/") or "/"
+    except Exception:
+        return False
+    return any(p == c or p.startswith(c + "/") for c in cartelle)
+
 
 # Le cartelle che contengono progetti ma non sono progetti. Una sessione aperta
 # qui dentro lavora a distanza dentro le cartelle figlie senza esserci mai
@@ -121,11 +163,16 @@ def run():
     }
     if not prova:
         try:
-            os.makedirs(os.path.dirname(QUEUE), exist_ok=True)
-            with open(QUEUE, "a", encoding="utf-8") as fh:
-                fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+            cartelle, sessioni = _cartelle_e_sessioni_escluse()
         except Exception:
-            pass
+            cartelle, sessioni = [], set()
+        if not _escluso(record["cwd"], record["session_id"], cartelle, sessioni):
+            try:
+                os.makedirs(os.path.dirname(QUEUE), exist_ok=True)
+                with open(QUEUE, "a", encoding="utf-8") as fh:
+                    fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+            except Exception:
+                pass
 
     if event == "SessionStart":
         try:

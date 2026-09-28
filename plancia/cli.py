@@ -613,6 +613,36 @@ def cmd_flusso(args):
         conn.close()
 
 
+def cmd_esclusi(args):
+    from . import esclusi
+    cfg = config.load_config()
+    cartelle = cfg.get("cartelle_escluse") or []
+    sessioni = cfg.get("sessioni_escluse") or []
+    print("cartelle escluse:")
+    for c in cartelle:
+        print(f"  {c}")
+    if not cartelle:
+        print("  (nessuna)")
+    print("sessioni escluse:")
+    for s in sessioni:
+        print(f"  {s}")
+    if not sessioni:
+        print("  (nessuna)")
+
+    conn = store.connect()
+    store.init_db(conn)
+    try:
+        conteggi = esclusi.conta(conn) if args.prova else esclusi.purga(conn)
+    finally:
+        conn.close()
+    etichetta = "righe che la pulizia toglierebbe" if args.prova else "righe tolte"
+    print(f"{etichetta}:")
+    if not conteggi:
+        print("  (niente da fare: nessuna cartella o sessione esclusa)")
+    for chiave, n in conteggi.items():
+        print(f"  {chiave}: {n}")
+
+
 def cmd_doctor(args):
     from . import setup_claude
     for line in setup_claude.doctor():
@@ -826,6 +856,10 @@ def build_parser():
 
     s = sub.add_parser("flusso", help="da dove arrivano i dati e quanto sono freschi")
     s.set_defaults(func=cmd_flusso)
+
+    s = sub.add_parser("esclusi", help="cartelle e sessioni private: elenco e pulizia")
+    s.add_argument("--prova", action="store_true", help="conta senza toccare l'archivio")
+    s.set_defaults(func=cmd_esclusi)
 
     s = sub.add_parser("doctor", help="controlla lo stato")
     s.set_defaults(func=cmd_doctor)

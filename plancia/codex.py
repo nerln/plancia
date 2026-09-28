@@ -13,7 +13,7 @@ import os
 import re
 from pathlib import Path
 
-from . import config, store
+from . import config, esclusi, store
 
 CODEX_HOME = Path(os.environ.get("CODEX_HOME", config.HOME / ".codex"))
 SESSIONI = CODEX_HOME / "sessions"
@@ -107,8 +107,9 @@ def leggi(path: Path, offset: int) -> dict:
     return acc
 
 
-def sync(conn, keywords, progress=None, full=False) -> int:
+def sync(conn, keywords, progress=None, full=False, escl=None) -> int:
     from . import ingest  # evita l'import circolare
+    escl = escl if escl is not None else esclusi.carica()
     if not SESSIONI.is_dir():
         return 0
     nomi = titoli()
@@ -126,6 +127,12 @@ def sync(conn, keywords, progress=None, full=False) -> int:
         if not m:
             continue
         sid = m.group(1)
+        # Per id: si salta subito, senza nemmeno leggere il file. Il rollout
+        # di Codex non ha la cwd nel nome (a differenza delle trascrizioni di
+        # Claude Code, dove la cartella di progetto e' gia' nel percorso):
+        # quella si scopre solo leggendo le prime righe, piu' sotto.
+        if escl["sessioni"] and sid in escl["sessioni"]:
+            continue
         row = conn.execute(
             "SELECT id, bytes_scanned, n_user, n_assistant, n_tools, in_tokens, out_tokens, "
             "scambi, title, first_prompt, started_at, project_id, models "
@@ -149,6 +156,15 @@ def sync(conn, keywords, progress=None, full=False) -> int:
         inizio = tieni("started_at") or acc["ts_min"] or ingest.iso(mtime)
         fine = acc["ts_max"] or ingest.iso(mtime)
         cwd = acc["cwd"]
+
+        # Per cwd: si scopre solo ora, dopo aver letto le prime righe del
+        # rollout. Se una sessione già in archivio (`row` non None) è ripresa
+        # da un offset avanzato in un giro in cui la cwd non ricompare più
+        # (già letta in un giro precedente), questo controllo non la vede: la
+        # riga vecchia resta un giro in più, e la toglie `esclusi.purga()`,
+        # che legge la cwd salvata invece di quella di questo solo giro.
+        if cwd and esclusi.percorso_escluso(cwd, escl):
+            continue
 
         pid = row["project_id"] if row else None
         if cwd:
