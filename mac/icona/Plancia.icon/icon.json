@@ -1,0 +1,47 @@
+{
+  "fill": {
+    "automatic-gradient": "srgb:0.07059,0.08627,0.12157,1.00000"
+  },
+  "groups": [
+    {
+      "layers": [
+        {
+          "glass": true,
+          "image-name": "sud.svg",
+          "name": "sud",
+          "position": {
+            "scale": 1.2,
+            "translation-in-points": [
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "glass": true,
+          "image-name": "nord.svg",
+          "name": "nord",
+          "position": {
+            "scale": 1.2,
+            "translation-in-points": [
+              0,
+              0
+            ]
+          }
+        }
+      ],
+      "lighting": "combined",
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0.5
+      },
+      "translucency": {
+        "enabled": true,
+        "value": 0.5
+      }
+    }
+  ],
+  "supported-platforms": {
+    "squares": "shared"
+  }
+}
