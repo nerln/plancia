@@ -148,6 +148,32 @@ def sync(conn, keywords, progress=None, full=False, escl=None) -> int:
         except OSError:
             continue
 
+        # Una ripresa di un thread e' un file NUOVO con un ALTRO uuid come
+        # session_id (session_meta.session_id porta invece il thread di
+        # partenza, quello che l'utente vede nell'app: vedi `leggi()`).
+        # Escludere solo per `sid` (il controllo per id sopra) esclude quindi
+        # il file originale ma non le riprese successive, che hanno un sid
+        # tutto loro. Si controlla anche il thread (e, per sicurezza, l'id
+        # letto dal `session_meta` di QUESTO file, che di norma coincide con
+        # `sid` ma non e' garantito), oltre alla cwd come prima.
+        cwd = acc["cwd"]
+        candidati_id = {c for c in (acc.get("id"), acc.get("thread")) if c}
+        escluso_per_id = bool(escl["sessioni"] and candidati_id & escl["sessioni"])
+        # Per cwd: si scopre solo ora, dopo aver letto le prime righe del
+        # rollout. Se una sessione già in archivio (`row` non None) è ripresa
+        # da un offset avanzato in un giro in cui la cwd non ricompare più
+        # (già letta in un giro precedente), questo controllo non la vede: la
+        # riga vecchia resta un giro in più, e la toglie `esclusi.purga()`,
+        # che legge la cwd (o il thread, salvato nella colonna dedicata)
+        # salvata invece di quella di questo solo giro.
+        escluso_per_cwd = bool(cwd and esclusi.percorso_escluso(cwd, escl))
+        if escluso_per_id or escluso_per_cwd:
+            for cid in candidati_id | {sid}:
+                esclusi.segna_scoperto(conn, cid, escl)
+            if row is not None:
+                conn.execute("DELETE FROM sessions WHERE session_id=?", (sid,))
+            continue
+
         vecchio = (lambda c: row[c] if row else 0) if offset else (lambda c: 0)
         tieni = (lambda c: row[c] if row else None) if offset else (lambda c: None)
         titolo = (nomi.get(acc["thread"] or "") or nomi.get(acc["id"] or "")
@@ -155,16 +181,6 @@ def sync(conn, keywords, progress=None, full=False, escl=None) -> int:
         prompt = tieni("first_prompt") or acc["prompt"]
         inizio = tieni("started_at") or acc["ts_min"] or ingest.iso(mtime)
         fine = acc["ts_max"] or ingest.iso(mtime)
-        cwd = acc["cwd"]
-
-        # Per cwd: si scopre solo ora, dopo aver letto le prime righe del
-        # rollout. Se una sessione già in archivio (`row` non None) è ripresa
-        # da un offset avanzato in un giro in cui la cwd non ricompare più
-        # (già letta in un giro precedente), questo controllo non la vede: la
-        # riga vecchia resta un giro in più, e la toglie `esclusi.purga()`,
-        # che legge la cwd salvata invece di quella di questo solo giro.
-        if cwd and esclusi.percorso_escluso(cwd, escl):
-            continue
 
         pid = row["project_id"] if row else None
         if cwd:
@@ -176,8 +192,8 @@ def sync(conn, keywords, progress=None, full=False, escl=None) -> int:
         conn.execute(
             "INSERT INTO sessions(session_id, project_id, file, bytes_scanned, file_size, "
             "cwd, title, first_prompt, started_at, ended_at, n_user, n_assistant, n_tools, "
-            "models, tools, in_tokens, out_tokens, agent, scambi, updated_at) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,'{}',?,?,'codex',?,?) "
+            "models, tools, in_tokens, out_tokens, agent, scambi, thread, updated_at) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,'{}',?,?,'codex',?,?,?) "
             "ON CONFLICT(session_id) DO UPDATE SET project_id=excluded.project_id, "
             "bytes_scanned=excluded.bytes_scanned, file_size=excluded.file_size, "
             "cwd=COALESCE(excluded.cwd, sessions.cwd), title=excluded.title, "
@@ -185,13 +201,15 @@ def sync(conn, keywords, progress=None, full=False, escl=None) -> int:
             "n_user=excluded.n_user, n_assistant=excluded.n_assistant, "
             "n_tools=excluded.n_tools, models=excluded.models, in_tokens=excluded.in_tokens, "
             "out_tokens=excluded.out_tokens, agent='codex', scambi=excluded.scambi, "
+            "thread=COALESCE(excluded.thread, sessions.thread), "
             "updated_at=excluded.updated_at",
             (sid, pid, str(path), acc["offset"], size, cwd, titolo,
              (prompt or "")[:2000], inizio, fine,
              vecchio("n_user") + acc["n_user"], vecchio("n_assistant") + acc["n_assistant"],
              vecchio("n_tools") + acc["n_tools"], json.dumps(modelli),
              vecchio("in_tokens") + acc["in_tokens"], vecchio("out_tokens") + acc["out_tokens"],
-             vecchio("scambi") + acc["scambi"], store.now()))
+             vecchio("scambi") + acc["scambi"], acc.get("thread") or acc.get("id") or None,
+             store.now()))
 
         etichetta = titolo or (prompt or "sessione Codex")[:90]
         store.add_event(conn, inizio, "sessione", etichetta,

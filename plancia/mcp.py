@@ -279,6 +279,44 @@ def _fmt(data) -> str:
     return json.dumps(data, ensure_ascii=False, indent=2, default=str)
 
 
+# Le azioni che scrivono qualcosa di persistente. `plancia_riprendi` scrive
+# solo quando `background=True` (dispatcha un lancio): senza, riporta solo lo
+# stato, ed è un'azione di lettura come le altre.
+_SCRITTURE = {"plancia_task_add", "plancia_task_update", "plancia_post_add",
+              "plancia_post_update", "plancia_log", "plancia_project_update",
+              "plancia_manda"}
+
+
+def _sessione_bloccata(conn):
+    """Il motivo per cui la sessione che sta chiamando ADESSO non può
+    scrivere, o `None` se può.
+
+    Il server MCP di una sessione aperta in un contenitore e poi SPOSTATA con
+    `change_directory` (o un tool equivalente) può avere ancora la cwd di
+    PARTENZA: `sessione.corrente()` legge `os.getcwd()` del PROCESSO server,
+    fissata al suo avvio, non la cwd "logica" della conversazione che lo
+    ospita. Il solo controllo sulla cwd di adesso non basterebbe in quel
+    caso: si controlla anche il session_id contro gli id scoperti dall'ultimo
+    `plancia sync` (una sessione aperta altrove, ma il cui contenuto rivela
+    poi una cartella privata, viene scoperta da `ingest.sync_sessions` e
+    ricordata — vedi `esclusi.carica(conn=...)`), così anche una sessione il
+    cui server non ha mai visto la cwd giusta risulta comunque bloccata, con
+    un giro di ritardo rispetto all'ultimo sync.
+    """
+    try:
+        s = sessione.corrente()
+    except Exception:
+        return None
+    from . import esclusi as _esclusi
+    escl = _esclusi.carica(conn=conn)
+    if not _esclusi.configurato(escl):
+        return None
+    if _esclusi.sessione_esclusa(s.get("session_id"), s.get("cwd"), escl):
+        return ("questa sessione lavora su una cartella o un id privati "
+                "(esclusi da Plancia): niente scritture da qui.")
+    return None
+
+
 def call_tool(name: str, args: dict) -> str:
     # Il dispatcher: `plancia` con un'azione diventa il tool di prima che aveva
     # quel nome, e da li' in giu' non cambia niente. Tenere una catena sola vuol
@@ -300,6 +338,13 @@ def call_tool(name: str, args: dict) -> str:
     conn = store.connect()
     store.init_db(conn)
     try:
+        scrive_ora = name in _SCRITTURE or (
+            name == "plancia_riprendi" and bool(args.get("background")))
+        if scrive_ora:
+            motivo = _sessione_bloccata(conn)
+            if motivo:
+                raise actions.BadInput(motivo)
+
         if name == "plancia_briefing":
             return briefing.build(conn, args.get("project"))
 

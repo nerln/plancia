@@ -9,7 +9,7 @@ import json
 import os
 import re
 
-from . import config, ingest, store
+from . import config, esclusi, ingest, store
 
 STOP = {"the", "and", "for", "with", "una", "che", "per", "con", "del", "della",
         "app", "test", "main", "code", "tool", "repo", "project", "progetto"}
@@ -31,6 +31,7 @@ def titolo(slug: str) -> str:
 
 def raccogli() -> dict:
     progetti = {}
+    escl = esclusi.carica()
 
     def voce(key):
         key = store.slugify(key)
@@ -69,6 +70,14 @@ def raccogli() -> dict:
                 continue
             if not os.path.isdir(os.path.join(e.path, ".git")):
                 continue
+            # Cartella privata: niente scheda in seed.json. `plancia init`
+            # scrive un file che l'utente poi corregge a mano e guarda; non
+            # è una scrittura nel database (quella la fa sync_seed, che ha
+            # il suo stesso controllo), ma un nome e delle parole chiave
+            # scritti lì sono comunque testo che non deve uscire da questa
+            # cartella.
+            if esclusi.percorso_escluso(e.path, escl):
+                continue
             v = voce(e.name)
             v["links"].setdefault("path", []).append(
                 e.path.replace(drive, "DRIVE") if drive and e.path.startswith(drive) else
@@ -79,6 +88,8 @@ def raccogli() -> dict:
     # 3. memoria di Claude, tipo progetto
     for md in sorted(config.CLAUDE_PROJECTS.glob("*/memory/*.md")):
         if md.name == "MEMORY.md":
+            continue
+        if esclusi.trascrizione_esclusa(md, escl):
             continue
         try:
             meta, _ = ingest.read_frontmatter(md.read_text("utf-8", errors="replace")[:2500])

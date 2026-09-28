@@ -615,7 +615,12 @@ def cmd_flusso(args):
 
 def cmd_esclusi(args):
     from . import esclusi
-    cfg = config.load_config()
+    cfg = config.load_config_verificata()
+    if not cfg.get("esclusi_ok", True):
+        print(f"config.json non valido: {cfg.get('esclusi_errore')}")
+        print("fail-closed: nessun conteggio, nessuna pulizia — i dati non sono affidabili "
+              "finché il file non torna a leggersi e a validare.")
+        return
     cartelle = cfg.get("cartelle_escluse") or []
     sessioni = cfg.get("sessioni_escluse") or []
     print("cartelle escluse:")
@@ -632,7 +637,8 @@ def cmd_esclusi(args):
     conn = store.connect()
     store.init_db(conn)
     try:
-        conteggi = esclusi.conta(conn) if args.prova else esclusi.purga(conn)
+        escl = esclusi.carica(cfg, conn=conn)
+        conteggi = esclusi.conta(conn, escl) if args.prova else esclusi.purga(conn, escl)
     finally:
         conn.close()
     etichetta = "righe che la pulizia toglierebbe" if args.prova else "righe tolte"

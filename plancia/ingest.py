@@ -113,9 +113,11 @@ def load_seed() -> dict:
     return {"projects": [], "method_memories": []}
 
 
-def sync_seed(conn, progress=None) -> dict:
+def sync_seed(conn, progress=None, escl=None) -> dict:
+    escl = escl if escl is not None else esclusi.carica(conn=conn)
     seed = load_seed()
     keywords = {}
+    saltati = 0
     for spec in seed.get("projects", []):
         pid = store.upsert_project(
             conn,
@@ -129,11 +131,25 @@ def sync_seed(conn, progress=None) -> dict:
         )
         for kind, values in (spec.get("links") or {}).items():
             for value in values:
-                store.link_project(conn, pid, kind, expand(value) if kind == "path" else value)
+                if kind == "path":
+                    percorso = expand(value)
+                    # Un seed.json corretto a mano puo' ancora nominare una
+                    # cartella diventata privata dopo: niente link, o la
+                    # scheda ridiventa visibile a ogni giro (init_seed.raccogli
+                    # gia' non la rimette in un seed nuovo, ma un seed
+                    # esistente non si riscrive da solo).
+                    if esclusi.percorso_escluso(percorso, escl):
+                        saltati += 1
+                        continue
+                    store.link_project(conn, pid, kind, percorso)
+                else:
+                    store.link_project(conn, pid, kind, value)
         if spec.get("keywords"):
             keywords[pid] = spec["keywords"]
     conn.commit()
-    log(f"progetti di riferimento: {len(seed.get('projects', []))}", progress)
+    log(f"progetti di riferimento: {len(seed.get('projects', []))}"
+        + (f" ({saltati} link di percorso saltati: cartella privata)" if saltati else ""),
+        progress)
     return keywords
 
 
@@ -537,7 +553,7 @@ def scan_session_file(path: Path, start_offset: int, radici=None) -> dict:
     perche' i `tool_use` vengono aperti comunque per contare i tool.
     """
     acc = {
-        "offset": start_offset, "cwd": None, "branch": None, "title": None,
+        "offset": start_offset, "cwd": None, "cwds": set(), "branch": None, "title": None,
         "first_prompt": None, "queued_prompt": None, "ts_min": None, "ts_max": None,
         "n_user": 0, "n_assistant": 0, "n_tools": 0, "models": set(),
         "tools": {}, "in_tokens": 0, "out_tokens": 0, "radici": {}, "n_percorsi": 0,
@@ -593,7 +609,19 @@ def scan_session_file(path: Path, start_offset: int, radici=None) -> dict:
                     acc["ts_min"] = ts
                 if acc["ts_max"] is None or ts > acc["ts_max"]:
                     acc["ts_max"] = ts
-            acc["cwd"] = rec.get("cwd") or acc["cwd"]
+            cwd_riga = rec.get("cwd")
+            if cwd_riga:
+                # Ogni cwd vista, non solo l'ultima: una sessione aperta in
+                # un contenitore normale e poi spostata (da un tool che
+                # cambia la cwd, non da un `cd` di shell) dentro una
+                # cartella privata porta righe con cwd diverse nello STESSO
+                # file. Guardare solo l'ultima varrebbe anche per la
+                # cartella di apertura, e la riga precedente (dov'era
+                # davvero) non si vedrebbe mai; guardare solo la prima non
+                # vedrebbe mai lo spostamento. sync_sessions() controlla
+                # tutte quelle raccolte qui.
+                acc["cwd"] = cwd_riga
+                acc["cwds"].add(cwd_riga)
             acc["branch"] = rec.get("gitBranch") or acc["branch"]
 
             msg = rec.get("message") or {}
@@ -681,6 +709,15 @@ def sync_sessions(conn, keywords, progress=None, full=False, escl=None) -> int:
         # `sessions`) e poi escluso non viene più riletto da qui: se la riga
         # vecchia resta, `esclusi.purga()` la toglie al giro dopo.
         if esclusi.trascrizione_esclusa(path, escl):
+            # Escluso per percorso: cartella di progetto o id di sessione
+            # gia' noti. Si registra comunque lo stem come "scoperto" (se
+            # non lo e' gia'), cosi' anche una sessione esclusa per sola
+            # cartella diventa visibile a chi (lavagna, il server MCP) non
+            # puo' rifare da solo il confronto sul percorso codificato ma sa
+            # solo l'id nudo della sessione.
+            sid_saltato = path.stem
+            if sid_saltato not in escl["sessioni"]:
+                esclusi.segna_scoperto(conn, sid_saltato, escl)
             continue
         sid = path.stem
         try:
@@ -691,7 +728,7 @@ def sync_sessions(conn, keywords, progress=None, full=False, escl=None) -> int:
         row = conn.execute(
             "SELECT id, bytes_scanned, file_size, models, tools, title, first_prompt, "
             "started_at, n_user, n_assistant, n_tools, in_tokens, out_tokens, project_id, "
-            "radici_toccate FROM sessions WHERE session_id=?", (sid,)
+            "radici_toccate, cwd FROM sessions WHERE session_id=?", (sid,)
         ).fetchone()
         offset = 0 if (full or row is None) else (row["bytes_scanned"] or 0)
         if offset > size:
@@ -702,6 +739,27 @@ def sync_sessions(conn, keywords, progress=None, full=False, escl=None) -> int:
         try:
             acc = scan_session_file(path, offset, radici)
         except OSError:
+            continue
+
+        # Sessione spostata: aperta in una cartella NORMALE (altrimenti
+        # `trascrizione_esclusa` l'avrebbe gia' fermata sopra, per percorso)
+        # e poi passata, con un tool che cambia la cwd, dentro una cartella
+        # privata. Si controllano tutte le cwd viste in QUESTA finestra
+        # incrementale, piu' quella gia' salvata in `sessions.cwd` se la
+        # riga esiste gia' (un giro puo' vedere solo le righe nuove, e la
+        # riga con la cwd privata potrebbe essere stata letta in un giro
+        # precedente a questa correzione). Se una qualsiasi risulta esclusa,
+        # niente attribuzione, niente scrittura: si cancella la riga se
+        # c'era gia', e si ricorda l'id per sempre (segna_scoperto), cosi'
+        # turni.indicizza, lavagna.sync, il server MCP e questo stesso sync,
+        # da qui in poi, la vedono senza dover rileggere il file da capo.
+        cwds_da_controllare = set(acc["cwds"])
+        if row is not None and row["cwd"]:
+            cwds_da_controllare.add(row["cwd"])
+        if any(esclusi.percorso_escluso(c, escl) for c in cwds_da_controllare if c):
+            esclusi.segna_scoperto(conn, sid, escl)
+            if row is not None:
+                conn.execute("DELETE FROM sessions WHERE session_id=?", (sid,))
             continue
 
         # Se si è ripartiti da zero i totali di prima non vanno sommati, o una
@@ -880,8 +938,21 @@ def sync_repos(conn, progress=None) -> int:
         return 0
     owner = run(["gh", "api", "user", "--jq", ".login"], timeout=20) or cfg.get("gh_user", "")
     if owner and owner != cfg.get("gh_user"):
-        cfg["gh_user"] = owner
-        config.save_config(cfg)
+        # `cfg` qui sopra viene da `config.load_config()`, che su un
+        # config.json che esiste ma non fa parsing (una virgola di troppo)
+        # inghiotte l'errore e torna i soli default: scriverlo indietro
+        # cancellerebbe in silenzio tutto quello che c'era scritto a mano,
+        # `cartelle_escluse` compresa. Si rilegge con la validazione prima
+        # di riscrivere, e se non torna pulita non si tocca il file.
+        fresco = config.load_config_verificata()
+        if fresco.get("esclusi_ok", True):
+            fresco["gh_user"] = owner
+            fresco.pop("esclusi_ok", None)
+            fresco.pop("esclusi_errore", None)
+            config.save_config(fresco)
+        else:
+            log(f"config.json non valido, non lo riscrivo: {fresco.get('esclusi_errore')}",
+                progress)
 
     cutoff = (datetime.now(timezone.utc) - timedelta(days=180)).strftime("%Y-%m-%dT%H:%M:%SZ")
     fresh = 0
@@ -1189,17 +1260,41 @@ def sync(full=False, progress=None, skip_git=False, modo="tutto",
     result = {}
     caldo = modo in ("tutto", "caldo")
     freddo = modo in ("tutto", "freddo")
-    # Una volta per sync, non una volta per file: vedi esclusi.carica().
-    escl = esclusi.carica()
 
-    keywords = sync_seed(conn, progress) if freddo else raccogli_keywords(conn)
+    # Una volta per sync, non una volta per file: vedi esclusi.carica(). Si
+    # legge con la validazione (config.load_config_verificata()), non con
+    # config.load_config(): un config.json che esiste ma non fa parsing, o
+    # con "cartelle_escluse" scritta come una stringa invece che una lista,
+    # non deve MAI tradursi in "niente è escluso" (misurato: iterare una
+    # stringa carattere per carattere produce delle "cartelle" di un
+    # carattere solo, e conta() darebbe un conto di pulizia rovinoso, mai
+    # quello vero). Fail-closed: se non si può fidarsi della configurazione,
+    # tutto quello che leggerebbe cose potenzialmente private (sessioni,
+    # turni, memoria, Codex, lavagna, git locali) si salta, e la purga non
+    # gira: meglio un sync che non aggiorna niente di quella parte, per un
+    # giro, che uno che fa entrare un privato perché non sapeva di doverlo
+    # escludere.
+    cfg_verificata = config.load_config_verificata()
+    escl_ok = cfg_verificata.get("esclusi_ok", True)
+    if not escl_ok:
+        result["esclusi_errore"] = cfg_verificata.get("esclusi_errore")
+        log(f"config.json non valido per le cartelle/sessioni private: "
+            f"{result['esclusi_errore']} — salto sessioni, turni, memoria, Codex, "
+            "lavagna e git locali; non lancio la pulizia", progress)
+    escl = esclusi.carica(cfg_verificata, conn=conn) if escl_ok else None
+
+    keywords = (sync_seed(conn, progress, escl=escl) if (freddo and escl_ok)
+                else raccogli_keywords(conn))
 
     if caldo:
-        result["hook"] = drain_queue(conn, progress, escl=escl)
-        result["sessioni"] = sync_sessions(conn, keywords, progress, full=full, escl=escl)
-        from . import codex, lavagna
-        result["codex"] = codex.sync(conn, keywords, progress, full=full, escl=escl)
-        result["lavagna"] = lavagna.sync(conn, progress)
+        if escl_ok:
+            result["hook"] = drain_queue(conn, progress, escl=escl)
+            result["sessioni"] = sync_sessions(conn, keywords, progress, full=full, escl=escl)
+            from . import codex, lavagna
+            result["codex"] = codex.sync(conn, keywords, progress, full=full, escl=escl)
+            result["lavagna"] = lavagna.sync(conn, progress, escl=escl)
+        else:
+            result["hook"] = result["sessioni"] = result["codex"] = result["lavagna"] = 0
 
     # Dopo il giro caldo, cosi' ricalcola anche le sessioni appena arrivate, e
     # fuori dai due giri perche' non e' una fonte: e' una rilettura di quello
@@ -1208,11 +1303,12 @@ def sync(full=False, progress=None, skip_git=False, modo="tutto",
         result["riattribuite"] = riattribuisci(conn, progress)
 
     if freddo:
-        result["memoria"] = sync_memory(conn, progress, escl=escl)
+        result["memoria"] = sync_memory(conn, progress, escl=escl) if escl_ok else 0
         result["capacita"] = sync_capabilities(conn, progress)
         if not skip_git:
             result["repo"] = sync_repos(conn, progress)
-            result["git_locali"] = sync_local_git(conn, progress, escl=escl)
+            result["git_locali"] = (sync_local_git(conn, progress, escl=escl)
+                                     if escl_ok else 0)
         result["archiviati"] = cura_progetti(conn, progress)
         result["commit_attribuiti"] = attribuisci_commit(conn, progress)
         # Un lancio può morire anche senza che il server si fermi: se il
@@ -1233,22 +1329,29 @@ def sync(full=False, progress=None, skip_git=False, modo="tutto",
     # costa una stat. Il primo giro su 1283 transcript ha preso 3,8 secondi.
     # Sta fuori dal blocco freddo perche' e' la cosa che rende la ricerca utile,
     # e va aggiornata anche nei sync leggeri.
-    try:
-        from . import turni
-        # `full` e' il parametro che chiede di rileggere tutto: prima qui c'era
-        # un confronto con la stringa "full", che `modo` non vale mai (tutto,
-        # caldo, freddo), quindi la rilettura completa non partiva nemmeno con
-        # `plancia sync --full`.
-        esito = turni.indicizza(conn, completo=full, escl=escl)
-        result["turni_indicizzati"] = esito["turni"]
-    except Exception as exc:  # un indice mancato non deve far fallire il sync
-        result["turni_errore"] = f"{type(exc).__name__}: {exc}"
+    if escl_ok:
+        try:
+            from . import turni
+            # `full` e' il parametro che chiede di rileggere tutto: prima qui c'era
+            # un confronto con la stringa "full", che `modo` non vale mai (tutto,
+            # caldo, freddo), quindi la rilettura completa non partiva nemmeno con
+            # `plancia sync --full`.
+            esito = turni.indicizza(conn, completo=full, escl=escl)
+            result["turni_indicizzati"] = esito["turni"]
+        except Exception as exc:  # un indice mancato non deve far fallire il sync
+            result["turni_errore"] = f"{type(exc).__name__}: {exc}"
+    else:
+        result["turni_indicizzati"] = 0
 
     # Quello che un punto d'ingresso non ha visto in tempo (una cartella
     # esclusa dopo che ci aveva già lavorato dentro, una riga in coda scritta
-    # prima della regola). No-op immediato con le liste vuote: vedi il
-    # docstring di esclusi.purga().
-    result["esclusi"] = esclusi.purga(conn, escl)
+    # prima della regola). Solo se c'è davvero qualcosa di configurato, così
+    # con le liste vuote l'esito del sync non cambia di un byte (nessuna
+    # chiave "esclusi" in più). E solo se la configurazione si è letta bene:
+    # una purga con un `escl` a metà (o assente) potrebbe non trovare quello
+    # che dovrebbe, o peggio confondere "niente configurato" con "non lo so".
+    if escl_ok and esclusi.configurato(escl):
+        result["esclusi"] = esclusi.purga(conn, escl)
 
     store.set_meta(conn, "last_sync", inizio)
     store.set_meta(conn, "last_sync_end", store.now())

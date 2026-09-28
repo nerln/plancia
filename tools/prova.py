@@ -89,13 +89,13 @@ def main():
     conn.commit()
     vero_codex, vero_claude = lavagna.da_codex, lavagna.da_claude
 
-    def codex_rotto(esito=None):
+    def codex_rotto(esito=None, escl=None):
         if esito is not None:
             esito["ok"] = False
         return []
 
     lavagna.da_codex = codex_rotto
-    lavagna.da_claude = lambda esito=None: []
+    lavagna.da_claude = lambda esito=None, escl=None: []
     lavagna.sync(conn)
     lavagna.da_codex, lavagna.da_claude = vero_codex, vero_claude
     dopo = conn.execute("SELECT COUNT(*) FROM agenda WHERE fonte='codex'").fetchone()[0]

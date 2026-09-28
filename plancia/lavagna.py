@@ -36,22 +36,32 @@ APERTI = ("aperto", "in corso", "bloccato")
 # le tre fonti
 # --------------------------------------------------------------------------
 
-def da_claude(esito=None) -> list:
+def da_claude(esito=None, escl=None) -> list:
     """Un file per task, una cartella per sessione.
 
     `esito` è un dizionario in cui si segna se la lettura è riuscita. Serve a
     chi cancella: una fonte che non ha risposto non vuol dire che le sue voci
     non esistono più.
+
+    `escl` (l'insieme calcolato da `esclusi.carica()`) salta le cartelle il
+    cui nome — l'id della sessione, qui è sempre l'id nudo, senza percorso —
+    è fra le sessioni escluse: configurate a mano o scoperte a runtime (una
+    sessione aperta in una cartella privata, o spostata lì durante il lavoro:
+    vedi plancia/esclusi.py e ingest.sync_sessions). Un todo puo' essere
+    rivelatore quanto una trascrizione.
     """
     fuori = []
     if not TASK_CLAUDE.is_dir():
         if esito is not None:
             esito["ok"] = False
         return fuori
+    sessioni_escluse = (escl or {}).get("sessioni") or ()
     for cartella in sorted(TASK_CLAUDE.iterdir()):
         if not cartella.is_dir():
             continue
         sessione = cartella.name
+        if sessione in sessioni_escluse:
+            continue
         for f in sorted(cartella.glob("*.json")):
             try:
                 d = json.loads(f.read_text("utf-8"))
@@ -75,8 +85,13 @@ def da_claude(esito=None) -> list:
     return fuori
 
 
-def da_codex(esito=None) -> list:
-    """Gli obiettivi di Codex, letti dal suo SQLite senza toccarlo."""
+def da_codex(esito=None, escl=None) -> list:
+    """Gli obiettivi di Codex, letti dal suo SQLite senza toccarlo.
+
+    `escl`: salta gli obiettivi il cui `thread_id` è fra le sessioni escluse
+    (l'obiettivo di Codex è la richiesta intera dell'utente: è testo quanto
+    o più di un todo di Claude Code).
+    """
     if not GOALS_CODEX.exists():
         if esito is not None:
             esito["ok"] = False
@@ -94,8 +109,11 @@ def da_codex(esito=None) -> list:
         if esito is not None:
             esito["ok"] = False
         return []
+    sessioni_escluse = (escl or {}).get("sessioni") or ()
     fuori = []
     for r in righe:
+        if r["thread_id"] in sessioni_escluse:
+            continue
         obiettivo = (r["objective"] or "").strip()
         if not obiettivo:
             continue
@@ -159,20 +177,27 @@ def _da_ms(ms) -> str:
 # la lavagna
 # --------------------------------------------------------------------------
 
-def sync(conn, progress=None) -> int:
+def sync(conn, progress=None, escl=None) -> int:
     """Rilegge le tre liste e le riscrive nella lavagna.
 
     Le voci che una fonte non riporta più vengono tolte: se hai cancellato un
     task in Claude Code non deve restare qui a fare finta di esistere.
+
+    `escl`, se non dato, si calcola da sé (`esclusi.carica(conn=conn)`): chi
+    chiama da `ingest.sync()` passa invece quello già calcolato una volta per
+    tutto il giro (che include anche gli id scoperti a runtime nello STESSO
+    giro, per esempio da `sync_sessions` un momento prima).
     """
     # Un archivio dimostrativo non deve andare a leggere le liste vere della
     # macchina: serve a far vedere l'interfaccia, non il lavoro di chi guarda.
     if store.get_meta(conn, "demo") == "1":
         return 0
 
-    from . import ingest
+    from . import esclusi as _esclusi, ingest
+    escl = escl if escl is not None else _esclusi.carica(conn=conn)
     esiti = {"claude": {"ok": True}, "codex": {"ok": True}, "plancia": {"ok": True}}
-    voci = (da_claude(esiti["claude"]) + da_codex(esiti["codex"]) + da_plancia(conn))
+    voci = (da_claude(esiti["claude"], escl) + da_codex(esiti["codex"], escl)
+            + da_plancia(conn))
 
     # dove possibile la voce eredita il progetto della sessione che l'ha creata
     per_sessione = {r["session_id"]: r["project_id"] for r in conn.execute(

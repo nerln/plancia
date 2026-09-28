@@ -252,7 +252,16 @@ AGGIUNTE = {
     # la cartella da cui e' stata aperta quasi sempre non lo dice
     "sessions": (("agent", "TEXT DEFAULT 'claude'"), ("scambi", "INTEGER DEFAULT 0"),
                  ("dir_dedotta", "TEXT"), ("dedotto_da", "TEXT"),
-                 ("n_percorsi", "INTEGER DEFAULT 0"), ("radici_toccate", "TEXT")),
+                 ("n_percorsi", "INTEGER DEFAULT 0"), ("radici_toccate", "TEXT"),
+                 # Il thread Codex di partenza (session_meta.session_id): una
+                 # ripresa e' un file nuovo con un ALTRO uuid come session_id,
+                 # ma il thread resta lo stesso (vedi plancia/codex.py). Senza
+                 # questa colonna, escludere un thread dopo che una sua ripresa
+                 # e' gia' entrata non da' a `esclusi.purga()` niente a cui
+                 # aggrapparsi: sessions non porta il thread da nessun'altra
+                 # parte. NULL per le sessioni Claude Code, che non hanno
+                 # questo concetto.
+                 ("thread", "TEXT")),
     # un task non è solo una nota: può dire a chi tocca, come farlo e dove.
     # "host" dice da quale macchina è nato (Mac o Windows, nel sistema a due
     # assistenti): riprendi.stato() lo confronta con la macchina di adesso per

@@ -19,28 +19,67 @@ MAX_CONTEXT = 2600
 
 
 def _cartelle_e_sessioni_escluse():
-    """Copia minima di plancia/esclusi.carica(): questo script non importa il
-    pacchetto plancia (vedi il docstring del modulo, "deve essere veloce e
-    non deve mai fallire"), quindi la regola vive per forza in due posti. Se
-    una delle due cambia, cambia anche l'altra.
+    """Copia minima di plancia/esclusi.carica() + plancia/esclusi.valida():
+    questo script non importa il pacchetto plancia (vedi il docstring del
+    modulo, "deve essere veloce e non deve mai fallire"), quindi la regola
+    vive per forza in due posti. Se una delle due cambia, cambia anche
+    l'altra.
 
-    Non solleva mai: un config.json illeggibile o assente vuol dire "niente
-    escluso", non un errore.
+    Torna `(cartelle, sessioni, valido)`. Non solleva mai. `valido=True` con
+    le liste vuote vuol dire "niente configurato" (config.json assente, o
+    assente la chiave): comportamento identico a prima. `valido=False` vuol
+    dire che config.json esiste ma non ci si può fidare (non si legge, non è
+    JSON, non è un oggetto, una delle due chiavi non è una lista di
+    stringhe): FAIL-CLOSED, non "niente escluso" — un config.json con
+    "cartelle_escluse" scritta come una stringa invece che una lista non deve
+    mai tradursi in "via libera a tutto" (misurato: iterare una stringa dà
+    dei singoli caratteri come "cartelle", e un confronto su quelli non
+    esclude niente di reale). Chi chiama, con `valido=False`, non scrive
+    niente in coda: meglio perdere una sessione per un giro (il sync la
+    recupera comunque dal transcript, che l'hook non tocca) che rischiarne
+    una privata perché la configurazione non si è capita.
+
+    Non fa la «grafia vera» del percorso (plancia/esclusi._grafia_vera):
+    quella cammina il filesystem componente per componente, e l'hook non deve
+    mai costare più di uno stat in croce. La differenza pratica è che qui una
+    cartella scritta con le maiuscole sbagliate rispetto al disco (raro: di
+    solito è chi scrive la sessione, cioè il sistema operativo, a dare la cwd
+    già nella grafia vera) non verrebbe riconosciuta; il sync la ripulirebbe
+    comunque al giro dopo con la validazione piena.
     """
+    if not os.path.exists(CONFIG):
+        return [], set(), True
     try:
         with open(CONFIG, encoding="utf-8") as fh:
-            cfg = json.load(fh)
+            testo = fh.read()
     except Exception:
-        cfg = {}
+        return [], set(), False
+    try:
+        cfg = json.loads(testo)
+    except Exception:
+        return [], set(), False
+    if not isinstance(cfg, dict):
+        return [], set(), False
+    grezze_cartelle = cfg.get("cartelle_escluse") or []
+    grezze_sessioni = cfg.get("sessioni_escluse") or []
+    if not isinstance(grezze_cartelle, list) or not all(
+            isinstance(c, str) for c in grezze_cartelle):
+        return [], set(), False
+    if not isinstance(grezze_sessioni, list) or not all(
+            isinstance(s, str) for s in grezze_sessioni):
+        return [], set(), False
     cartelle = []
-    for c in (cfg.get("cartelle_escluse") or []):
+    for c in grezze_cartelle:
         try:
-            p = os.path.realpath(os.path.expanduser(c)).rstrip("/")
+            assoluto = os.path.expanduser(c)
+            if not os.path.isabs(assoluto):
+                return [], set(), False
+            p = os.path.realpath(assoluto).rstrip("/")
             cartelle.append(p or "/")
         except Exception:
-            continue
-    sessioni = set(s for s in (cfg.get("sessioni_escluse") or []) if s)
-    return cartelle, sessioni
+            return [], set(), False
+    sessioni = set(s for s in grezze_sessioni if s)
+    return cartelle, sessioni, True
 
 
 def _escluso(cwd, session_id, cartelle, sessioni):
@@ -161,18 +200,26 @@ def run():
         "cwd": payload.get("cwd") or "",
         "source": payload.get("source", ""),
     }
-    if not prova:
+    try:
+        cartelle, sessioni, valido = _cartelle_e_sessioni_escluse()
+    except Exception:
+        # Fail-closed anche qui, per lo stesso motivo del corpo della
+        # funzione: un'eccezione imprevista non e' "niente escluso".
+        cartelle, sessioni, valido = [], set(), False
+    escluso = valido and _escluso(record["cwd"], record["session_id"], cartelle, sessioni)
+
+    if not prova and valido and not escluso:
         try:
-            cartelle, sessioni = _cartelle_e_sessioni_escluse()
+            os.makedirs(os.path.dirname(QUEUE), exist_ok=True)
+            with open(QUEUE, "a", encoding="utf-8") as fh:
+                fh.write(json.dumps(record, ensure_ascii=False) + "\n")
         except Exception:
-            cartelle, sessioni = [], set()
-        if not _escluso(record["cwd"], record["session_id"], cartelle, sessioni):
-            try:
-                os.makedirs(os.path.dirname(QUEUE), exist_ok=True)
-                with open(QUEUE, "a", encoding="utf-8") as fh:
-                    fh.write(json.dumps(record, ensure_ascii=False) + "\n")
-            except Exception:
-                pass
+            pass
+    # Senza `valido` (config.json non si legge o non passa la validazione) o
+    # con la sessione esclusa: niente in coda. Un config.json rotto non deve
+    # MAI significare "scrivi tutto come se niente fosse escluso" — è
+    # esattamente il contrario di quello che chi ha scritto
+    # "cartelle_escluse" voleva.
 
     if event == "SessionStart":
         try:
@@ -184,8 +231,19 @@ def run():
             text = text[:MAX_CONTEXT].rsplit("\n", 1)[0] + "\n…"
         # L'avviso si aggiunge dopo il taglio: e' la riga che non deve mai
         # sparire, ed e' proprio quella che un briefing lungo mangerebbe.
+        # Una sessione esclusa (o una configurazione di cui non ci si può
+        # fidare) non deve ricevere né l'ancoraggio né l'invito a creare una
+        # scheda: prima di questa correzione, una sessione aperta in una
+        # cartella privata riceveva comunque "questa cartella non risulta
+        # legata a nessun progetto... se non c'è, creala", e un tool MCP
+        # chiamato subito dopo scriveva davvero quella scheda.
         try:
-            text += ancoraggio(record["cwd"])
+            if not valido:
+                pass
+            elif escluso:
+                text += "\n\nCartella privata: non registrare niente in Plancia."
+            else:
+                text += ancoraggio(record["cwd"])
         except Exception:
             pass
         if text.strip():

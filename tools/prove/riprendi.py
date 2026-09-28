@@ -636,8 +636,8 @@ def _prova_lavagna_sync_porta_sessione(prova):
     # servono (si guarda solo la fonte "plancia"), e sostituirle con una
     # lista vuota evita di toccarle per niente durante la prova.
     vecchio_claude, vecchio_codex = lavagna.da_claude, lavagna.da_codex
-    lavagna.da_claude = lambda esito=None: []
-    lavagna.da_codex = lambda esito=None: []
+    lavagna.da_claude = lambda esito=None, escl=None: []
+    lavagna.da_codex = lambda esito=None, escl=None: []
     try:
         lavagna.sync(conn)
         prima = lavagna.elenco(conn, stato="tutti")

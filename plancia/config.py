@@ -72,6 +72,64 @@ def save_config(cfg: dict) -> None:
     CONFIG_FILE.write_text(json.dumps(cfg, indent=2, ensure_ascii=False), "utf-8")
 
 
+def load_config_verificata() -> dict:
+    """Come `load_config()`, ma per chi deve sapere se `cartelle_escluse` e
+    `sessioni_escluse` sono davvero utilizzabili invece di riceverle in
+    silenzio come vuote.
+
+    `load_config()` inghiotte ogni errore di lettura o di parsing e torna i
+    default: comodo per chi legge `port` o `code_roots`, disastroso per le due
+    chiavi private, perché "file rotto" e "niente è escluso" diventano la
+    stessa cosa. Misurato (vedi plancia/esclusi.py:valida): un `config.json`
+    con una virgola finale fa tornare `load_config()` ai default, e il sync
+    dopo farebbe entrare tutto il privato come se la regola non fosse mai
+    stata scritta.
+
+    Torna `cfg` con due chiavi in più: `esclusi_ok` (bool) ed
+    `esclusi_errore` (stringa o None). Quando `esclusi_ok` è falso, chi
+    chiama deve trattare la sessione come "non so cosa è escluso" —
+    fail-closed: niente sync di sessioni/turni/memoria/Codex/lavagna/git
+    locali, niente purga (vedi ingest.sync), nessuna scrittura in coda
+    (vedi bin/plancia-hook, che tiene una copia di questa stessa regola
+    perché non importa il pacchetto). Quando è vero, `cartelle_escluse` e
+    `sessioni_escluse` sono già validate: percorsi assoluti, esistenti,
+    nella grafia vera del disco.
+    """
+    cfg = dict(DEFAULTS)
+    if not CONFIG_FILE.exists():
+        cfg["esclusi_ok"], cfg["esclusi_errore"] = True, None
+        return cfg
+    try:
+        testo = CONFIG_FILE.read_text("utf-8")
+    except OSError as exc:
+        cfg["esclusi_ok"] = False
+        cfg["esclusi_errore"] = f"{CONFIG_FILE} non leggibile: {exc}"
+        return cfg
+    try:
+        letta = json.loads(testo)
+    except Exception as exc:
+        cfg["esclusi_ok"] = False
+        cfg["esclusi_errore"] = f"{CONFIG_FILE} non è JSON valido: {exc}"
+        return cfg
+    if not isinstance(letta, dict):
+        cfg["esclusi_ok"] = False
+        cfg["esclusi_errore"] = f"{CONFIG_FILE} non è un oggetto JSON"
+        return cfg
+    cfg.update(letta)
+
+    # Import qui dentro, non in cima al file: esclusi.py importa config, e in
+    # cima sarebbe un giro (config -> esclusi -> config) risolto solo per
+    # fortuna dall'ordine di import di chi arriva per primo.
+    from . import esclusi as _esclusi
+    ok, errore, cartelle, sessioni = _esclusi.valida(cfg)
+    cfg["esclusi_ok"] = ok
+    cfg["esclusi_errore"] = errore
+    if ok:
+        cfg["cartelle_escluse"] = cartelle
+        cfg["sessioni_escluse"] = sessioni
+    return cfg
+
+
 def get_token() -> str:
     """Token locale per le scritture via HTTP. Vive solo su questa macchina."""
     ensure_dirs()
