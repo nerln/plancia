@@ -34,6 +34,50 @@ if str(RADICE) not in sys.path:
 
 PIATTAFORME = ("mac", "windows", "linux")
 
+# Un titolo scritto apposta: le virgolette, la & e le %VAR% che cmd.exe interpreta,
+# il punto e virgola che wt.exe legge come separatore di comandi.
+TITOLO_OSTILE = 'Fix "R&D" page %PATH% ; echo x'
+
+
+def _n(testo):
+    """Barre dritte: su un host Windows str(Path) le ha rovesciate, e le prove
+    dei piani per mac e linux confrontano con percorsi POSIX."""
+    return str(testo).replace("\\", "/")
+
+
+def _nl(argvs):
+    """Una lista di argv (o un argv) con le barre dritte."""
+    return [_nl(a) if isinstance(a, list) else _n(a) for a in argvs]
+
+
+def toml_normale(testo):
+    """Il testo di un config.toml con le barre rovesciate dei percorsi tornate
+    singole: `toml_str` le raddoppia (`\\U` non e' un escape valido), e su un host
+    Windows lo fa anche per i percorsi di macOS e Linux, che li' hanno le barre
+    rovesciate. La prova le confronta con percorsi scritti a barre dritte."""
+    return testo.replace("\\\\", "\\")
+
+
+def pulisci(v, sostituzioni):
+    """Niente di host-dipendente nell'uscita del figlio: percorsi finti e barre
+    uguali. Le forme con le barre raddoppiate si sostituiscono per prime."""
+    if isinstance(v, str):
+        for cosa, con in sostituzioni:
+            v = v.replace(cosa.replace("\\", "\\\\"), con)
+            v = v.replace(cosa, con)
+        return v.replace("\\", "/")
+    if isinstance(v, list):
+        return [pulisci(x, sostituzioni) for x in v]
+    if isinstance(v, dict):
+        return {pulisci(k, sostituzioni): pulisci(x, sostituzioni) for k, x in v.items()}
+    return v
+
+
+def cartella_avvio_finta(casa):
+    """La cartella Esecuzione automatica di Windows sotto `casa` (APPDATA e' quella
+    che il padre ha messo nell'ambiente del figlio)."""
+    return Path(os.environ["APPDATA"]) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
+
 
 # ==========================================================================
 # il figlio: gira in una casa finta, con tutto quello che lancia sostituito
@@ -50,16 +94,37 @@ def _figlio() -> None:
     tutti = ["claude", "wt", "x-terminal-emulator", "wl-copy", "espeak-ng", "paplay",
              "notify-send", "systemctl", "powershell", "spd-say"]
     presenti = {"base": tutti, "avvio-negato": tutti, "senza-strumenti": [],
-                "solo-spd-say": ["spd-say"]}[variante]
+                "solo-spd-say": ["spd-say"], "esecutore-rotto": tutti,
+                "voce-rotta": tutti, "voce-lenta": tutti}[variante]
 
     class Fine:
         def __init__(self, argv, rc=0):
             self.args, self.returncode, self.stdout, self.stderr = argv, rc, "", ""
 
+    def come_e(k, nome):
+        """Un kwarg come si scrive in un json: `stdin=DEVNULL` diventa "devnull",
+        i byte degli appunti (UTF-16 con BOM) tornano testo con un'etichetta."""
+        v = k.get(nome)
+        if v == subprocess.DEVNULL and nome == "stdin":
+            return "devnull"
+        if isinstance(v, bytes):
+            return "UTF16LE-BOM:" + v[2:].decode("utf-16-le") if v[:2] == b"\xff\xfe" else repr(v)
+        return v
+
     def finta_run(argv, *a, **k):
         argv = [str(x) for x in argv] if isinstance(argv, (list, tuple)) else argv
-        registro.append({"run": argv, "input": k.get("input")})
-        rc = 0
+        # la sintesi di una frase (non la riproduzione, non la notifica)
+        voce = bool(argv) and (
+            (argv[0] in ("espeak-ng", "espeak") and "-w" in argv)
+            or (argv[0] in ("powershell", "pwsh") and "SpeechSynthesizer" in argv[-1]))
+        registro.append({"run": argv, "input": come_e(k, "input")})
+        if k.get("stdin") is not None:
+            registro[-1]["stdin"] = come_e(k, "stdin")
+        if variante == "esecutore-rotto":
+            raise FileNotFoundError(2, "programma di prova che non c'e'")
+        if voce and variante == "voce-lenta":
+            raise subprocess.TimeoutExpired(argv, k.get("timeout") or 1)
+        rc = 1 if (voce and variante == "voce-rotta") else 0
         if argv and argv[0] == "schtasks":
             if "/Create" in argv:
                 rc = 1 if variante == "avvio-negato" else 0
@@ -70,11 +135,16 @@ def _figlio() -> None:
                 rc = 0 if stato["task"] else 1
         if argv and argv[0] == "systemctl" and "enable" in argv and variante == "avvio-negato":
             rc = 1
+        if rc and k.get("check"):
+            raise subprocess.CalledProcessError(rc, argv)
         return Fine(argv, rc)
 
     class FintaPopen:
         def __init__(self, argv, *a, **k):
             registro.append({"popen": [str(x) for x in argv]})
+            for nome in ("stdin", "cwd", "creationflags", "start_new_session"):
+                if nome in k:
+                    registro[-1][nome] = come_e(k, nome)
             self.pid = 1
 
         def wait(self):
@@ -90,8 +160,9 @@ def _figlio() -> None:
     subprocess.Popen = FintaPopen
     import shutil
     shutil.which = lambda n, *a, **k: ("/fake/bin/" + n) if n in presenti else None
-    if hasattr(os, "getuid"):
-        os.getuid = lambda: 501
+    # su Windows os.getuid non c'e' e `_uid()` tornerebbe None: la prova dei
+    # comandi di launchd vuole sempre lo stesso utente, ovunque giri
+    os.getuid = lambda: 501
     sys.path.insert(0, str(RADICE))
     (casa / ".claude").mkdir(parents=True, exist_ok=True)
     (casa / ".codex").mkdir(parents=True, exist_ok=True)
@@ -115,6 +186,12 @@ def _figlio() -> None:
                 fuori[rel.as_posix()] = "-> " + os.readlink(str(p))
             elif p.is_file() and ".plancia" not in rel.parts:
                 testo = p.read_bytes().decode("utf-8", errors="replace")
+                if p.suffix.lower() != ".cmd":
+                    # su un host Windows write_text scrive "\r\n": un plist o
+                    # un'unita' systemd non ne hanno bisogno, un .cmd si'
+                    testo = testo.replace("\r\n", "\n")
+                if p.suffix == ".toml":
+                    testo = toml_normale(testo)
                 if p.suffix == ".json":
                     # un json si consegna come oggetto: normalizzare le barre nel
                     # testo lo romperebbe (le virgolette si scrivono \")
@@ -141,6 +218,14 @@ def _figlio() -> None:
     passo("install_hooks", s.install_hooks)
     passo("install_hooks_bis", s.install_hooks)
     passo("agganciati", lambda: [s.hooks_installed(), s.richiamo_installed(), s.mcp_installed()])
+    residuo = {"windows": lambda: cartella_avvio_finta(casa) / "plancia.cmd",
+               "linux": lambda: casa / ".config" / "autostart" / "plancia.desktop"}.get(piatt)
+    if residuo:
+        # quello che un giro precedente puo' aver lasciato (il ripiego): con il
+        # meccanismo principale attivo, l'avvio automatico non deve partire due volte
+        residuo = residuo()
+        residuo.parent.mkdir(parents=True, exist_ok=True)
+        residuo.write_text("residuo")
     passo("autostart_on", s.autostart_on)
     passo("recap_on", lambda: s.recap_daily_on("08:45", voce=True))
     passo("installati", lambda: [s.autostart_installed(), s.recap_daily_installed()])
@@ -167,6 +252,15 @@ def _figlio() -> None:
         return e
 
     passo("apri", apri)
+
+    def apri_ostile():
+        conn = store.connect()
+        store.init_db(conn)
+        task = {"session_id": None, "cwd": str(casa / "progetto con spazi"), "agent": "claude",
+                "project_id": None, "title": TITOLO_OSTILE, "id": 1, "host": None}
+        return riprendi.apri(task, conn)
+
+    passo("apri_ostile", apri_ostile)
     os.environ["PLANCIA_TERMINALE"] = "/fake/lanciatore"
     passo("apri_con_lanciatore", apri)
     del os.environ["PLANCIA_TERMINALE"]
@@ -200,19 +294,7 @@ def _figlio() -> None:
     # niente di host-dipendente nell'uscita: percorsi finti e barre uguali
     sostituzioni = [(str(casa), "<CASA>"), (str(RADICE), "<RADICE>"),
                     (str(Path(sys.executable)), "<PY>")]
-
-    def pulisci(v):
-        if isinstance(v, str):
-            for cosa, con in sostituzioni:
-                v = v.replace(cosa, con)
-            return v.replace("\\", "/")
-        if isinstance(v, list):
-            return [pulisci(x) for x in v]
-        if isinstance(v, dict):
-            return {pulisci(k): pulisci(x) for k, x in v.items()}
-        return v
-
-    sys.stdout.write("\n@@FIGLIO@@" + json.dumps(pulisci(out), ensure_ascii=False))
+    sys.stdout.write("\n@@FIGLIO@@" + json.dumps(pulisci(out, sostituzioni), ensure_ascii=False))
 
 
 # ==========================================================================
@@ -368,12 +450,27 @@ def esegui(prova):
         prova("plancia/piattaforma.py esiste", False, str(exc))
     if pf is not None:
         prova("plancia/piattaforma.py esiste", True)
-        _prove_nome(prova, pf)
-        _prove_costruttori_puri(prova, pf)
-        _prove_windows_con_percorsi_veri(prova, pf)
-    _prove_installazione(prova)
-    _prove_ripiego_e_strumenti_assenti(prova)
-    _prove_file_del_lotto(prova)
+
+    def gruppo(f, *args):
+        """Un gruppo che cade su un'eccezione (una funzione che manca, un valore
+        inatteso) e' un rosso con il suo nome, e non ferma gli altri gruppi."""
+        try:
+            f(prova, *args)
+        except Exception as exc:  # noqa: BLE001
+            prova("%s: nessuna eccezione" % f.__name__, False, "%s: %s" % (type(exc).__name__, exc))
+
+    if pf is not None:
+        gruppo(_prove_nome, pf)
+        gruppo(_prove_costruttori_puri, pf)
+        gruppo(_prove_windows_con_percorsi_veri, pf)
+    gruppo(_prove_installazione)
+    gruppo(_prove_ripiego_e_strumenti_assenti)
+    gruppo(_prove_quando_il_comando_fallisce)
+    gruppo(_prove_il_figlio_su_windows)
+    if pf is not None:
+        gruppo(_prove_mcp_in_utf8, pf)
+        gruppo(_prove_simulazione_windows)
+    gruppo(_prove_file_del_lotto)
 
 
 # --------------------------------------------------------------------------
@@ -444,10 +541,35 @@ def _prove_costruttori_puri(prova, pf):
     prova("terminale windows: wt.exe se c'e'",
           pf.comando_terminale(r"C:\Users\Utente\lavoro", argv, "windows", _ha("wt"))
           == ["wt.exe", "-d", r"C:\Users\Utente\lavoro", "claude", "--resume", "abc-123"])
-    prova("terminale windows: senza wt, cmd /c start con /D e cmd /k",
-          pf.comando_terminale(r"C:\Users\Utente\lavoro", argv, "windows", _ha())
-          == ["cmd", "/c", "start", "", "/D", r"C:\Users\Utente\lavoro", "cmd", "/k",
-              "claude", "--resume", "abc-123"])
+    prova("terminale windows: senza wt, l'argv direttamente (niente cmd.exe), nella cartella, "
+          "con una console nuova",
+          pf.piano_terminale(r"C:\Users\Utente\lavoro", argv, "windows", _ha())
+          == {"argv": ["claude", "--resume", "abc-123"], "cwd": r"C:\Users\Utente\lavoro",
+              "nuova_console": True}
+          and pf.piano_terminale(r"C:\Users\Utente\lavoro", argv, "windows", _ha("claude"))["argv"][0]
+          == "/fake/claude")
+    ostile = ["claude", "--resume", "abc", "riprendi il task 3 di Plancia: " + TITOLO_OSTILE]
+    senza_wt = pf.piano_terminale(r"C:\x", ostile, "windows", _ha())
+    prova("terminale windows senza wt: un titolo con \", &, %PATH% e ; arriva intatto come UN argomento, "
+          "e nessun elemento e' cmd, start o /k",
+          senza_wt["argv"][3] == ostile[3] and len(senza_wt["argv"]) == 4
+          and not {"cmd", "cmd.exe", "start", "/c", "/k"} & set(senza_wt["argv"]),
+          str(senza_wt))
+    con_wt = pf.comando_terminale(r"C:\x;y", ostile, "windows", _ha("wt"))
+    prova("terminale windows con wt: ogni ; e' scappato (\\;) in ogni argomento, cartella compresa, "
+          "e il resto del titolo resta com'e'",
+          con_wt == ["wt.exe", "-d", "C:\\x\\;y", "claude", "--resume", "abc",
+                     "riprendi il task 3 di Plancia: " + TITOLO_OSTILE.replace(";", "\\;")]
+          and all(";" not in a.replace("\\;", "") for a in con_wt), str(con_wt))
+    prova("il processo del terminale: console nuova (CREATE_NEW_CONSOLE) senza wt, staccato con wt e su "
+          "Linux; la cartella solo dove serve; niente creationflags su un host che non e' Windows",
+          pf.opzioni_distacco("windows", "C:\\x", True, nt=True)["creationflags"] == 0x10
+          and pf.opzioni_distacco("windows", "C:\\x", True, nt=True)["cwd"] == "C:\\x"
+          and pf.opzioni_distacco("windows", None, False, nt=True)["creationflags"] == (0x08 | 0x200)
+          and "cwd" not in pf.opzioni_distacco("windows", None, False, nt=True)
+          and "creationflags" not in pf.opzioni_distacco("windows", None, False, nt=False)
+          and pf.opzioni_distacco("linux")["start_new_session"] is True
+          and all(pf.opzioni_distacco(p)["stdin"] == subprocess.DEVNULL for p in PIATTAFORME))
     linux = {
         "x-terminal-emulator": ["x-terminal-emulator", "-e", "sh", "-c",
                                 "cd '/tmp/una cartella' && claude --resume abc-123"],
@@ -480,6 +602,14 @@ def _prove_costruttori_puri(prova, pf):
               pf.comando_appunti("linux", _ha("xsel")),
               pf.comando_appunti("linux", _ha())))
           == (["wl-copy"], ["xclip", "-selection", "clipboard"], ["xsel", "-b"], None))
+    testo_clip = "perch\u00e9 \u00e8 cos\u00ec \u2192 fatto"
+    prova("appunti windows: a `clip` gli accenti arrivano come UTF-16 con BOM, non nella codepage; "
+          "altrove e con un lanciatore alternativo il testo com'e'",
+          pf.input_appunti(testo_clip, ["clip"], "windows")
+          == b"\xff\xfe" + testo_clip.encode("utf-16-le")
+          and pf.input_appunti(testo_clip, ["/x/finto"], "windows") == testo_clip
+          and pf.input_appunti(testo_clip, ["pbcopy"], "mac") == testo_clip
+          and pf.input_appunti(testo_clip, ["wl-copy"], "linux") == testo_clip)
     prova("appunti: PLANCIA_CLIPBOARD vince su tutte e tre",
           all(_con_env("PLANCIA_CLIPBOARD", "/x/finto --f", lambda p=p: pf.comando_appunti(p, _ha("wl-copy")))
               == ["/x/finto", "--f"] for p in PIATTAFORME))
@@ -496,7 +626,8 @@ def _prove_costruttori_puri(prova, pf):
     b64 = re.search(r"FromBase64String\('([^']+)'\)", script)
     import base64
     prova("voce windows: PowerShell con System.Speech, testo in base64 (nessuna citazione a mano)",
-          bool(w) and w[:4] == ["powershell", "-NoProfile", "-NonInteractive", "-Command"]
+          bool(w) and w[:6] == ["powershell", "-NoProfile", "-NonInteractive", "-InputFormat", "None",
+                                "-Command"]
           and "System.Speech.Synthesis.SpeechSynthesizer" in script and "it-IT" in script
           and bool(b64) and base64.b64decode(b64.group(1)).decode("utf-8") == testo
           and "otto" not in script.replace(b64.group(1), "")
@@ -514,13 +645,15 @@ def _prove_costruttori_puri(prova, pf):
               "x", "it", "", "10", "o.wav", "windows", _ha("powershell"))[-1])
     prova("voce linux: espeak-ng, poi espeak, poi None",
           pf.comando_sintesi("Ciao", "it", "", "185", "/tmp/o.wav", "linux", _ha("espeak-ng", "espeak"))
-          == ["espeak-ng", "-v", "it", "-s", "185", "-w", "/tmp/o.wav", "Ciao"]
+          == ["espeak-ng", "-v", "it", "-s", "185", "-w", "/tmp/o.wav", "--", "Ciao"]
           and pf.comando_sintesi("Ciao", "en", "", "185", "/tmp/o.wav", "linux", _ha("espeak"))
-          == ["espeak", "-v", "en", "-s", "185", "-w", "/tmp/o.wav", "Ciao"]
+          == ["espeak", "-v", "en", "-s", "185", "-w", "/tmp/o.wav", "--", "Ciao"]
           and pf.comando_sintesi("Ciao", "it", "", "185", "/tmp/o.wav", "linux", _ha("spd-say")) is None)
     prova("voce linux: spd-say solo per dire, non per scrivere un file; mai su mac e windows",
-          pf.comando_dire("Ciao", "it", True, "linux", _ha("spd-say")) == ["spd-say", "-w", "-l", "it", "Ciao"]
-          and pf.comando_dire("Ciao", "it", False, "linux", _ha("spd-say")) == ["spd-say", "-l", "it", "Ciao"]
+          pf.comando_dire("Ciao", "it", True, "linux", _ha("spd-say"))
+          == ["spd-say", "-w", "-l", "it", "--", "Ciao"]
+          and pf.comando_dire("Ciao", "it", False, "linux", _ha("spd-say"))
+          == ["spd-say", "-l", "it", "--", "Ciao"]
           and pf.comando_dire("Ciao", "it", True, "mac", _ha("spd-say")) is None
           and pf.comando_dire("Ciao", "it", True, "linux", _ha()) is None)
     prova("riproduzione: afplay su mac, SoundPlayer su windows (apice raddoppiato)",
@@ -535,6 +668,22 @@ def _prove_costruttori_puri(prova, pf):
           == [["paplay", "/t/o.wav"], ["aplay", "-q", "/t/o.wav"], ["pw-play", "/t/o.wav"],
               ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", "/t/o.wav"],
               ["play", "-q", "/t/o.wav"], None])
+    prova("linux: un testo che comincia con '-' non diventa un'opzione (espeak, spd-say, notify-send: `--`)",
+          all(c[c.index("--") + 1] == "-rm -rf" for c in (
+              pf.comando_sintesi("-rm -rf", "it", "", "185", "o.wav", "linux", _ha("espeak-ng")),
+              pf.comando_dire("-rm -rf", "it", True, "linux", _ha("spd-say"))))
+          and pf.comando_notifica("-t", "-rm -rf", "linux", _ha("notify-send"))
+          == ["notify-send", "--", "-t", "-rm -rf"])
+    prova("PowerShell: -InputFormat None per Windows PowerShell 5.1 (legge lo stdin rediretto), non per pwsh",
+          pf.comando_riproduzione("o.wav", "windows", _ha("powershell"))[:5]
+          == ["powershell", "-NoProfile", "-NonInteractive", "-InputFormat", "None"]
+          and "-InputFormat" not in pf.comando_riproduzione("o.wav", "windows", _ha("pwsh")))
+    prova("processi di contorno: stdin chiuso ovunque, e su Windows CREATE_NO_WINDOW (niente console "
+          "nera sotto pythonw); su un host che non e' Windows nessun creationflags",
+          pf.opzioni_processo("windows", nt=True) == {"stdin": subprocess.DEVNULL, "creationflags": 0x08000000}
+          and pf.opzioni_processo("windows", nt=False) == {"stdin": subprocess.DEVNULL}
+          and pf.opzioni_processo("mac") == {"stdin": subprocess.DEVNULL}
+          and pf.opzioni_processo("linux", nt=True) == {"stdin": subprocess.DEVNULL})
     prova("voce: la frase di 'manca il motore' dice cosa installare",
           "espeak-ng" in pf.motore_voce_assente("linux")
           and "PowerShell" in pf.motore_voce_assente("windows"))
@@ -550,7 +699,7 @@ def _prove_costruttori_puri(prova, pf):
           and pf.comando_notifica("P", "t", "windows", _ha()) is None)
     prova("notifica linux: notify-send se c'e', altrimenti None (mai un errore)",
           pf.comando_notifica("Plancia", "Ciao", "linux", _ha("notify-send"))
-          == ["notify-send", "Plancia", "Ciao"]
+          == ["notify-send", "--", "Plancia", "Ciao"]
           and pf.comando_notifica("Plancia", "Ciao", "linux", _ha()) is None)
 
     # ---- registrare i comandi
@@ -560,31 +709,33 @@ def _prove_costruttori_puri(prova, pf):
           and pf.riga_script(script_hook, "/usr/bin/python3", "linux") == script_hook
           and pf.argv_script(script_hook, "/usr/bin/python3", "mac") == [script_hook]
           and pf.argv_script(script_hook, "/usr/bin/python3", "linux") == [script_hook])
-    prova("comando registrato: su windows \"<python>\" \"<script>\" e argv [python, script]",
+    prova("comando registrato: su windows \"<python>\" -X utf8 \"<script>\" e argv [python, -X, utf8, script] "
+          "(stdio in UTF-8: Claude Code e Codex parlano UTF-8, Python su Windows con le pipe usa cp1252)",
           pf.riga_script(r"C:\Users\Nome Cognome\plancia\bin\plancia-hook",
                          r"C:\Program Files\Python312\python.exe", "windows")
-          == '"C:\\Program Files\\Python312\\python.exe" "C:\\Users\\Nome Cognome\\plancia\\bin\\plancia-hook"'
+          == '"C:\\Program Files\\Python312\\python.exe" -X utf8 "C:\\Users\\Nome Cognome\\plancia\\bin\\plancia-hook"'
           and pf.argv_script(r"C:\p\plancia-mcp", r"C:\Py\python.exe", "windows")
-          == [r"C:\Py\python.exe", r"C:\p\plancia-mcp"])
+          == [r"C:\Py\python.exe", "-X", "utf8", r"C:\p\plancia-mcp"])
     prova("blocco TOML di Codex: mac e linux come sempre, windows con le barre raddoppiate",
           pf.blocco_mcp_toml(["/repo/bin/plancia-mcp"], ["--agente", "codex"])
           == '\n[mcp_servers.plancia]\ncommand = "/repo/bin/plancia-mcp"\n'
              'args = ["--agente", "codex"]\nstartup_timeout_sec = 30\n'
-          and pf.blocco_mcp_toml([r"C:\Program Files\Py\python.exe", r"C:\src\bin\plancia-mcp"],
+          and pf.blocco_mcp_toml(pf.argv_script(r"C:\src\bin\plancia-mcp",
+                                                r"C:\Program Files\Py\python.exe", "windows"),
                                  ["--agente", "codex"])
           == '\n[mcp_servers.plancia]\ncommand = "C:\\\\Program Files\\\\Py\\\\python.exe"\n'
-             'args = ["C:\\\\src\\\\bin\\\\plancia-mcp", "--agente", "codex"]\n'
+             'args = ["-X", "utf8", "C:\\\\src\\\\bin\\\\plancia-mcp", "--agente", "codex"]\n'
              'startup_timeout_sec = 30\n')
     prova("comando `plancia`: ~/.local/bin su mac e linux, plancia.cmd sotto LOCALAPPDATA su windows",
-          str(pf.percorso_comando("/home/u", "mac")) == "/home/u/.local/bin/plancia"
-          and str(pf.percorso_comando("/home/u", "linux")) == "/home/u/.local/bin/plancia"
+          _n(pf.percorso_comando("/home/u", "mac")) == "/home/u/.local/bin/plancia"
+          and _n(pf.percorso_comando("/home/u", "linux")) == "/home/u/.local/bin/plancia"
           and pf.percorso_comando("/home/u", "windows", {"LOCALAPPDATA": "/L"}).parts[-3:]
           == ("Plancia", "bin", "plancia.cmd")
           and pf.percorso_comando("/home/u", "windows", {"LOCALAPPDATA": "/L"}).parts[1] == "L"
           and pf.percorso_comando("/home/u", "windows", {}).parts[-5:-2] == ("AppData", "Local", "Plancia"))
-    prova("shim windows: @echo off, \"<python>\" \"<script>\" %*, ritorni a capo di Windows",
+    prova("shim windows: @echo off, \"<python>\" -X utf8 \"<script>\" %*, ritorni a capo di Windows",
           pf.shim_windows(r"C:\Py 3\python.exe", r"C:\src\plancia\bin\plancia")
-          == '@echo off\r\n"C:\\Py 3\\python.exe" "C:\\src\\plancia\\bin\\plancia" %*\r\n')
+          == '@echo off\r\n"C:\\Py 3\\python.exe" -X utf8 "C:\\src\\plancia\\bin\\plancia" %*\r\n')
     prova("PATH: su windows le maiuscole e la barra finale non contano, su mac e linux si',"
           " no",
           pf.nel_path(r"C:\Users\U\AppData\Local\Plancia\bin",
@@ -598,23 +749,24 @@ def _prove_costruttori_puri(prova, pf):
     plist_atteso = (PLIST_SERVER_MAC.replace("<PY>", py).replace("<RADICE>", "/src/plancia")
                     .replace("<CASA>", casa))
     prova("avvio mac: stesso plist, stessa etichetta, stessi launchctl di sempre",
-          m["file"] == [(Path(casa) / "Library/LaunchAgents/com.plancia.server.plist", plist_atteso)]
-          and m["attiva"] == [["launchctl", "bootout", "gui/501/com.plancia.server"],
-                              ["launchctl", "bootstrap", "gui/501",
-                               casa + "/Library/LaunchAgents/com.plancia.server.plist"]]
+          m["file"][0][0] == Path(casa) / "Library/LaunchAgents/com.plancia.server.plist"
+          and _n(m["file"][0][1]) == plist_atteso and len(m["file"]) == 1
+          and _nl(m["attiva"]) == [["launchctl", "bootout", "gui/501/com.plancia.server"],
+                                   ["launchctl", "bootstrap", "gui/501",
+                                    casa + "/Library/LaunchAgents/com.plancia.server.plist"]]
           and m["disattiva"] == [["launchctl", "bootout", "gui/501/com.plancia.server"]]
           and m["rimuovi"] == m["presente"] == [Path(casa) / "Library/LaunchAgents/com.plancia.server.plist"],
           str(m["file"][0][1][:120]))
     r = pf.piano_riepilogo(py, sc, 8, 45, "/Users/utente/.plancia/recap.log", casa, uid=501, piatt="mac")
     prova("riepilogo mac: stesso plist, stessi launchctl di sempre",
-          r["file"][0][1] == (PLIST_RIEPILOGO_MAC.replace("<PY>", py).replace("<RADICE>", "/src/plancia")
-                              .replace("<CASA>", casa))
-          and r["attiva"][1] == ["launchctl", "bootstrap", "gui/501",
-                                 casa + "/Library/LaunchAgents/com.plancia.recap.plist"],
+          _n(r["file"][0][1]) == (PLIST_RIEPILOGO_MAC.replace("<PY>", py).replace("<RADICE>", "/src/plancia")
+                                  .replace("<CASA>", casa))
+          and _nl(r["attiva"][1]) == ["launchctl", "bootstrap", "gui/501",
+                                      casa + "/Library/LaunchAgents/com.plancia.recap.plist"],
           r["file"][0][1][:100])
 
     wpy, wsc = r"C:\Program Files\Python312\python.exe", r"C:\src\plancia\bin\plancia"
-    azione = '"C:\\Program Files\\Python312\\python.exe" "C:\\src\\plancia\\bin\\plancia" serve'
+    azione = '"C:\\Program Files\\Python312\\python.exe" -X utf8 "C:\\src\\plancia\\bin\\plancia" serve'
     amb = {"APPDATA": r"C:\Users\U\AppData\Roaming"}
     w = pf.piano_server(wpy, wsc, "log", r"C:\Users\U", piatt="windows", ambiente=amb,
                         esiste=lambda p: False)
@@ -631,14 +783,14 @@ def _prove_costruttori_puri(prova, pf):
     wp = pf.piano_server(wpy, wsc, "log", r"C:\Users\U", piatt="windows", ambiente=amb,
                          esiste=lambda p: p.endswith("pythonw.exe"))
     prova("avvio windows: con pythonw.exe accanto all'interprete lo usa (niente finestra nera)",
-          wp["attiva"][0][7].startswith('"C:\\Program Files\\Python312\\pythonw.exe" '),
+          wp["attiva"][0][7].startswith('"C:\\Program Files\\Python312\\pythonw.exe" -X utf8 '),
           wp["attiva"][0][7])
     wr = pf.piano_riepilogo(wpy, wsc, 8, 5, "log", r"C:\Users\U", piatt="windows", esiste=lambda p: False)
     prova("riepilogo windows: schtasks /SC DAILY /ST HH:MM",
           wr["attiva"] == [["schtasks", "/Create", "/TN", "Plancia riepilogo", "/SC", "DAILY", "/ST",
                             "08:05", "/TR",
-                            '"C:\\Program Files\\Python312\\python.exe" "C:\\src\\plancia\\bin\\plancia" '
-                            'recap --daily --notify', "/F"]]
+                            '"C:\\Program Files\\Python312\\python.exe" -X utf8 '
+                            '"C:\\src\\plancia\\bin\\plancia" recap --daily --notify', "/F"]]
           and wr["disattiva"] == [["schtasks", "/Delete", "/TN", "Plancia riepilogo", "/F"]])
 
     casa_l = "/home/utente"
@@ -646,30 +798,30 @@ def _prove_costruttori_puri(prova, pf):
                         casa_l, piatt="linux", ambiente={}, cerca_fn=_ha("systemctl"))
     unita = l["file"][0]
     prova("avvio linux: unita' systemd --user, ExecStart con virgolette, enable --now, ripiego .desktop",
-          str(unita[0]) == "/home/utente/.config/systemd/user/plancia.service"
+          _n(unita[0]) == "/home/utente/.config/systemd/user/plancia.service"
           and 'ExecStart="/usr/bin/python3" "/src/my plancia/bin/plancia" serve\n' in unita[1]
           and "Restart=on-failure" in unita[1] and "WantedBy=default.target" in unita[1]
           and "StandardOutput=append:/home/utente/.plancia/plancia.log" in unita[1]
           and l["attiva"] == [["systemctl", "--user", "daemon-reload"],
                               ["systemctl", "--user", "enable", "--now", "plancia.service"]]
           and l["disattiva"] == [["systemctl", "--user", "disable", "--now", "plancia.service"]]
-          and str(l["ripiego"]["file"][0][0]) == "/home/utente/.config/autostart/plancia.desktop"
+          and _n(l["ripiego"]["file"][0][0]) == "/home/utente/.config/autostart/plancia.desktop"
           and 'Exec="/usr/bin/python3" "/src/my plancia/bin/plancia" serve' in l["ripiego"]["file"][0][1]
-          and set(map(str, l["rimuovi"])) == {"/home/utente/.config/systemd/user/plancia.service",
-                                              "/home/utente/.config/autostart/plancia.desktop"},
+          and set(map(_n, l["rimuovi"])) == {"/home/utente/.config/systemd/user/plancia.service",
+                                             "/home/utente/.config/autostart/plancia.desktop"},
           str(l["attiva"]))
     prova("avvio linux: senza systemctl si va diretti al .desktop; XDG_CONFIG_HOME si rispetta",
           pf.piano_server("/p", "/s", "/l", casa_l, piatt="linux", ambiente={}, cerca_fn=_ha())["nome"]
           == "~/.config/autostart"
-          and str(pf.piano_server("/p", "/s", "/l", casa_l, piatt="linux",
-                                  ambiente={"XDG_CONFIG_HOME": "/xdg"},
-                                  cerca_fn=_ha("systemctl"))["file"][0][0])
+          and _n(pf.piano_server("/p", "/s", "/l", casa_l, piatt="linux",
+                                 ambiente={"XDG_CONFIG_HOME": "/xdg"},
+                                 cerca_fn=_ha("systemctl"))["file"][0][0])
           == "/xdg/systemd/user/plancia.service")
     lr = pf.piano_riepilogo("/usr/bin/python3", "/src/plancia/bin/plancia", 8, 45, "/l.log", casa_l,
                             piatt="linux", ambiente={}, cerca_fn=_ha("systemctl"))
     prova("riepilogo linux: un servizio oneshot e un timer OnCalendar alle 08:45",
-          [str(f[0]) for f in lr["file"]] == ["/home/utente/.config/systemd/user/plancia-riepilogo.service",
-                                              "/home/utente/.config/systemd/user/plancia-riepilogo.timer"]
+          [_n(f[0]) for f in lr["file"]] == ["/home/utente/.config/systemd/user/plancia-riepilogo.service",
+                                             "/home/utente/.config/systemd/user/plancia-riepilogo.timer"]
           and "Type=oneshot" in lr["file"][0][1] and "recap --daily --notify" in lr["file"][0][1]
           and "OnCalendar=*-*-* 08:45:00" in lr["file"][1][1] and "Persistent=true" in lr["file"][1][1]
           and lr["attiva"][-1] == ["systemctl", "--user", "enable", "--now", "plancia-riepilogo.timer"]
@@ -683,10 +835,10 @@ def _prove_windows_con_percorsi_veri(prova, pf):
     """Il riconoscimento dei nostri hook su un comando di Windows: finisce con una
     virgoletta, e senza questo `remove_hooks` lascerebbe gli hook dov'erano."""
     from plancia import setup_claude as s
-    riga = '"C:\\Program Files\\Py\\python.exe" "C:\\src\\plancia\\bin\\plancia-hook"'
+    riga = '"C:\\Program Files\\Py\\python.exe" -X utf8 "C:\\src\\plancia\\bin\\plancia-hook"'
     prova("riconosce un hook nostro anche con la virgoletta finale, e non uno altrui",
           s._e_nostro(riga, "plancia-hook") and s._e_nostro("/repo/bin/plancia-hook", "plancia-hook")
-          and not s._e_nostro('"C:\\Py\\python.exe" "C:\\altro\\altro-hook"', "plancia-hook")
+          and not s._e_nostro('"C:\\Py\\python.exe" -X utf8 "C:\\altro\\altro-hook"', "plancia-hook")
           and not s._e_nostro(None, "plancia-hook"))
     prova("la scelta di pythonw.exe: solo accanto a python.exe, altrimenti l'interprete",
           pf.python_senza_finestra(r"C:\Py\python.exe", lambda p: p == r"C:\Py\pythonw.exe")
@@ -720,9 +872,10 @@ def _prove_installazione(prova):
     for p in ("mac", "linux"):
         prova("[%s] hook: gli script nudi, IDENTICI a oggi" % p,
               _settings(dati[p]) == mac_posix, json.dumps(_settings(dati[p]))[:300])
-    prova("[windows] hook: \"<python>\" \"<script>\" per ogni evento",
+    prova("[windows] hook: \"<python>\" -X utf8 \"<script>\" per ogni evento",
           _settings(dati["windows"]) == _hooks_attesi(
-              '"<PY>" "<RADICE>/bin/plancia-hook"', '"<PY>" "<RADICE>/bin/plancia-richiamo"'),
+              '"<PY>" -X utf8 "<RADICE>/bin/plancia-hook"',
+              '"<PY>" -X utf8 "<RADICE>/bin/plancia-richiamo"'),
           json.dumps(_settings(dati["windows"]))[:300])
     for p in PIATTAFORME:
         prova("[%s] hook: installarli due volte non li duplica, e li riconosce" % p,
@@ -741,21 +894,22 @@ def _prove_installazione(prova):
                   ["/fake/bin/claude", "mcp", "remove", "plancia", "--scope", "user"],
                   ["/fake/bin/claude", "mcp", "add", "plancia", "--scope", "user", "--",
                    "<RADICE>/bin/plancia-mcp"]], str(_run(dati[p], "install_mcp")))
-    prova("[windows] MCP con claude: si registra [python, script], non lo script nudo",
+    prova("[windows] MCP con claude: si registra [python, -X, utf8, script], non lo script nudo",
           _run(dati["windows"], "install_mcp") == [
               ["/fake/bin/claude", "mcp", "remove", "plancia", "--scope", "user"],
               ["/fake/bin/claude", "mcp", "add", "plancia", "--scope", "user", "--", "<PY>",
-               "<RADICE>/bin/plancia-mcp"]], str(_run(dati["windows"], "install_mcp")))
+               "-X", "utf8", "<RADICE>/bin/plancia-mcp"]], str(_run(dati["windows"], "install_mcp")))
 
     # ---- Codex
     for p in ("mac", "linux"):
         prova("[%s] blocco MCP in Codex: IDENTICO a oggi" % p,
               _file(dati[p], "FILE_INSTALLATI").get(".codex/config.toml") == BLOCCO_CODEX_POSIX,
               repr(_file(dati[p], "FILE_INSTALLATI").get(".codex/config.toml")))
-    prova("[windows] blocco MCP in Codex: command = python, args = [script, --agente, codex]",
+    prova("[windows] blocco MCP in Codex: command = python, args = [-X, utf8, script, --agente, codex]",
           _file(dati["windows"], "FILE_INSTALLATI").get(".codex/config.toml") == (
               'model = "x"\n\n[mcp_servers.plancia]\ncommand = "<PY>"\n'
-              'args = ["<RADICE>/bin/plancia-mcp", "--agente", "codex"]\nstartup_timeout_sec = 30\n'),
+              'args = ["-X", "utf8", "<RADICE>/bin/plancia-mcp", "--agente", "codex"]\n'
+              'startup_timeout_sec = 30\n'),
           repr(_file(dati["windows"], "FILE_INSTALLATI").get(".codex/config.toml")))
     for p in PIATTAFORME:
         prova("[%s] Codex: la disinstallazione toglie il blocco" % p,
@@ -772,9 +926,9 @@ def _prove_installazione(prova):
                   and _r(dati[p], "install_command") ==
                   "comando in <CASA>/.local/bin/plancia, aggiungi <CASA>/.local/bin al PATH",
                   str(_r(dati[p], "install_command")))
-    prova("[windows] comando: shim plancia.cmd con \"<python>\" \"<script>\" %*",
+    prova("[windows] comando: shim plancia.cmd con \"<python>\" -X utf8 \"<script>\" %*",
           _file(dati["windows"], "FILE_INSTALLATI").get("AppData/Local/Plancia/bin/plancia.cmd")
-          == '@echo off\r\n"<PY>" "<RADICE>/bin/plancia" %*\r\n'
+          == '@echo off\r\n"<PY>" -X utf8 "<RADICE>/bin/plancia" %*\r\n'
           and "aggiungi <CASA>/AppData/Local/Plancia/bin al PATH" in str(_r(dati["windows"], "install_command")),
           str(_r(dati["windows"], "install_command")))
     prova("[windows] disinstallazione: lo shim se ne va",
@@ -799,7 +953,7 @@ def _prove_installazione(prova):
           and _run(dati["mac"], "recap_off") == [["launchctl", "bootout", "gui/501/com.plancia.recap"]]
           and _r(dati["mac"], "recap_on") == "riepilogo automatico alle 08:45 con la voce",
           str(_run(dati["mac"], "recap_on")))
-    az_win = '"<PY>" "<RADICE>/bin/plancia" serve'
+    az_win = '"<PY>" -X utf8 "<RADICE>/bin/plancia" serve'
     prova("[windows] avvio automatico: schtasks /Create /SC ONLOGON, /Delete per toglierlo, niente launchctl",
           _run(dati["windows"], "autostart_on") == [
               ["schtasks", "/Create", "/TN", "Plancia server", "/SC", "ONLOGON", "/TR", az_win, "/F"]]
@@ -810,7 +964,7 @@ def _prove_installazione(prova):
     prova("[windows] riepilogo giornaliero: schtasks /SC DAILY /ST 08:45, /Delete per toglierlo",
           _run(dati["windows"], "recap_on") == [
               ["schtasks", "/Create", "/TN", "Plancia riepilogo", "/SC", "DAILY", "/ST", "08:45", "/TR",
-               '"<PY>" "<RADICE>/bin/plancia" recap --daily --notify', "/F"]]
+               '"<PY>" -X utf8 "<RADICE>/bin/plancia" recap --daily --notify', "/F"]]
           and _run(dati["windows"], "recap_off") == [["schtasks", "/Delete", "/TN", "Plancia riepilogo", "/F"]]
           and _r(dati["windows"], "installati") == [True, True],
           str(_run(dati["windows"], "recap_on")))
@@ -854,6 +1008,16 @@ def _prove_installazione(prova):
           and "systemctl" not in lanciati("windows"),
           str({p: sorted(lanciati(p)) for p in PIATTAFORME}))
 
+    prova("[windows] [linux] avvio automatico: con il meccanismo principale attivo (schtasks, systemd) "
+          "il .cmd in Esecuzione automatica e il .desktop lasciati da un giro precedente spariscono: "
+          "all'accesso non partono due server",
+          "AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup/plancia.cmd"
+          not in _file(dati["windows"], "FILE_INSTALLATI")
+          and ".config/autostart/plancia.desktop" not in _file(dati["linux"], "FILE_INSTALLATI")
+          and _r(dati["windows"], "installati")[0] is True and _r(dati["linux"], "installati")[0] is True,
+          str(sorted(_file(dati["windows"], "FILE_INSTALLATI")))
+          + str(sorted(_file(dati["linux"], "FILE_INSTALLATI"))))
+
     # ---- terminale (riprendi.apri)
     mac_apri = dati["mac"].get("apri", {}).get("ritorno") or {}
     prova("[mac] riprendi.apri: lo stesso osascript di sempre (come prima, con `run` e non staccato)",
@@ -884,12 +1048,35 @@ def _prove_installazione(prova):
               for p, inizio in (("mac", "cd "), ("linux", "cd "), ("windows", "cd /d \""))),
           str([(dati[p].get("apri", {}).get("ritorno") or {}).get("riga", "")[:40] for p in PIATTAFORME]))
 
+    # ---- il titolo di un task non passa da cmd.exe, e wt riceve i ; scappati
+    o_w = dati["windows"].get("apri_ostile", {}).get("ritorno") or {}
+    argv_o = list(o_w.get("argv") or [])
+    # l'uscita del figlio ha le barre rovesciate tornate dritte (`_pulisci`): il `\;` e' `/;`
+    attesi_wt = ["wt.exe", "-d", o_w.get("cwd")] + [a.replace(";", "/;") for a in argv_o]
+    prova("[windows] riprendi.apri con wt e un titolo con \", &, %PATH% e ;: un argomento per pezzo, "
+          "ogni ; scappato (\\;), il resto com'e'",
+          bool(argv_o) and TITOLO_OSTILE in argv_o[-1] and _popen(dati["windows"], "apri_ostile") == [attesi_wt]
+          and not _run(dati["windows"], "apri_ostile"),
+          str(_popen(dati["windows"], "apri_ostile"))[:400])
+    vuoto_o = _figlio_lancia("windows", "senza-strumenti")
+    o_v = vuoto_o.get("apri_ostile", {}).get("ritorno") or {}
+    pop_v = _popen(vuoto_o, "apri_ostile")
+    prova("[windows] riprendi.apri senza wt: l'argv parte direttamente (mai cmd /c start ... cmd /k), "
+          "nella cartella del task, con il titolo intatto in un solo argomento",
+          bool(o_v.get("argv")) and len(pop_v) == 1 and pop_v[0] == o_v["argv"]
+          and TITOLO_OSTILE in pop_v[0][-1]
+          and not {"cmd", "cmd.exe", "start", "/c", "/k"} & set(pop_v[0])
+          and [c.get("cwd") for c in _comandi(vuoto_o, "apri_ostile")] == [o_v.get("cwd")],
+          str(_comandi(vuoto_o, "apri_ostile"))[:400])
+
     # ---- appunti
     prova("[mac] appunti: pbcopy con il testo su stdin, come prima",
           _comandi(dati["mac"], "appunti") == [{"run": ["pbcopy"], "input": "riprendi il task 3"}]
           and _r(dati["mac"], "appunti") is True)
-    prova("[windows] appunti: clip con il testo su stdin",
-          _comandi(dati["windows"], "appunti") == [{"run": ["clip"], "input": "riprendi il task 3"}])
+    prova("[windows] appunti: clip con il testo su stdin, in UTF-16 con BOM (gli accenti non passano "
+          "dalla codepage OEM)",
+          _comandi(dati["windows"], "appunti")
+          == [{"run": ["clip"], "input": "UTF16LE-BOM:riprendi il task 3"}])
     prova("[linux] appunti: wl-copy con il testo su stdin",
           _comandi(dati["linux"], "appunti") == [{"run": ["wl-copy"], "input": "riprendi il task 3"}])
     prova("PLANCIA_CLIPBOARD vince su tutte e tre",
@@ -906,8 +1093,8 @@ def _prove_installazione(prova):
     prova("[windows] notifica: PowerShell senza moduli esterni",
           len(nw) == 1 and nw[0][0] == "powershell" and "NotifyIcon" in nw[0][-1]
           and "Ciao ''mondo''" in nw[0][-1], str(nw)[:200])
-    prova("[linux] notifica: notify-send",
-          _run(dati["linux"], "notifica") == [["notify-send", "Plancia", testo_notifica]])
+    prova("[linux] notifica: notify-send (con `--` prima del testo)",
+          _run(dati["linux"], "notifica") == [["notify-send", "--", "Plancia", testo_notifica]])
 
     # ---- voce
     prova("[mac] voce: say e afplay, gli stessi argv di sempre",
@@ -927,9 +1114,32 @@ def _prove_installazione(prova):
           and _run(dati["windows"], "voci_sistema") == [], str(vw)[:200])
     prova("[linux] voce: espeak-ng verso un wav, poi paplay; niente say ne' afplay",
           _run(dati["linux"], "voce_sintesi") == [
-              ["espeak-ng", "-v", "it", "-s", "185", "-w", "<CASA>/o.wav", "Ciao mondo"]]
+              ["espeak-ng", "-v", "it", "-s", "185", "-w", "<CASA>/o.wav", "--", "Ciao mondo"]]
           and _popen(dati["linux"], "voce_riproduci") == [["paplay", "<CASA>/o.wav"]]
           and _run(dati["linux"], "voci_sistema") == [])
+
+    # ---- PowerShell e gli altri processi di contorno non ereditano lo stdin del server MCP
+    ps = [c for k, v in dati["windows"].items() if isinstance(v, dict) for c in v.get("comandi", [])
+          if (c.get("run") or c.get("popen") or [""])[0] in ("powershell", "pwsh")]
+    prova("[windows] ogni PowerShell (voce, riproduzione, notifica) parte con stdin=DEVNULL: quello del "
+          "processo e' il canale JSON-RPC di Claude Code, e Windows PowerShell 5.1 lo legge finche' non si chiude",
+          len(ps) >= 3 and all(c.get("stdin") == "devnull" for c in ps),
+          str([(c.get("run") or c.get("popen"))[0] + ":" + str(c.get("stdin")) for c in ps]))
+    def _e_contorno(c):
+        a = c.get("run") or c.get("popen") or [""]
+        return a[0] in ("afplay", "paplay", "notify-send") or (
+            a[0] == "osascript" and "display notification" in " ".join(a))
+
+    contorno = [c for p in ("mac", "linux") for v in dati[p].values() if isinstance(v, dict)
+                for c in v.get("comandi", []) if _e_contorno(c)]
+    prova("[mac] [linux] la riproduzione e la notifica partono con stdin=DEVNULL anche fuori da Windows",
+          len(contorno) >= 3 and all(c.get("stdin") == "devnull" for c in contorno),
+          str(contorno)[:300])
+    solo_spd = _figlio_lancia("linux", "solo-spd-say")
+    prova("[linux] spd-say (in attesa, e staccato) parte con stdin chiuso",
+          [c.get("stdin") for c in _comandi(solo_spd, "voce_parla")] == ["devnull"]
+          and [c.get("stdin") for c in _comandi(solo_spd, "voce_parla_senza_attendere")] == ["devnull"],
+          str(_comandi(solo_spd, "voce_parla"))[:300])
 
     # ---- doctor
     dm, dw, dl = (" | ".join(map(str, _r(dati[p], "doctor") or [])) for p in ("mac", "windows", "linux"))
@@ -948,7 +1158,7 @@ def _prove_installazione(prova):
 def _prove_ripiego_e_strumenti_assenti(prova):
     negato = {p: _figlio_lancia(p, "avvio-negato") for p in ("windows", "linux")}
     prova("[windows] schtasks negato: ripiego .cmd nella cartella Esecuzione automatica, e off lo toglie",
-          '@echo off\r\nstart "" "<PY>" "<RADICE>/bin/plancia" serve\r\n'
+          '@echo off\r\nstart "" "<PY>" -X utf8 "<RADICE>/bin/plancia" serve\r\n'
           == _file(negato["windows"], "FILE_INSTALLATI").get(
               "AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup/plancia.cmd")
           and "AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup/plancia.cmd"
@@ -979,7 +1189,8 @@ def _prove_ripiego_e_strumenti_assenti(prova):
     prova("senza uno strumento per gli appunti: False, e nessun comando lanciato (linux); "
           "su windows e mac il comando di sistema c'e' sempre",
           _r(vuoto["linux"], "appunti") is False and not _comandi(vuoto["linux"], "appunti")
-          and _comandi(vuoto["windows"], "appunti") == [{"run": ["clip"], "input": "riprendi il task 3"}]
+          and _comandi(vuoto["windows"], "appunti")
+          == [{"run": ["clip"], "input": "UTF16LE-BOM:riprendi il task 3"}]
           and _comandi(vuoto["mac"], "appunti") == [{"run": ["pbcopy"], "input": "riprendi il task 3"}])
     prova("senza notify-send ne' PowerShell la notifica e' silenziosa: nessun comando, nessun errore",
           not _run(vuoto["linux"], "notifica") and not _run(vuoto["windows"], "notifica")
@@ -1007,10 +1218,145 @@ def _prove_ripiego_e_strumenti_assenti(prova):
 
     solo = _figlio_lancia("linux", "solo-spd-say")
     prova("[linux] con solo spd-say: dice la frase (con -w se si aspetta, staccato se no), nessun file",
-          _run(solo, "voce_parla") == [["spd-say", "-w", "-l", "it", "Ciao mondo"]]
+          _run(solo, "voce_parla") == [["spd-say", "-w", "-l", "it", "--", "Ciao mondo"]]
           and (_r(solo, "voce_parla") or {}).get("motore") == "spd-say"
-          and _popen(solo, "voce_parla_senza_attendere") == [["spd-say", "-l", "it", "Ciao mondo"]],
+          and _popen(solo, "voce_parla_senza_attendere") == [["spd-say", "-l", "it", "--", "Ciao mondo"]],
           str(_r(solo, "voce_parla")))
+
+
+# --------------------------------------------------------------------------
+# quando il programma non c'e', esce con un errore o non risponde
+# --------------------------------------------------------------------------
+
+def _prove_quando_il_comando_fallisce(prova):
+    """Un programma che manca (`FileNotFoundError`), che esce con un errore
+    (`CalledProcessError`) o che non risponde (`TimeoutExpired`) non deve
+    fermare quello che c'e' intorno, fuori da macOS; su macOS l'errore di `say`
+    esce come prima."""
+    rotto = {p: _figlio_lancia(p, "esecutore-rotto") for p in PIATTAFORME}
+    for p in PIATTAFORME:
+        prova("[%s] un esecutore che alza FileNotFoundError: avvio automatico, riepilogo e notifica "
+              "non sollevano, l'avvio dice che non e' partito" % p,
+              all(not str(_r(rotto[p], k)).startswith("ECCEZIONE")
+                  for k in ("autostart_on", "recap_on", "notifica", "autostart_off", "recap_off"))
+              and ("launchctl ha risposto" in str(_r(rotto[p], "autostart_on")) if p == "mac"
+                   else "avvio automatico" in str(_r(rotto[p], "autostart_on"))),
+              str([(k, _r(rotto[p], k)) for k in ("autostart_on", "recap_on", "notifica")])[:400])
+    prova("[windows] [linux] senza schtasks o systemctl l'avvio ripiega comunque sul file (.cmd, .desktop)",
+          "AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup/plancia.cmd"
+          in _file(rotto["windows"], "FILE_INSTALLATI")
+          and ".config/autostart/plancia.desktop" in _file(rotto["linux"], "FILE_INSTALLATI"),
+          str(sorted(_file(rotto["windows"], "FILE_INSTALLATI"))))
+    prova("[mac] `say` che non c'e': parla() solleva ancora, come prima; fuori da macOS no, "
+          "torna motore 'nessuno' con l'errore",
+          str(_r(rotto["mac"], "voce_parla")).startswith("ECCEZIONE FileNotFoundError")
+          and all((_r(rotto[p], "voce_parla") or {}).get("motore") == "nessuno"
+                  and (_r(rotto[p], "voce_parla") or {}).get("file") is None
+                  and (_r(rotto[p], "voce_parla") or {}).get("errore")
+                  for p in ("windows", "linux")),
+          str([_r(rotto[p], "voce_parla") for p in PIATTAFORME])[:400])
+    for variante, cosa in (("voce-rotta", "esce con un errore (CalledProcessError)"),
+                           ("voce-lenta", "non risponde (TimeoutExpired)")):
+        d = {p: _figlio_lancia(p, variante) for p in ("windows", "linux")}
+        prova("[windows] [linux] il motore vocale c'e' ma %s: parla() non solleva, torna motore 'nessuno' "
+              "con l'errore, e la riproduzione non parte" % cosa,
+              all((_r(d[p], "voce_parla") or {}).get("motore") == "nessuno"
+                  and "la voce non ha funzionato" in str((_r(d[p], "voce_parla") or {}).get("errore"))
+                  and not _popen(d[p], "voce_parla") for p in d),
+              str([_r(d[p], "voce_parla") for p in d])[:400])
+
+
+def _prove_il_figlio_su_windows(prova):
+    """Le prove devono dare lo stesso esito su un host Windows: la ripulitura
+    dell'uscita del figlio riconosce i percorsi anche con le barre raddoppiate di
+    TOML, e `os.getuid` (che su Windows non c'e') non decide niente."""
+    sost = [(r"C:\Users\u\casa", "<CASA>"), (r"C:\src\plancia", "<RADICE>"),
+            (r"C:\Py 3\python.exe", "<PY>")]
+    toml = ('model = "x"\n\n[mcp_servers.plancia]\ncommand = "C:\\\\Py 3\\\\python.exe"\n'
+            'args = ["-X", "utf8", "C:\\\\src\\\\plancia\\\\bin\\\\plancia-mcp", "--agente", "codex"]\n'
+            'startup_timeout_sec = 30\n')
+    prova("l'uscita del figlio su un host Windows: il config.toml di Codex (barre raddoppiate) si riduce "
+          "a <PY> e <RADICE>/bin/plancia-mcp come sui sistemi POSIX",
+          pulisci(toml_normale(toml), sost)
+          == ('model = "x"\n\n[mcp_servers.plancia]\ncommand = "<PY>"\n'
+              'args = ["-X", "utf8", "<RADICE>/bin/plancia-mcp", "--agente", "codex"]\n'
+              'startup_timeout_sec = 30\n'),
+          pulisci(toml_normale(toml), sost))
+    prova("l'uscita del figlio: le altre stringhe con percorsi Windows si riducono uguale, anche in liste e dizionari",
+          pulisci({"a": [r"C:\Py 3\python.exe -X utf8 C:\src\plancia\bin\plancia"]}, sost)
+          == {"a": ["<PY> -X utf8 <RADICE>/bin/plancia"]})
+    figlio = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+    prova("il figlio fissa os.getuid senza condizioni (su Windows non esiste, e `gui/None` non e' un dominio)",
+          "if hasattr(os, \"getuid\"):\n        os.getuid" not in Path(__file__).read_text(encoding="utf-8")
+          and any(isinstance(n, ast.Assign) and ast.dump(n.targets[0]).startswith("Attribute(value=Name(id='os'")
+                  and getattr(n.targets[0], "attr", "") == "getuid" for n in ast.walk(figlio)))
+
+
+def _prove_mcp_in_utf8(prova, pf):
+    """Il server MCP lanciato con l'argv che Plancia registra su Windows riceve un
+    titolo con gli accenti e lo rilegge identico dal db. Su Windows lo stdio con le
+    pipe e' in cp1252, non in UTF-8; qui lo si imita con una locale ASCII (LC_ALL=C,
+    senza modalita' UTF-8): una simulazione, non Windows, ma il difetto e' lo stesso,
+    testo non ASCII che arriva o esce da uno stdio che non e' UTF-8."""
+    import sqlite3
+    titolo = "perch\u00e9 \u00e8 cos\u00ec \u2192 fatto"
+    script = RADICE / "bin" / "plancia-mcp"
+
+    def lancia(argv):
+        casa = Path(tempfile.mkdtemp(prefix="plancia-utf8-"))
+        amb = {k: v for k, v in os.environ.items() if k not in (
+            "PYTHONIOENCODING", "PYTHONUTF8", "LC_ALL", "LANG", "PYTHONCOERCECLOCALE")}
+        amb.update(PLANCIA_HOME=str(casa / "dati"), HOME=str(casa), USERPROFILE=str(casa),
+                   LC_ALL="C", PYTHONUTF8="0", PYTHONCOERCECLOCALE="0")
+        richiesta = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {
+            "name": "plancia_task_add", "arguments": {"title": titolo, "project": "x"}}},
+            ensure_ascii=False)
+        try:
+            res = subprocess.run(argv, input=(richiesta + "\n").encode("utf-8"), capture_output=True,
+                                 env=amb, timeout=90)
+            try:
+                db = sqlite3.connect(str(casa / "dati" / "plancia.db"))
+                titoli = [r[0] for r in db.execute("SELECT title FROM tasks")]
+                db.close()
+            except sqlite3.Error:
+                titoli = []
+            risposta = res.stdout.decode("utf-8", errors="replace")
+            return titoli, risposta
+        except Exception as exc:  # noqa: BLE001
+            return [], "ERRORE %s" % exc
+        finally:
+            import shutil
+            shutil.rmtree(casa, ignore_errors=True)
+
+    registrato = pf.argv_script(script, sys.executable, "windows")
+    titoli, risposta = lancia(registrato)
+    prova("MCP lanciato con l'argv registrato su Windows ([python, -X, utf8, script]): il titolo con "
+          "accenti e la freccia si rilegge identico dal db, e la risposta arriva",
+          registrato[1:3] == ["-X", "utf8"] and titoli == [titolo] and titolo in risposta
+          and '"isError": false' in risposta, "%r %s" % (titoli, risposta[:200]))
+    titoli0, risposta0 = lancia([sys.executable, str(script)])
+    prova("controllo della simulazione: lo stesso server SENZA -X utf8 su uno stdio non-UTF-8 il titolo "
+          "non lo rilegge identico (se no la prova sopra non prova niente); da Python 3.15 UTF-8 e' il predefinito",
+          sys.version_info >= (3, 15) or titoli0 != [titolo], "%r %s" % (titoli0, risposta0[:200]))
+
+
+def _prove_simulazione_windows(prova):
+    """Le prove pure girano anche con `Path` di Windows (`PureWindowsPath`, barre
+    rovesciate) e senza `os.getuid`: e' quello che vede un host Windows, dove la CI
+    le lancia e non ammette rossi. Si fa in un processo a parte, perche' il
+    cambio di `Path` vale per tutto quello che si importa dopo."""
+    try:
+        res = subprocess.run([sys.executable, str(Path(__file__).resolve()), "--simula-windows"],
+                             capture_output=True, text=True, timeout=180, stdin=subprocess.DEVNULL,
+                             env={k: v for k, v in os.environ.items() if k != "PLANCIA_PIATTAFORMA"})
+        fine = res.stdout.strip().splitlines()[-1] if res.stdout.strip() else ""
+        rossi = [r for r in res.stdout.splitlines() if r.startswith("  NO ")]
+        ok = res.returncode == 0 and fine.endswith(" 0 fallite")
+        dettaglio = "\n".join(rossi[:6]) or (res.stderr[-400:] if not ok else "")
+    except Exception as exc:  # noqa: BLE001
+        ok, dettaglio = False, str(exc)
+    prova("simulazione Windows: le prove dei costruttori passano con Path di Windows e senza os.getuid",
+          ok, dettaglio)
 
 
 # --------------------------------------------------------------------------
@@ -1110,19 +1456,46 @@ def _prove_file_del_lotto(prova):
         except SyntaxError as exc:
             guai.append("%s: %s" % (rel, exc))
             continue
-        if re.search(r"\.(removeprefix|removesuffix)\(|\bmatch\s+\w+:\s*$", testo, re.M):
-            guai.append(rel + ": removeprefix/removesuffix/match")
+        # (str.removeprefix e removesuffix ci sono dalla 3.9: non sono un guaio)
+        if re.search(r"\bmatch\s+\w+:\s*$", testo, re.M):
+            guai.append(rel + ": match")
         for nodo in ast.walk(albero):
             for ann in (getattr(nodo, "annotation", None), getattr(nodo, "returns", None)):
                 if isinstance(ann, ast.BinOp) and isinstance(ann.op, ast.BitOr):
                     guai.append(rel + ": annotazione X | Y")
-    prova("python 3.9: grammatica ammessa, niente match, removeprefix o annotazioni X | Y", not guai, str(guai))
+    prova("python 3.9: grammatica ammessa, niente match o annotazioni X | Y", not guai, str(guai))
+
+
+def _simula_windows() -> int:
+    """`--simula-windows`: le prove pure con `Path` di Windows e senza `os.getuid`."""
+    import pathlib
+    pathlib.Path = pathlib.PureWindowsPath
+    globals()["Path"] = pathlib.PureWindowsPath
+    if hasattr(os, "getuid"):
+        del os.getuid
+    from plancia import piattaforma as pf
+    assert pf.Path is pathlib.PureWindowsPath
+    passate, fallite = [0], []
+
+    def prova(nome, cond, dettaglio=""):
+        if cond:
+            passate[0] += 1
+        else:
+            fallite.append(nome)
+            print("  NO   %s %s" % (nome, dettaglio))
+
+    _prove_nome(prova, pf)
+    _prove_costruttori_puri(prova, pf)
+    print("\n%d passate, %d fallite" % (passate[0], len(fallite)))
+    return 1 if fallite else 0
 
 
 if __name__ == "__main__":
     if "--figlio" in sys.argv:
         _figlio()
         sys.exit(0)
+    if "--simula-windows" in sys.argv:
+        sys.exit(_simula_windows())
     # da soli: l'archivio vero non si tocca, si lavora in uno finto
     if "PLANCIA_HOME" not in os.environ:
         os.environ["PLANCIA_HOME"] = tempfile.mkdtemp(prefix="plancia-prova-piatt-")

@@ -5,8 +5,11 @@ e regge bene le lingue. Altrimenti le voci di sistema, che non chiedono niente e
 partono in un decimo di secondo: `say` su macOS, il sintetizzatore di Windows
 (System.Speech, via PowerShell), `espeak-ng` o `espeak` su Linux. I comandi li
 costruisce `piattaforma`. Dove non c'è niente di tutto questo la voce lo dice
-(`NessunMotoreVoce`) e il resto di Plancia continua a funzionare: la dashboard
-non ha una voce sua nel browser, riproduce il file che il server produce.
+(`NessunMotoreVoce`). Da CLI e da MCP (`parla`) il resto continua: il testo
+arriva e la risposta dice che la voce manca. Dalla dashboard oggi no: il
+riepilogo con la voce passa da `api.py`, che non cattura `NessunMotoreVoce` e
+risponde con un errore (la dashboard non ha una voce sua nel browser, riproduce
+il file che il server produce).
 """
 
 import hashlib
@@ -94,7 +97,9 @@ def sintesi_say(testo: str, lang: str, out: Path) -> Path:
     argv = piattaforma.comando_sintesi(testo, lang, voce, rate, out)
     if argv is None:
         raise NessunMotoreVoce(piattaforma.motore_voce_assente())
-    piattaforma.esegui(argv, capture_output=True, timeout=180, check=True)
+    # stdin chiuso: PowerShell erediterebbe altrimenti il canale del server MCP
+    piattaforma.esegui(argv, capture_output=True, timeout=180, check=True,
+                       stdin=subprocess.DEVNULL)
     return out
 
 
@@ -305,7 +310,9 @@ def riproduci(path, attendi=False):
     argv = piattaforma.comando_riproduzione(path)
     if argv is None:
         raise NessunMotoreVoce(piattaforma.motore_voce_assente())
-    _riproduzione = subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    # senza stdin ne' console: vedi `piattaforma.opzioni_processo`
+    _riproduzione = subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                     **piattaforma.opzioni_processo())
     if attendi:
         _riproduzione.wait()
     return _riproduzione.pid
@@ -319,9 +326,14 @@ def ferma():
 
 
 def parla(testo: str, lang: str = "it", motore: str = None, attendi=True) -> dict:
-    """Dice `testo` ad alta voce. Se su questa macchina non c'è un motore, non
-    solleva: torna `{"motore": "nessuno", "file": None, "errore": <cosa manca>}`,
-    così il resto (il testo del riepilogo, l'esito di un comando) arriva lo stesso."""
+    """Dice `testo` ad alta voce. Fuori da macOS non solleva mai per colpa della
+    voce: se non c'è un motore, o se c'è ma fallisce o non risponde, torna
+    `{"motore": "nessuno", "file": None, "errore": <cosa è andato storto>}`, così
+    il resto (il testo del riepilogo, l'esito di un comando) arriva lo stesso. Su
+    macOS un `say` che fallisce solleva ancora, come prima.
+
+    Vale per chi chiama `parla` (la CLI e il server MCP). Chi chiama `sintesi`
+    direttamente, come il server web (`api.py`), riceve `NessunMotoreVoce`."""
     try:
         info = sintesi(testo, lang, motore)
         riproduci(info["file"], attendi=attendi)
@@ -332,13 +344,21 @@ def parla(testo: str, lang: str = "it", motore: str = None, attendi=True) -> dic
         if argv:
             try:
                 if attendi:
-                    piattaforma.esegui(argv, capture_output=True, timeout=180)
+                    piattaforma.esegui(argv, capture_output=True, timeout=180,
+                                       stdin=subprocess.DEVNULL)
                 else:
                     piattaforma.avvia_distaccato(argv)
                 return {"file": None, "motore": "spd-say", "lingua": lang}
             except Exception:
                 pass
         return {"file": None, "motore": "nessuno", "lingua": lang, "errore": str(exc)}
+    except (subprocess.SubprocessError, OSError) as exc:
+        # il motore c'e' ma non va (PowerShell che esce con un errore o si pianta,
+        # un lettore audio che manca davvero): fuori da macOS la voce non ferma il resto
+        if piattaforma.nome() == piattaforma.MAC:
+            raise
+        return {"file": None, "motore": "nessuno", "lingua": lang,
+                "errore": "la voce non ha funzionato: %s" % (exc,)}
 
 
 # --------------------------------------------------------------------------

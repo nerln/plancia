@@ -13,10 +13,15 @@ Due livelli, tenuti separati apposta:
   le stesse entrate tornano lo stesso argv o lo stesso testo di file, non
   toccano il disco e non lanciano niente. Sono quelle che le prove guardano
   su tutte e tre le piattaforme, anche quelle su cui non si sta girando;
-- `esegui` e `cerca` sono l'unico punto in cui si lancia un processo o si
-  cerca un programma nel PATH. Chi usa questo modulo passa da qui, e le prove
-  li sostituiscono: nessuna prova lancia mai `launchctl`, `schtasks`,
-  `systemctl`, `osascript`, `claude` o `codex` veri.
+- `esegui`, `avvia_distaccato` e `cerca` sono il punto in cui si lancia un
+  processo o si cerca un programma nel PATH per tutto quello che cambia da
+  sistema a sistema. Chi usa questo modulo passa da qui, e le prove li
+  sostituiscono: nessuna prova lancia mai `launchctl`, `schtasks`, `systemctl`,
+  `osascript`, `claude` o `codex` veri. Restano fuori, perche' non dipendono dal
+  sistema operativo (o sono soltanto macOS), tre chiamate dirette a subprocess
+  in voice.py: la riproduzione (`riproduci`, che pero' prende le stesse opzioni
+  di `opzioni_processo`), `voicebox_avvia` (`open -a`, solo macOS) e
+  `trascrivi`.
 
 `nome()` dice dove si e': "mac", "windows" o "linux", da `sys.platform`,
 sovrascrivibile con `PLANCIA_PIATTAFORMA` (un valore che non sia uno dei tre
@@ -77,23 +82,63 @@ def cerca(programma):
     return shutil.which(programma)
 
 
+# Windows: CREATE_NO_WINDOW, DETACHED_PROCESS, CREATE_NEW_PROCESS_GROUP,
+# CREATE_NEW_CONSOLE (i valori di subprocess, scritti qui perche' su un altro
+# sistema la libreria non li ha).
+_NO_WINDOW = 0x08000000
+_DETACHED = 0x00000008
+_NEW_GROUP = 0x00000200
+_NEW_CONSOLE = 0x00000010
+
+
+def _su_windows_vero(piatt=None, nt=None) -> bool:
+    """La piattaforma e' Windows E si sta girando su Windows davvero: su un altro
+    sistema `subprocess` rifiuta `creationflags`, anche quando le prove fingono."""
+    return _p(piatt) == WINDOWS and (os.name == "nt" if nt is None else nt)
+
+
+def opzioni_processo(piatt=None, nt=None) -> dict:
+    """Le opzioni di `subprocess` per un processo di contorno (PowerShell per la
+    voce, la notifica, la riproduzione): senza stdin, che sarebbe quello del
+    processo che ci ha lanciato (per il server MCP e' il canale JSON-RPC, e
+    Windows PowerShell lo legge finche' non si chiude), e su Windows senza la
+    console nera che il server, girando con pythonw, aprirebbe a ogni chiamata."""
+    opzioni = {"stdin": subprocess.DEVNULL}
+    if _su_windows_vero(piatt, nt):
+        opzioni["creationflags"] = _NO_WINDOW
+    return opzioni
+
+
 def esegui(argv, **kwargs):
-    """`subprocess.run`. Sostituibile dalle prove."""
+    """`subprocess.run`, senza finestra nera su Windows. Sostituibile dalle prove."""
+    if _su_windows_vero():
+        kwargs.setdefault("creationflags", _NO_WINDOW)
     return subprocess.run(argv, **kwargs)
 
 
-def avvia_distaccato(argv, piatt=None):
+def opzioni_distacco(piatt=None, cwd=None, nuova_console=False, nt=None) -> dict:
+    """Le opzioni con cui `avvia_distaccato` lancia il processo. Con
+    `nuova_console` (Windows, il terminale quando manca `wt`) il processo ha una
+    console sua e visibile: `DETACHED_PROCESS` e `CREATE_NEW_CONSOLE` non stanno
+    insieme."""
+    opzioni = dict(stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                   stderr=subprocess.DEVNULL)
+    if cwd is not None:
+        opzioni["cwd"] = str(cwd)
+    if _p(piatt) == WINDOWS:
+        if _su_windows_vero(piatt, nt):
+            opzioni["creationflags"] = (_NEW_CONSOLE if nuova_console
+                                        else _DETACHED | _NEW_GROUP)
+    else:
+        opzioni["start_new_session"] = True
+    return opzioni
+
+
+def avvia_distaccato(argv, piatt=None, cwd=None, nuova_console=False):
     """Lancia `argv` staccato da noi e senza aspettarlo: la finestra di un
     terminale resta aperta finche' la chiude chi la usa. Sostituibile dalle
     prove."""
-    veri = dict(stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL)
-    if _p(piatt) == WINDOWS:
-        # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
-        veri["creationflags"] = 0x00000008 | 0x00000200
-    else:
-        veri["start_new_session"] = True
-    return subprocess.Popen(argv, **veri)
+    return subprocess.Popen(argv, **opzioni_distacco(piatt, cwd, nuova_console))
 
 
 def _trova(cerca_fn, candidati):
@@ -128,6 +173,18 @@ def toml_str(testo) -> str:
     return '"%s"' % str(testo).replace("\\", "\\\\").replace('"', '\\"')
 
 
+# L'interprete di Windows in modalita' UTF-8, per tutto quello che parla con
+# Claude Code o Codex attraverso pipe (vedi `argv_script`).
+UTF8_WINDOWS = ["-X", "utf8"]
+
+
+def _riga_python(python, script, *argomenti) -> str:
+    """`"<python>" -X utf8 "<script>" <argomenti>` come riga per cmd.exe, per il
+    Task Scheduler e per un hook."""
+    return " ".join([_virgolette(python)] + UTF8_WINDOWS + [_virgolette(script)]
+                    + list(argomenti))
+
+
 def _riga_windows(argv) -> str:
     return subprocess.list2cmdline([str(a) for a in argv])
 
@@ -140,10 +197,15 @@ def argv_script(script, python=None, piatt=None) -> list:
     """L'argv per lanciare uno script di `bin/`.
 
     Su macOS e Linux lo script si lancia da solo, ha lo shebang. Su Windows
-    uno script senza estensione non si esegue: serve l'interprete davanti.
+    uno script senza estensione non si esegue: serve l'interprete davanti, e in
+    modalita' UTF-8 (`-X utf8`). Quando stdin e stdout sono pipe, come nel server
+    MCP e negli hook, Python su Windows usa la codepage ANSI (cp1252), non UTF-8:
+    Claude Code e Codex parlano UTF-8, e un titolo con gli accenti arriverebbe
+    nel db come mojibake, mentre una freccia nel briefing farebbe cadere la
+    risposta con un UnicodeEncodeError.
     """
     if _p(piatt) == WINDOWS:
-        return [python or sys.executable, str(script)]
+        return [python or sys.executable] + UTF8_WINDOWS + [str(script)]
     return [str(script)]
 
 
@@ -151,11 +213,11 @@ def riga_script(script, python=None, piatt=None) -> str:
     """Come `argv_script`, ma come una riga sola (i settings.json degli hook).
 
     macOS e Linux: il percorso nudo, com'e' sempre stato. Windows:
-    `"<python>" "<script>"`, con le virgolette perche' un percorso di Windows
-    ha spesso degli spazi.
+    `"<python>" -X utf8 "<script>"`, con le virgolette perche' un percorso di
+    Windows ha spesso degli spazi.
     """
     if _p(piatt) == WINDOWS:
-        return " ".join(_virgolette(a) for a in argv_script(script, python, piatt))
+        return _riga_python(python or sys.executable, script)
     return str(script)
 
 
@@ -176,8 +238,7 @@ def percorso_comando(casa, piatt=None, ambiente=None) -> Path:
 
 def shim_windows(python, script) -> str:
     """Il contenuto dello shim `plancia.cmd`."""
-    return '@echo off\r\n%s %%*\r\n' % " ".join(
-        [_virgolette(python), _virgolette(script)])
+    return '@echo off\r\n%s %%*\r\n' % _riga_python(python, script)
 
 
 def nel_path(cartella, path_var, piatt=None) -> bool:
@@ -216,34 +277,66 @@ def riga_shell(cwd, argv, piatt=None) -> str:
     return "cd %s && %s" % (shlex.quote(cwd), shlex.join(argv))
 
 
-def comando_terminale(cwd, argv, piatt=None, cerca_fn=None):
-    """L'argv che apre una finestra di terminale in `cwd` con `argv` dentro, o
-    None se su questo sistema non si trova nessun terminale.
+def _arg_wt(argomento) -> str:
+    """Un argomento per `wt.exe`: il punto e virgola e' il separatore di comandi
+    di Windows Terminal anche dentro un argomento, e va scritto `\\;`."""
+    return str(argomento).replace(";", "\\;")
+
+
+def piano_terminale(cwd, argv, piatt=None, cerca_fn=None):
+    """Come aprire una finestra di terminale in `cwd` con `argv` dentro: un
+    dizionario `{"argv", "cwd", "nuova_console"}`, o None se su questo sistema non
+    si trova nessun terminale.
+
+    `cwd` e' la cartella in cui deve partire il processo lanciato (solo Windows
+    senza `wt`, dove non c'e' un terminale che sappia scegliere la cartella) e
+    `nuova_console` dice di dargli una console visibile sua. Su Windows il testo
+    libero, che sia il titolo di un task o un prompt, non passa MAI da una riga
+    interpretata da `cmd.exe`: senza `wt` si lancia `argv` direttamente
+    (`CreateProcess`, che non interpreta `&`, `%` o le virgolette), con `wt` ogni
+    argomento e' un argomento e il `;` si scappa.
 
     `PLANCIA_TERMINALE` (un lanciatore alternativo, usato dalle prove) lo
     gestisce chi chiama: qui c'e' solo quello che si fa senza.
     """
     piatt = _p(piatt)
     riga = riga_shell(cwd, argv, piatt)
+
+    def piano(comando, cartella=None, console=False):
+        return {"argv": comando, "cwd": cartella, "nuova_console": console}
+
     if piatt == MAC:
-        return ["osascript", "-e",
-                "tell application \"Terminal\" to do script %s" % applescript_quote(riga)]
+        return piano(["osascript", "-e",
+                      "tell application \"Terminal\" to do script %s" % applescript_quote(riga)])
     if piatt == WINDOWS:
         trova = cerca_fn or cerca
         if trova("wt") or trova("wt.exe"):
-            return ["wt.exe", "-d", str(cwd)] + [str(a) for a in argv]
-        return ["cmd", "/c", "start", "", "/D", str(cwd), "cmd", "/k"] + [str(a) for a in argv]
+            return piano(["wt.exe", "-d", _arg_wt(cwd)] + [_arg_wt(a) for a in argv])
+        # Il primo elemento, se si trova, con il percorso intero: `claude` e' spesso
+        # un `claude.cmd`, e CreateProcess non aggiunge da solo l'estensione.
+        comando = [str(a) for a in argv]
+        trovato = trova(comando[0]) if comando else None
+        if trovato:
+            comando[0] = str(trovato)
+        return piano(comando, str(cwd), True)
     scelta = _trova(cerca_fn, [
         ["x-terminal-emulator"], ["gnome-terminal"], ["konsole"], ["xterm"]])
     if scelta is None:
         return None
     if scelta[0] == "x-terminal-emulator":
-        return ["x-terminal-emulator", "-e", "sh", "-c", riga]
+        return piano(["x-terminal-emulator", "-e", "sh", "-c", riga])
     if scelta[0] == "gnome-terminal":
-        return ["gnome-terminal", "--working-directory=%s" % cwd, "--"] + [str(a) for a in argv]
+        return piano(["gnome-terminal", "--working-directory=%s" % cwd, "--"]
+                     + [str(a) for a in argv])
     if scelta[0] == "konsole":
-        return ["konsole", "--workdir", str(cwd), "-e"] + [str(a) for a in argv]
-    return ["xterm", "-e", "sh", "-c", riga]
+        return piano(["konsole", "--workdir", str(cwd), "-e"] + [str(a) for a in argv])
+    return piano(["xterm", "-e", "sh", "-c", riga])
+
+
+def comando_terminale(cwd, argv, piatt=None, cerca_fn=None):
+    """L'argv di `piano_terminale`, o None."""
+    p = piano_terminale(cwd, argv, piatt, cerca_fn)
+    return p["argv"] if p else None
 
 
 # --------------------------------------------------------------------------
@@ -268,6 +361,20 @@ def comando_appunti(piatt=None, cerca_fn=None):
                              ["xsel", "-b"]])
 
 
+def input_appunti(testo, comando, piatt=None):
+    """Quello che si scrive nello stdin di `comando` (l'argv di `comando_appunti`).
+
+    `clip` di Windows legge lo stdin nella codepage OEM della console, e un testo
+    con gli accenti uscirebbe sbagliato: gli si manda UTF-16 con la sua
+    intestazione (BOM), che riconosce. Sono byte, quindi chi lancia non deve
+    usare `text=True`. Un lanciatore alternativo (`PLANCIA_CLIPBOARD`) e ogni
+    altro sistema ricevono il testo com'e'.
+    """
+    if _p(piatt) == WINDOWS and list(comando) == ["clip"]:
+        return ("\ufeff" + testo).encode("utf-16-le")
+    return testo
+
+
 # --------------------------------------------------------------------------
 # voce
 # --------------------------------------------------------------------------
@@ -281,7 +388,12 @@ def _powershell(cerca_fn=None):
 
 
 def _ps_comando(exe, script) -> list:
-    return [exe, "-NoProfile", "-NonInteractive", "-Command", script]
+    """L'argv di un comando PowerShell. Windows PowerShell 5.1 con lo stdin
+    rediretto lo legge e non esce finche' non si chiude: chi lancia gli passa
+    `stdin=DEVNULL` (`opzioni_processo`) e qui `-InputFormat None` lo dice anche
+    a lui. `pwsh` non ha quel difetto e non conosce il valore `None`."""
+    ins = ["-InputFormat", "None"] if exe == "powershell" else []
+    return [exe, "-NoProfile", "-NonInteractive"] + ins + ["-Command", script]
 
 
 def voce_sistema_presente(piatt=None) -> bool:
@@ -331,7 +443,8 @@ def comando_sintesi(testo, lang, voce, velocita, out, piatt=None, cerca_fn=None)
         return _ps_comando(exe, "; ".join(passi))
     for motore in ("espeak-ng", "espeak"):
         if (cerca_fn or cerca)(motore):
-            return [motore, "-v", lang, "-s", str(wpm), "-w", str(out), testo]
+            # `--`: un testo che comincia con `-` non deve diventare un'opzione
+            return [motore, "-v", lang, "-s", str(wpm), "-w", str(out), "--", testo]
     return None
 
 
@@ -340,7 +453,7 @@ def comando_dire(testo, lang, attendi=True, piatt=None, cerca_fn=None):
     con `spd-say`), o None. Serve quando manca un motore che sappia scrivere un
     wav ma c'e' Speech Dispatcher. Con `attendi` il comando torna a frase finita."""
     if _p(piatt) == LINUX and (cerca_fn or cerca)("spd-say"):
-        return ["spd-say"] + (["-w"] if attendi else []) + ["-l", lang, testo]
+        return ["spd-say"] + (["-w"] if attendi else []) + ["-l", lang, "--", testo]
     return None
 
 
@@ -400,7 +513,7 @@ def comando_notifica(titolo, testo, piatt=None, cerca_fn=None):
         ]
         return _ps_comando(exe, "; ".join(passi))
     if (cerca_fn or cerca)("notify-send"):
-        return ["notify-send", titolo, testo]
+        return ["notify-send", "--", titolo, testo]
     return None
 
 
@@ -533,7 +646,7 @@ def piano_server(python, script, log, casa, uid=None, piatt=None, ambiente=None,
         }
     if piatt == WINDOWS:
         senza = python_senza_finestra(python, esiste)
-        azione = "%s %s serve" % (_virgolette(senza), _virgolette(script))
+        azione = _riga_python(senza, script, "serve")
         avvio = cartella_avvio_windows(ambiente, casa) / "plancia.cmd"
         return {
             "nome": "Task Scheduler",
@@ -607,7 +720,7 @@ def piano_riepilogo(python, script, ora, minuto, log, casa, uid=None, piatt=None
         }
     if piatt == WINDOWS:
         senza = python_senza_finestra(python, esiste)
-        azione = "%s %s recap --daily --notify" % (_virgolette(senza), _virgolette(script))
+        azione = _riga_python(senza, script, "recap", "--daily", "--notify")
         return {
             "nome": "Task Scheduler",
             "file": [],

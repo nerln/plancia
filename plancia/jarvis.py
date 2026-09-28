@@ -291,7 +291,9 @@ def _copia_appunti(testo: str) -> bool:
         # esce 1) - il punto 7 del lotto era soddisfatto alla lettera (la
         # voce non mente MAI se `_copia_appunti` torna False), non nello
         # spirito (qui tornava sempre True). Ora conta il codice di uscita.
-        res = piattaforma.esegui(comando, input=testo, text=True, capture_output=True, timeout=5)
+        dati = piattaforma.input_appunti(testo, comando)
+        res = piattaforma.esegui(comando, input=dati, text=isinstance(dati, str),
+                                 capture_output=True, timeout=5)
         return res.returncode == 0
     except Exception:
         return False

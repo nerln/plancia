@@ -17,6 +17,13 @@
 #   POSIX, e nessuno le ha ancora portate. Sono SOLO POSIX finche' non lo si fa: il
 #   passo e' rosso su Windows senza fermare il resto, cosi' si vede quali sono,
 #   una alla volta. Su Linux e macOS il rosso blocca come sempre.
+# - la prova di piattaforma su Windows non e' ancora girata su un Windows vero (qui
+#   si e' provata solo imitando Path di Windows e l'assenza di os.getuid): il
+#   primo giro della CI e' la sua verifica, e se un rosso e' della prova e non del
+#   codice va corretto la' e non tolto il passo.
+# - non e' verificato che setup-python fornisca Python 3.9 su macos-latest
+#   (arm64): se al primo giro quel job non parte, escludere la combinazione con
+#   `exclude` (3.9 resta provato su Linux e Windows).
 name: collaudo
 
 on:

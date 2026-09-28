@@ -79,7 +79,9 @@ python3 bin/plancia serve --open
 in `%LOCALAPPDATA%\Plancia\bin`, and it tells you to add that folder to your PATH
 if it is not there yet; `bin/plancia.cmd` does the same job from inside a clone.
 On Linux it is a link in `~/.local/bin`. `plancia uninstall` puts everything back.
-`pip install` is not a supported route yet: the package does not carry the
+If `python` is not on your PATH (the python.org installer does not add it by
+default, and `python` can be the Microsoft Store stub), use `py -3 bin/plancia
+install` instead. `pip install` is not a supported route yet: the package does not carry the
 dashboard files or the `bin/` scripts, so use the clone.
 
 What works the same: the dashboard, the `plancia_*` MCP tools in Claude Code and
@@ -92,16 +94,22 @@ What each system uses underneath:
 | | macOS | Windows | Linux |
 |---|---|---|---|
 | start at login, daily recap | launchd | Task Scheduler, or the Startup folder if that is refused | systemd `--user`, or `~/.config/autostart` |
-| Resume opens | Terminal | Windows Terminal, else `cmd` | the first of x-terminal-emulator, gnome-terminal, konsole, xterm |
+| Resume opens | Terminal | Windows Terminal, else a new console window | the first of x-terminal-emulator, gnome-terminal, konsole, xterm |
 | clipboard | `pbcopy` | `clip` | wl-copy, xclip or xsel |
 | spoken recap | `say` | the built-in speech synthesizer | espeak-ng (or espeak) and an audio player |
 | notification | `osascript` | PowerShell balloon | `notify-send`, if installed |
 
 What does not exist outside macOS: the native app, its menu bar item, the
 `plancia://` URL actions and the hands-free voice panel. `plancia jarvis "..."`
-from a terminal still works. If a piece is missing on your machine (no speech
-engine, no notification tool), Plancia says which one and carries on. The
-commands Plancia builds for each system are covered by the suite, but Windows and
+from a terminal still works. If a piece is missing on your machine the rest
+carries on: no notification tool means no notification, and no clipboard tool
+means nothing is copied. With no speech engine, the command line and the MCP
+tools still return the text and report the voice engine as "nessuno" (none).
+The dashboard is the exception for now: its recap button always asks for the
+voice, and without a speech engine the request fails with that message instead
+of showing the text. On Windows the server starts at login but is not restarted after a crash, and
+its errors are not logged (launchd on macOS and systemd on Linux do restart it).
+The commands Plancia builds for each system are covered by the suite, but Windows and
 Linux have had far less real use than macOS: `plancia doctor` tells you what is
 connected.
 
@@ -467,7 +475,7 @@ Reads are open: it is your data, already on your disk.
 git config core.hooksPath .githooks
 ```
 
-Turns on the hook that runs `python3 tools/prova.py` before every push: 1202
+Turns on the hook that runs `python3 tools/prova.py` before every push: 1228
 checks in about twenty seconds, against a throwaway archive that never touches
 yours. They cover the schema, the board, the proposals, the search index, the
 recap, the MCP surface and its token budget, every read route of the HTTP API,

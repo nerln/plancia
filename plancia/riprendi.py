@@ -382,25 +382,34 @@ def apri(task, conn=None) -> dict:
 
     Non è un run di `cantiere`: non scrive in `runs`, non passa da
     `riconcilia()`. Il lanciatore è sostituibile con `PLANCIA_TERMINALE`
-    (un comando a cui viene passato, come unico argomento, `cd <cwd> && `
-    seguito dalla riga già quotata con `shlex.join`); di default apre il
-    terminale del sistema (`piattaforma.comando_terminale`): Terminal.app con
-    AppleScript su macOS, Windows Terminal o `cmd` su Windows, il primo
-    terminale che c'è su Linux. Per "viva" non lancia niente: torna solo
-    il messaggio da mettere negli appunti (lo fa la UI).
+    (un comando a cui viene passato, come unico argomento, la riga `cd <cwd> && `
+    seguita dal comando già quotato: con `shlex` su macOS e Linux, con
+    `list2cmdline` e `cd /d` su Windows); di default apre il terminale del
+    sistema (`piattaforma.piano_terminale`): Terminal.app con AppleScript su
+    macOS, Windows Terminal o una console nuova su Windows, il primo terminale
+    che c'è su Linux. Per "viva" non lancia niente: torna solo il messaggio da
+    mettere negli appunti (lo fa la UI).
 
-    Il lanciatore (`osascript` o `PLANCIA_TERMINALE`) parte con
-    `stdin=DEVNULL` e lo stdout catturato, mai ereditato: `osascript -e
-    'tell application "Terminal" to do script ...'` stampa da solo il
-    riferimento della scheda aperta, e ogni altro sottoprocesso di questo
-    modulo (recap, ingest, jarvis, cantiere) cattura la sua uscita per lo
-    stesso motivo. Qui conta ancora di più perché L3-RIPRENDI-UI chiamerà
-    `apri()` da dentro il server MCP (mcp.py), dove lo stdin del processo È
-    il trasporto stdio del protocollo JSON-RPC: ereditarlo darebbe al
-    lanciatore un canale che non gli appartiene, e una riga sullo stdout non
-    catturata finirebbe nel flusso del protocollo. `timeout` copre il caso
-    di un `PLANCIA_TERMINALE` (o un `osascript` bloccato) che non torna mai:
-    senza, la chiamata resterebbe appesa per sempre.
+    Su Windows il testo del task (il titolo, il prompt) non passa mai da una
+    riga di `cmd.exe`: `wt.exe` riceve un argomento per ogni pezzo (con il `;`
+    scappato) e senza `wt` il comando parte direttamente in una console nuova,
+    nella cartella giusta.
+
+    macOS e il lanciatore `PLANCIA_TERMINALE` partono con `stdin=DEVNULL` e lo
+    stdout catturato, mai ereditato, e con un `timeout`: `osascript -e 'tell
+    application "Terminal" to do script ...'` stampa da solo il riferimento
+    della scheda aperta, e ogni altro sottoprocesso di questo modulo (recap,
+    ingest, jarvis, cantiere) cattura la sua uscita per lo stesso motivo. Qui
+    conta ancora di più perché L3-RIPRENDI-UI chiamerà `apri()` da dentro il
+    server MCP (mcp.py), dove lo stdin del processo È il trasporto stdio del
+    protocollo JSON-RPC: ereditarlo darebbe al lanciatore un canale che non gli
+    appartiene, e una riga sullo stdout non catturata finirebbe nel flusso del
+    protocollo. Il `timeout` copre il caso di un `PLANCIA_TERMINALE` (o un
+    `osascript` bloccato) che non torna mai: senza, la chiamata resterebbe
+    appesa per sempre. Un terminale di Linux o di Windows, invece, resta vivo
+    finché la finestra è aperta: parte staccato (`piattaforma.avvia_distaccato`,
+    sempre con stdin, stdout e stderr chiusi) e non si aspetta, quindi lì il
+    timeout non c'è.
     """
     proprio = conn is None
     if proprio:
@@ -420,10 +429,12 @@ def apri(task, conn=None) -> dict:
 
     riga = piattaforma.riga_shell(cwd, argv)
     lanciatore = os.environ.get("PLANCIA_TERMINALE")
+    piano = None
     if lanciatore:
         comando_lancio = [lanciatore, riga]
     else:
-        comando_lancio = piattaforma.comando_terminale(cwd, argv)
+        piano = piattaforma.piano_terminale(cwd, argv)
+        comando_lancio = piano["argv"] if piano else None
     esito = {"stato": s["stato"], "argv": argv, "cwd": cwd, "riga": riga}
     if comando_lancio is None:
         esito["errore"] = ("nessun terminale trovato: installa uno fra x-terminal-emulator, "
@@ -443,7 +454,8 @@ def apri(task, conn=None) -> dict:
         # finche' la finestra e' aperta: aspettarlo, con un tetto, lo ucciderebbe
         # allo scadere. Si stacca e non si aspetta.
         try:
-            piattaforma.avvia_distaccato(comando_lancio)
+            piattaforma.avvia_distaccato(comando_lancio, cwd=piano["cwd"],
+                                         nuova_console=piano["nuova_console"])
         except OSError as exc:
             esito["errore"] = "non riesco ad aprire il terminale: %s" % exc
     return esito

@@ -58,13 +58,14 @@ def cmd_recap(args):
 def cmd_notifica(titolo, testo):
     """Una notifica di sistema (`piattaforma.comando_notifica`). Dove non si sa
     farne una, e' silenziosa: niente notifica e' meglio di un errore."""
+    import subprocess
     from . import piattaforma
     testo = testo.replace('"', "'")[:220]
     argv = piattaforma.comando_notifica(titolo, testo)
     if not argv:
         return
     try:
-        piattaforma.esegui(argv, capture_output=True, timeout=20)
+        piattaforma.esegui(argv, capture_output=True, timeout=20, stdin=subprocess.DEVNULL)
     except Exception:
         pass
 

@@ -77,7 +77,9 @@ python3 bin/plancia serve --open
 `%LOCALAPPDATA%\Plancia\bin`, e ti dice di aggiungere quella cartella al PATH se
 non c'è ancora; `bin/plancia.cmd` fa lo stesso lavoro da dentro il clone. Su Linux
 è un collegamento in `~/.local/bin`. `plancia uninstall` rimette tutto com'era.
-`pip install` non è ancora una strada supportata: il pacchetto non porta i file
+Se `python` non è nel PATH (l'installer di python.org non ce lo mette per
+impostazione predefinita, e `python` può essere lo stub del Microsoft Store),
+usa `py -3 bin/plancia install`. `pip install` non è ancora una strada supportata: il pacchetto non porta i file
 della dashboard né gli script di `bin/`, quindi si usa il clone.
 
 Cosa funziona uguale: la dashboard, i tool MCP `plancia_*` in Claude Code e Codex,
@@ -90,18 +92,24 @@ Cosa usa ciascun sistema sotto il cofano:
 | | macOS | Windows | Linux |
 |---|---|---|---|
 | partenza all'accesso, riepilogo giornaliero | launchd | Task Scheduler, o la cartella Esecuzione automatica se lo rifiuta | systemd `--user`, o `~/.config/autostart` |
-| Riprendi apre | Terminale | Windows Terminal, altrimenti `cmd` | il primo tra x-terminal-emulator, gnome-terminal, konsole, xterm |
+| Riprendi apre | Terminale | Windows Terminal, altrimenti una nuova finestra di console | il primo tra x-terminal-emulator, gnome-terminal, konsole, xterm |
 | appunti | `pbcopy` | `clip` | wl-copy, xclip o xsel |
 | riepilogo a voce | `say` | il sintetizzatore vocale di Windows | espeak-ng (o espeak) e un lettore audio |
 | notifica | `osascript` | notifica di PowerShell | `notify-send`, se c'è |
 
 Cosa non esiste fuori da macOS: l'app nativa, la sua voce nella barra dei menu, le
 azioni `plancia://` e il pannello vocale a mani libere. `plancia jarvis "..."` da
-terminale funziona comunque. Se sulla tua macchina manca un pezzo (nessun motore
-vocale, nessuno strumento per le notifiche), Plancia dice quale e va avanti. I
-comandi che Plancia costruisce per ogni sistema sono coperti dalla suite, ma
-Windows e Linux hanno avuto molto meno uso reale di macOS: `plancia doctor` dice
-cosa è collegato.
+terminale funziona comunque. Se sulla tua macchina manca un pezzo il resto va
+avanti: senza strumento per le notifiche niente notifica, senza strumento per gli
+appunti niente copia. Senza un motore vocale, la riga di comando e i tool MCP
+restituiscono comunque il testo e indicano come motore della voce "nessuno". La
+dashboard per ora è l'eccezione: il pulsante del riepilogo chiede sempre la voce,
+e senza un motore vocale la richiesta fallisce con quel messaggio invece di
+mostrare il testo. Su Windows il server parte all'accesso ma non riparte dopo un
+crash, e i suoi errori non finiscono in un log (su macOS lo riavvia launchd, su
+Linux systemd). I comandi che Plancia costruisce per ogni sistema sono coperti
+dalla suite, ma Windows e Linux hanno avuto molto meno uso reale di macOS: `plancia doctor`
+dice cosa è collegato.
 
 ## Le tre porte
 
@@ -572,7 +580,7 @@ git config core.hooksPath .githooks
 ```
 
 Accende il gancio che fa girare `python3 tools/prova.py` prima di ogni push:
-1202 controlli in una ventina di secondi, su un archivio finto che non tocca
+1228 controlli in una ventina di secondi, su un archivio finto che non tocca
 il tuo.
 
 ## Licenza

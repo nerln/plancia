@@ -758,7 +758,9 @@ def _lancia(argv):
 def _attiva(piano: dict):
     """Scrive i file del piano e lancia i comandi di attivazione. Se l'ultimo
     fallisce e il piano ha un ripiego, toglie quello che aveva scritto e prova il
-    ripiego. Torna (piano usato, esito dell'ultimo comando o None)."""
+    ripiego. Se invece funziona, toglie i file che il ripiego avrebbe potuto
+    lasciare da un giro precedente. Torna (piano usato, esito dell'ultimo
+    comando o None)."""
     for percorso, testo in piano["file"]:
         _scrivi(percorso, testo)
     esito = None
@@ -768,6 +770,13 @@ def _attiva(piano: dict):
         for percorso, _testo in piano["file"]:
             percorso.unlink(missing_ok=True)
         return _attiva(piano["ripiego"])
+    if piano.get("ripiego"):
+        # Il meccanismo principale ha funzionato: quello di ripiego, lasciato da
+        # un giro precedente (il `.cmd` in Esecuzione automatica, il `.desktop`),
+        # partirebbe insieme e all'accesso ci sarebbero due server, con il secondo
+        # che cade sulla porta occupata.
+        for percorso in piano["ripiego"]["rimuovi"]:
+            percorso.unlink(missing_ok=True)
     return piano, esito
 
 
