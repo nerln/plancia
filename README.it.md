@@ -47,6 +47,62 @@ cd ~/dev/plancia
 
 `plancia uninstall` rimette tutto com'era. I dati restano in `~/.plancia/`.
 
+## Windows e Linux
+
+Prima viene macOS: è lì che vive l'app nativa. Tutto il resto di Plancia è Python
+e un server web locale, quindi gira anche su Windows e Linux, con la dashboard nel
+browser. Servono Python 3.9+ e Claude Code o Codex.
+
+Windows (PowerShell):
+
+```powershell
+git clone https://github.com/nerln/plancia.git $HOME/plancia
+cd $HOME/plancia
+python bin/plancia install       # comando, server MCP, hook, skill, avvio automatico
+python bin/plancia init          # costruisce la mappa dei progetti
+python bin/plancia serve --open  # la dashboard, nel browser
+```
+
+Linux:
+
+```bash
+git clone https://github.com/nerln/plancia.git ~/dev/plancia
+cd ~/dev/plancia
+python3 bin/plancia install
+python3 bin/plancia init
+python3 bin/plancia serve --open
+```
+
+`install` scrive anche il comando `plancia`. Su Windows è uno shim `plancia.cmd` in
+`%LOCALAPPDATA%\Plancia\bin`, e ti dice di aggiungere quella cartella al PATH se
+non c'è ancora; `bin/plancia.cmd` fa lo stesso lavoro da dentro il clone. Su Linux
+è un collegamento in `~/.local/bin`. `plancia uninstall` rimette tutto com'era.
+`pip install` non è ancora una strada supportata: il pacchetto non porta i file
+della dashboard né gli script di `bin/`, quindi si usa il clone.
+
+Cosa funziona uguale: la dashboard, i tool MCP `plancia_*` in Claude Code e Codex,
+gli hook di sessione e il richiamo della memoria, le skill, la ricerca, il
+riepilogo, Riprendi (apre un terminale nella cartella giusta) e la partenza del
+server a ogni accesso.
+
+Cosa usa ciascun sistema sotto il cofano:
+
+| | macOS | Windows | Linux |
+|---|---|---|---|
+| partenza all'accesso, riepilogo giornaliero | launchd | Task Scheduler, o la cartella Esecuzione automatica se lo rifiuta | systemd `--user`, o `~/.config/autostart` |
+| Riprendi apre | Terminale | Windows Terminal, altrimenti `cmd` | il primo tra x-terminal-emulator, gnome-terminal, konsole, xterm |
+| appunti | `pbcopy` | `clip` | wl-copy, xclip o xsel |
+| riepilogo a voce | `say` | il sintetizzatore vocale di Windows | espeak-ng (o espeak) e un lettore audio |
+| notifica | `osascript` | notifica di PowerShell | `notify-send`, se c'è |
+
+Cosa non esiste fuori da macOS: l'app nativa, la sua voce nella barra dei menu, le
+azioni `plancia://` e il pannello vocale a mani libere. `plancia jarvis "..."` da
+terminale funziona comunque. Se sulla tua macchina manca un pezzo (nessun motore
+vocale, nessuno strumento per le notifiche), Plancia dice quale e va avanti. I
+comandi che Plancia costruisce per ogni sistema sono coperti dalla suite, ma
+Windows e Linux hanno avuto molto meno uso reale di macOS: `plancia doctor` dice
+cosa è collegato.
+
 ## Le tre porte
 
 **L'app.** Finestra nativa, voce nella barra dei menu, e tiene su il backend da
@@ -499,7 +555,7 @@ da ⌘K. Al primo avvio una guida spiega le parti non ovvie, e resta lì sotto
 
 ## Cosa serve
 
-macOS 13 o più recente, Python 3.9+, Claude Code. Gli strumenti da riga di
+macOS 13 o più recente (o Windows o Linux, vedi sopra), Python 3.9+, Claude Code. Gli strumenti da riga di
 comando di Xcode solo per costruire l'app. `gh` è facoltativo e serve solo a
 leggere i tuoi repo.
 
@@ -516,7 +572,7 @@ git config core.hooksPath .githooks
 ```
 
 Accende il gancio che fa girare `python3 tools/prova.py` prima di ogni push:
-1082 controlli in una ventina di secondi, su un archivio finto che non tocca
+1202 controlli in una ventina di secondi, su un archivio finto che non tocca
 il tuo.
 
 ## Licenza

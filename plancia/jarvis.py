@@ -272,15 +272,18 @@ def _copia_appunti(testo: str) -> bool:
     qualche parte, non c'è niente da lanciare, ma il messaggio da incollarci
     dentro deve arrivare da qualche parte diversa dalla voce.
 
-    `PLANCIA_CLIPBOARD`, quando c'è, sostituisce `pbcopy`: stessa idea di
-    `PLANCIA_TERMINALE` in `riprendi.apri` (le prove non toccano mai gli
-    appunti veri di chi le lancia). Silenzioso se fallisce (niente `pbcopy`
-    su chi non è su un Mac, o in CI): chi ha chiesto "riprendi" ha comunque
+    `PLANCIA_CLIPBOARD`, quando c'è, sostituisce il comando di sistema: stessa
+    idea di `PLANCIA_TERMINALE` in `riprendi.apri` (le prove non toccano mai gli
+    appunti veri di chi le lancia). Il comando di sistema lo sceglie
+    `piattaforma.comando_appunti`: `pbcopy` su macOS, `clip` su Windows,
+    `wl-copy`, `xclip` o `xsel` su Linux. Silenzioso se fallisce (nessun
+    comando per gli appunti, o in CI): chi ha chiesto "riprendi" ha comunque
     la risposta parlata, che dice il motivo a prescindere dagli appunti.
     """
-    import os
-    import subprocess
-    comando = (os.environ.get("PLANCIA_CLIPBOARD") or "pbcopy").split()
+    from . import piattaforma
+    comando = piattaforma.comando_appunti()
+    if not comando:
+        return False
     try:
         # Consigliata del critico (L3-RIPRENDI-UI-4): `subprocess.run` senza
         # `check` tornava True anche quando il comando usciva con un codice
@@ -288,7 +291,7 @@ def _copia_appunti(testo: str) -> bool:
         # esce 1) - il punto 7 del lotto era soddisfatto alla lettera (la
         # voce non mente MAI se `_copia_appunti` torna False), non nello
         # spirito (qui tornava sempre True). Ora conta il codice di uscita.
-        res = subprocess.run(comando, input=testo, text=True, capture_output=True, timeout=5)
+        res = piattaforma.esegui(comando, input=testo, text=True, capture_output=True, timeout=5)
         return res.returncode == 0
     except Exception:
         return False

@@ -56,11 +56,17 @@ def cmd_recap(args):
 
 
 def cmd_notifica(titolo, testo):
-    import subprocess
+    """Una notifica di sistema (`piattaforma.comando_notifica`). Dove non si sa
+    farne una, e' silenziosa: niente notifica e' meglio di un errore."""
+    from . import piattaforma
     testo = testo.replace('"', "'")[:220]
-    subprocess.run(["osascript", "-e",
-                    f'display notification "{testo}" with title "{titolo}"'],
-                   capture_output=True, timeout=20)
+    argv = piattaforma.comando_notifica(titolo, testo)
+    if not argv:
+        return
+    try:
+        piattaforma.esegui(argv, capture_output=True, timeout=20)
+    except Exception:
+        pass
 
 
 def cmd_ask(args):
@@ -552,6 +558,10 @@ def cmd_install(args):
         print("·", line)
     print("\nOra: `plancia sync` e poi `plancia serve --open`.")
     print("Le sessioni di Claude Code già aperte vanno riavviate per vedere i tool plancia_*.")
+    from . import piattaforma
+    if piattaforma.nome() != piattaforma.MAC:
+        print("Su Windows e Linux la dashboard si apre nel browser: "
+              f"http://127.0.0.1:{config.load_config().get('port', config.DEFAULT_PORT)}")
 
 
 def cmd_uninstall(args):

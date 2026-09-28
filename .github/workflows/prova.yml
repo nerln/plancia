@@ -1,5 +1,22 @@
-# Il collaudo a ogni push. Gira su Linux di proposito: se passa lì vuol dire
-# che il cuore di Plancia è python e basta, senza niente di macOS sotto.
+# Il collaudo a ogni push, su Linux, Windows e macOS, con Python 3.9 e 3.12.
+#
+# Il cuore di Plancia e' python e basta: se passa qui vuol dire che non ha niente
+# di macOS sotto. macOS resta la piattaforma principale (c'e' l'app nativa, e' li'
+# che gira tutto); su Windows e Linux Plancia si installa con `plancia install` e
+# la dashboard si apre nel browser.
+#
+# Su Windows i comandi si lanciano con `python`, non `python3`.
+#
+# Cosa e' provato dove:
+# - tools/prove/piattaforma.py controlla i comandi che Plancia COSTRUISCE per tutte
+#   e tre le piattaforme (terminale, appunti, voce, notifica, avvio automatico,
+#   MCP, hook), senza eseguirli. Non ammette rossi su nessun sistema.
+# - la suite intera (tools/prova.py) e il front (tools/prova-front.py) su Windows
+#   girano ma NON bloccano: molte prove dei lotti piu' vecchi lanciano gli script
+#   di bin/ direttamente (lo shebang non esiste su Windows) o assumono percorsi
+#   POSIX, e nessuno le ha ancora portate. Sono SOLO POSIX finche' non lo si fa: il
+#   passo e' rosso su Windows senza fermare il resto, cosi' si vede quali sono,
+#   una alla volta. Su Linux e macOS il rosso blocca come sempre.
 name: collaudo
 
 on:
@@ -10,9 +27,12 @@ on:
 
 jobs:
   prova:
-    runs-on: ubuntu-latest
+    name: collaudo (${{ matrix.os }}, python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
         python: ['3.9', '3.12']
     steps:
       - uses: actions/checkout@v4
@@ -22,7 +42,23 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - name: collaudo
+      - name: piattaforma (Linux, macOS)
+        if: runner.os != 'Windows'
+        run: python3 tools/prove/piattaforma.py
+      - name: piattaforma (Windows)
+        if: runner.os == 'Windows'
+        run: python tools/prove/piattaforma.py
+      - name: collaudo (Linux, macOS)
+        if: runner.os != 'Windows'
         run: python3 tools/prova.py
-      - name: front
+      - name: collaudo (Windows, non blocca, prove solo POSIX da portare)
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        run: python tools/prova.py
+      - name: front (Linux, macOS)
+        if: runner.os != 'Windows'
         run: python3 tools/prova-front.py
+      - name: front (Windows, non blocca, prove solo POSIX da portare)
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        run: python tools/prova-front.py

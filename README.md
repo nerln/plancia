@@ -49,6 +49,62 @@ cd ~/dev/plancia
 
 `plancia uninstall` puts everything back. Your data stays in `~/.plancia/`.
 
+## Windows and Linux
+
+macOS comes first: that is where the native app lives. The rest of Plancia is
+Python and a local web server, so it also runs on Windows and Linux, with the
+dashboard in your browser. You need Python 3.9+ and Claude Code or Codex.
+
+Windows (PowerShell):
+
+```powershell
+git clone https://github.com/nerln/plancia.git $HOME/plancia
+cd $HOME/plancia
+python bin/plancia install       # command, MCP server, hooks, skills, autostart
+python bin/plancia init          # builds your project map
+python bin/plancia serve --open  # the dashboard, in your browser
+```
+
+Linux:
+
+```bash
+git clone https://github.com/nerln/plancia.git ~/dev/plancia
+cd ~/dev/plancia
+python3 bin/plancia install
+python3 bin/plancia init
+python3 bin/plancia serve --open
+```
+
+`install` also writes a `plancia` command. On Windows it is a `plancia.cmd` shim
+in `%LOCALAPPDATA%\Plancia\bin`, and it tells you to add that folder to your PATH
+if it is not there yet; `bin/plancia.cmd` does the same job from inside a clone.
+On Linux it is a link in `~/.local/bin`. `plancia uninstall` puts everything back.
+`pip install` is not a supported route yet: the package does not carry the
+dashboard files or the `bin/` scripts, so use the clone.
+
+What works the same: the dashboard, the `plancia_*` MCP tools in Claude Code and
+Codex, the session hooks and the memory recall, the skills, search, the recap,
+Resume (it opens a terminal in the right folder), and starting the server at every
+login.
+
+What each system uses underneath:
+
+| | macOS | Windows | Linux |
+|---|---|---|---|
+| start at login, daily recap | launchd | Task Scheduler, or the Startup folder if that is refused | systemd `--user`, or `~/.config/autostart` |
+| Resume opens | Terminal | Windows Terminal, else `cmd` | the first of x-terminal-emulator, gnome-terminal, konsole, xterm |
+| clipboard | `pbcopy` | `clip` | wl-copy, xclip or xsel |
+| spoken recap | `say` | the built-in speech synthesizer | espeak-ng (or espeak) and an audio player |
+| notification | `osascript` | PowerShell balloon | `notify-send`, if installed |
+
+What does not exist outside macOS: the native app, its menu bar item, the
+`plancia://` URL actions and the hands-free voice panel. `plancia jarvis "..."`
+from a terminal still works. If a piece is missing on your machine (no speech
+engine, no notification tool), Plancia says which one and carries on. The
+commands Plancia builds for each system are covered by the suite, but Windows and
+Linux have had far less real use than macOS: `plancia doctor` tells you what is
+connected.
+
 ## The three ways in
 
 **The app.** A native window, a menu bar item, and the voice. It supervises the
@@ -396,7 +452,7 @@ available under "Guide".
 
 ## Requirements
 
-macOS 13 or later, Python 3.9+, Claude Code. Xcode command line tools only if you
+macOS 13 or later (or Windows or Linux, see above), Python 3.9+, Claude Code. Xcode command line tools only if you
 want to build the app. `gh` is optional and only used to read your repos.
 
 ## Security
@@ -411,7 +467,7 @@ Reads are open: it is your data, already on your disk.
 git config core.hooksPath .githooks
 ```
 
-Turns on the hook that runs `python3 tools/prova.py` before every push: 1082
+Turns on the hook that runs `python3 tools/prova.py` before every push: 1202
 checks in about twenty seconds, against a throwaway archive that never touches
 yours. They cover the schema, the board, the proposals, the search index, the
 recap, the MCP surface and its token budget, every read route of the HTTP API,

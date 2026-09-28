@@ -37,14 +37,13 @@ un'euristica, e lo dice nel motivo.
 
 import json
 import os
-import shlex
 import socket
 import subprocess
 import time
 from datetime import datetime
 from pathlib import Path
 
-from . import cantiere, codex, config, eventi, recap, richiamo, store
+from . import cantiere, codex, config, eventi, piattaforma, recap, richiamo, store
 
 # Quanto vecchio può essere l'ultimo tocco a un rollout Codex perché lo si
 # consideri ancora "viva": non è un segnale diretto (non c'è modo scriptabile
@@ -371,8 +370,8 @@ def comando(task, stato_calcolato, conn=None) -> list:
     return [exe, prompt]
 
 
-def _applescript_quote(testo: str) -> str:
-    return '"%s"' % testo.replace("\\", "\\\\").replace('"', '\\"')
+# La ricetta per aprire un terminale sta in piattaforma.py, una per sistema.
+_applescript_quote = piattaforma.applescript_quote
 
 
 _APRI_TIMEOUT_SECONDI = 15
@@ -384,8 +383,10 @@ def apri(task, conn=None) -> dict:
     Non è un run di `cantiere`: non scrive in `runs`, non passa da
     `riconcilia()`. Il lanciatore è sostituibile con `PLANCIA_TERMINALE`
     (un comando a cui viene passato, come unico argomento, `cd <cwd> && `
-    seguito dalla riga già quotata con `shlex.join`); di default apre
-    Terminal.app con AppleScript. Per "viva" non lancia niente: torna solo
+    seguito dalla riga già quotata con `shlex.join`); di default apre il
+    terminale del sistema (`piattaforma.comando_terminale`): Terminal.app con
+    AppleScript su macOS, Windows Terminal o `cmd` su Windows, il primo
+    terminale che c'è su Linux. Per "viva" non lancia niente: torna solo
     il messaggio da mettere negli appunti (lo fa la UI).
 
     Il lanciatore (`osascript` o `PLANCIA_TERMINALE`) parte con
@@ -417,20 +418,34 @@ def apri(task, conn=None) -> dict:
         if proprio:
             conn.close()
 
-    riga = "cd %s && %s" % (shlex.quote(cwd), shlex.join(argv))
+    riga = piattaforma.riga_shell(cwd, argv)
     lanciatore = os.environ.get("PLANCIA_TERMINALE")
     if lanciatore:
         comando_lancio = [lanciatore, riga]
     else:
-        script = "tell application \"Terminal\" to do script %s" % _applescript_quote(riga)
-        comando_lancio = ["osascript", "-e", script]
+        comando_lancio = piattaforma.comando_terminale(cwd, argv)
     esito = {"stato": s["stato"], "argv": argv, "cwd": cwd, "riga": riga}
-    try:
-        subprocess.run(comando_lancio, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                       stderr=subprocess.PIPE, text=True, check=False,
-                       timeout=_APRI_TIMEOUT_SECONDI)
-    except subprocess.TimeoutExpired:
-        esito["errore"] = "il lanciatore non ha risposto entro %ss" % _APRI_TIMEOUT_SECONDI
+    if comando_lancio is None:
+        esito["errore"] = ("nessun terminale trovato: installa uno fra x-terminal-emulator, "
+                           "gnome-terminal, konsole o xterm, oppure imposta PLANCIA_TERMINALE")
+        return esito
+    if lanciatore or piattaforma.nome() == piattaforma.MAC:
+        # `osascript` (o il lanciatore finto delle prove) torna subito: qui si
+        # aspetta il suo esito, con un tetto.
+        try:
+            piattaforma.esegui(comando_lancio, stdin=subprocess.DEVNULL,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                               text=True, check=False, timeout=_APRI_TIMEOUT_SECONDI)
+        except subprocess.TimeoutExpired:
+            esito["errore"] = "il lanciatore non ha risposto entro %ss" % _APRI_TIMEOUT_SECONDI
+    else:
+        # Un terminale di Linux (xterm, x-terminal-emulator) resta in primo piano
+        # finche' la finestra e' aperta: aspettarlo, con un tetto, lo ucciderebbe
+        # allo scadere. Si stacca e non si aspetta.
+        try:
+            piattaforma.avvia_distaccato(comando_lancio)
+        except OSError as exc:
+            esito["errore"] = "non riesco ad aprire il terminale: %s" % exc
     return esito
 
 

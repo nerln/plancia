@@ -12,9 +12,13 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from . import config
+from . import config, piattaforma
 
 BIN = config.ROOT / "bin"
+# I percorsi degli script, nudi. Quello che si scrive davvero in settings.json,
+# in ~/.claude.json e nel config.toml di Codex passa da `piattaforma`: su macOS
+# e Linux e' proprio questo percorso (lo shebang basta), su Windows diventa
+# `"<python>" "<script>"` perche' uno script senza estensione non si esegue.
 HOOK_CMD = str(BIN / "plancia-hook")
 MCP_CMD = str(BIN / "plancia-mcp")
 RICHIAMO_CMD = str(BIN / "plancia-richiamo")
@@ -49,9 +53,16 @@ def _hook_entry(comando: str, timeout: int = 5) -> dict:
     return {"hooks": [{"type": "command", "command": comando, "timeout": timeout}]}
 
 
+def _e_nostro(comando, basename: str) -> bool:
+    """Il comando di un hook e' uno dei nostri? Si guarda come finisce; su
+    Windows il comando e' `"<python>" "<script>"` e finisce con una virgoletta,
+    che qui si toglie (su macOS e Linux non c'e' e non cambia niente)."""
+    return (comando or "").rstrip().rstrip('"').endswith(basename)
+
+
 def _senza(entries: list, basename: str) -> list:
     return [e for e in entries
-            if not any((h.get("command") or "").endswith(basename)
+            if not any(_e_nostro(h.get("command"), basename)
                        for h in (e.get("hooks") or []))]
 
 
@@ -72,7 +83,7 @@ def install_hooks() -> str:
     for eventi, comando, basename, timeout in AGGANCI:
         for event in eventi:
             entries = _senza(hooks.setdefault(event, []), basename)
-            entries.append(_hook_entry(comando, timeout))
+            entries.append(_hook_entry(piattaforma.riga_script(comando), timeout))
             hooks[event] = entries
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False), "utf-8")
     return f"hook installati in {path}"
@@ -108,7 +119,7 @@ def _agganciato(basename: str, eventi) -> bool:
     for event in eventi:
         for entry in data.get("hooks", {}).get(event, []):
             for hook in entry.get("hooks", []):
-                if (hook.get("command") or "").endswith(basename):
+                if _e_nostro(hook.get("command"), basename):
                     return True
     return False
 
@@ -126,12 +137,13 @@ def richiamo_installed() -> bool:
 # --------------------------------------------------------------------------
 
 def install_mcp() -> str:
-    claude = shutil.which("claude")
+    claude = piattaforma.cerca("claude")
+    avvio = piattaforma.argv_script(MCP_CMD)
     if claude:
-        subprocess.run([claude, "mcp", "remove", "plancia", "--scope", "user"],
-                       capture_output=True, text=True)
-        res = subprocess.run(
-            [claude, "mcp", "add", "plancia", "--scope", "user", "--", MCP_CMD],
+        piattaforma.esegui([claude, "mcp", "remove", "plancia", "--scope", "user"],
+                           capture_output=True, text=True)
+        res = piattaforma.esegui(
+            [claude, "mcp", "add", "plancia", "--scope", "user", "--"] + avvio,
             capture_output=True, text=True)
         if res.returncode == 0:
             return "server MCP registrato con `claude mcp add` (scope utente)"
@@ -145,16 +157,16 @@ def install_mcp() -> str:
     servers = data.setdefault("mcpServers", {})
     if isinstance(servers, list):
         servers = data["mcpServers"] = {}
-    servers["plancia"] = {"type": "stdio", "command": MCP_CMD, "args": [], "env": {}}
+    servers["plancia"] = {"type": "stdio", "command": avvio[0], "args": avvio[1:], "env": {}}
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False), "utf-8")
     return "server MCP registrato in ~/.claude.json"
 
 
 def remove_mcp() -> str:
-    claude = shutil.which("claude")
+    claude = piattaforma.cerca("claude")
     if claude:
-        subprocess.run([claude, "mcp", "remove", "plancia", "--scope", "user"],
-                       capture_output=True, text=True)
+        piattaforma.esegui([claude, "mcp", "remove", "plancia", "--scope", "user"],
+                           capture_output=True, text=True)
     path = config.CLAUDE_JSON
     if path.exists():
         try:
@@ -721,15 +733,86 @@ def install_skill(lang: str = None) -> str:
     return f"skill plancia ({scritta}) e riepilogo ({scritta}) scritte in {SKILL_DIR.parent}"
 
 
+def _scrivi(percorso: Path, testo: str) -> None:
+    percorso.parent.mkdir(parents=True, exist_ok=True)
+    if percorso.suffix.lower() == ".cmd":
+        # Un file batch porta gia' i suoi "\r\n" e cmd.exe lo legge nella tabella
+        # di caratteri della console (non in utf-8): niente write_text, che su
+        # Windows raddoppierebbe il ritorno a capo.
+        codifica = "oem" if os.name == "nt" else "utf-8"
+        percorso.write_bytes(testo.encode(codifica, errors="replace"))
+    else:
+        percorso.write_text(testo, "utf-8")
+
+
+def _lancia(argv):
+    """Lancia `argv` (sempre da `piattaforma.esegui`, che le prove sostituiscono).
+    Un programma che non c'e' o che si pianta vale come un comando fallito, non
+    come un'eccezione: chi chiama decide cosa dire."""
+    try:
+        return piattaforma.esegui(argv, capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return subprocess.CompletedProcess(argv, 127, "", str(exc))
+
+
+def _attiva(piano: dict):
+    """Scrive i file del piano e lancia i comandi di attivazione. Se l'ultimo
+    fallisce e il piano ha un ripiego, toglie quello che aveva scritto e prova il
+    ripiego. Torna (piano usato, esito dell'ultimo comando o None)."""
+    for percorso, testo in piano["file"]:
+        _scrivi(percorso, testo)
+    esito = None
+    for argv in piano["attiva"]:
+        esito = _lancia(argv)
+    if esito is not None and esito.returncode != 0 and piano.get("ripiego"):
+        for percorso, _testo in piano["file"]:
+            percorso.unlink(missing_ok=True)
+        return _attiva(piano["ripiego"])
+    return piano, esito
+
+
+def _disattiva(piano: dict) -> None:
+    """Spegne quello che `_attiva` ha acceso: i comandi, poi i file."""
+    for argv in piano["disattiva"]:
+        _lancia(argv)
+    for percorso in piano["rimuovi"]:
+        if percorso.exists():
+            percorso.unlink()
+    for argv in piano.get("dopo", []):
+        _lancia(argv)
+
+
+def _installato(piano) -> bool:
+    if not piano:
+        return False
+    if any(p.exists() for p in piano["presente"]):
+        return True
+    if piano["query"]:
+        return _lancia(piano["query"]).returncode == 0
+    return False
+
+
+def _uid():
+    return os.getuid() if hasattr(os, "getuid") else None
+
+
+def _errore_di(esito) -> str:
+    return ((esito.stderr or esito.stdout or "") if esito is not None else "").strip()[:120]
+
+
 def install_command() -> str:
-    target = Path.home() / ".local" / "bin"
+    piatt = piattaforma.nome()
+    link = piattaforma.percorso_comando(Path.home(), piatt)
+    target = link.parent
     target.mkdir(parents=True, exist_ok=True)
-    link = target / "plancia"
     src = BIN / "plancia"
-    if link.is_symlink() or link.exists():
-        link.unlink()
-    link.symlink_to(src)
-    on_path = str(target) in os.environ.get("PATH", "").split(":")
+    if piatt == piattaforma.WINDOWS:
+        _scrivi(link, piattaforma.shim_windows(sys.executable, src))
+    else:
+        if link.is_symlink() or link.exists():
+            link.unlink()
+        link.symlink_to(src)
+    on_path = piattaforma.nel_path(target, os.environ.get("PATH", ""), piatt)
     return (f"comando `plancia` in {link}" if on_path
             else f"comando in {link}, aggiungi {target} al PATH")
 
@@ -738,83 +821,54 @@ def install_command() -> str:
 # avvio automatico
 # --------------------------------------------------------------------------
 
-AGENT_LABEL = "com.plancia.server"
-AGENT_PLIST = Path.home() / "Library" / "LaunchAgents" / f"{AGENT_LABEL}.plist"
+# Le ricette (launchd su macOS, Task Scheduler su Windows, systemd su Linux) sono
+# in plancia/piattaforma.py come piani da leggere; qui si applicano. I nomi
+# sotto restano per chi li importava.
+AGENT_LABEL = piattaforma.LABEL_SERVER
+PLIST = piattaforma.PLIST_SERVER
 
-PLIST = """<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key><string>{label}</string>
-  <key>ProgramArguments</key>
-  <array><string>{python}</string><string>{cmd}</string><string>serve</string></array>
-  <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
-  <key>StandardOutPath</key><string>{log}</string>
-  <key>StandardErrorPath</key><string>{log}</string>
-  <key>ProcessType</key><string>Background</string>
-  <key>EnvironmentVariables</key>
-  <dict><key>PATH</key><string>{path}</string></dict>
-</dict>
-</plist>
-"""
+
+def _piano_server() -> dict:
+    # L'interprete va fissato: launchd non ha il PATH della shell e "python3"
+    # gli risolve nel 3.9 di Xcode invece che in quello con cui gira il resto.
+    return piattaforma.piano_server(sys.executable, BIN / "plancia", config.LOG_FILE,
+                                    Path.home(), uid=_uid())
 
 
 def autostart_on() -> str:
-    AGENT_PLIST.parent.mkdir(parents=True, exist_ok=True)
-    # L'interprete va fissato: launchd non ha il PATH della shell e "python3"
-    # gli risolve nel 3.9 di Xcode invece che in quello con cui gira il resto.
-    percorso = ":".join([str(Path.home() / ".local/bin"), "/opt/homebrew/bin",
-                         "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"])
-    AGENT_PLIST.write_text(PLIST.format(label=AGENT_LABEL, python=sys.executable,
-                                        cmd=str(BIN / "plancia"), path=percorso,
-                                        log=str(config.LOG_FILE)), "utf-8")
-    uid = os.getuid()
-    subprocess.run(["launchctl", "bootout", f"gui/{uid}/{AGENT_LABEL}"], capture_output=True)
-    res = subprocess.run(["launchctl", "bootstrap", f"gui/{uid}", str(AGENT_PLIST)],
-                         capture_output=True, text=True)
-    if res.returncode != 0:
-        return f"plist scritto in {AGENT_PLIST}, ma launchctl ha risposto: {res.stderr.strip()[:120]}"
-    return "avvio automatico attivo: la dashboard riparte a ogni accesso"
+    piano, esito = _attiva(_piano_server())
+    if esito is not None and esito.returncode != 0:
+        if piattaforma.nome() == piattaforma.MAC:
+            return (f"plist scritto in {piano['file'][0][0]}, ma launchctl ha "
+                    f"risposto: {_errore_di(esito)}")
+        return f"avvio automatico non attivato ({piano['nome']}): {_errore_di(esito)}"
+    if piattaforma.nome() == piattaforma.MAC:
+        return "avvio automatico attivo: la dashboard riparte a ogni accesso"
+    return (f"avvio automatico attivo con {piano['nome']}: "
+            "la dashboard riparte a ogni accesso")
 
 
 def autostart_off() -> str:
-    uid = os.getuid()
-    subprocess.run(["launchctl", "bootout", f"gui/{uid}/{AGENT_LABEL}"], capture_output=True)
-    if AGENT_PLIST.exists():
-        AGENT_PLIST.unlink()
+    _disattiva(_piano_server())
     return "avvio automatico disattivato"
 
 
 def autostart_installed() -> bool:
-    return AGENT_PLIST.exists()
+    return _installato(_piano_server())
 
 
 # --------------------------------------------------------------------------
 # riepilogo automatico
 # --------------------------------------------------------------------------
 
-RECAP_LABEL = "com.plancia.recap"
-RECAP_PLIST = Path.home() / "Library" / "LaunchAgents" / f"{RECAP_LABEL}.plist"
+RECAP_LABEL = piattaforma.LABEL_RIEPILOGO
+RECAP_TEMPLATE = piattaforma.PLIST_RIEPILOGO
 
-RECAP_TEMPLATE = """<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key><string>{label}</string>
-  <key>ProgramArguments</key>
-  <array><string>{python}</string><string>{cmd}</string><string>recap</string>
-    <string>--daily</string><string>--notify</string></array>
-  <key>StartCalendarInterval</key>
-  <dict><key>Hour</key><integer>{ora}</integer><key>Minute</key><integer>{minuto}</integer></dict>
-  <key>StandardOutPath</key><string>{log}</string>
-  <key>StandardErrorPath</key><string>{log}</string>
-  <key>EnvironmentVariables</key>
-  <dict><key>PATH</key><string>{path}</string></dict>
-  <key>ProcessType</key><string>Background</string>
-</dict>
-</plist>
-"""
+
+def _piano_riepilogo(ora: int = 0, minuto: int = 0):
+    return piattaforma.piano_riepilogo(
+        sys.executable, BIN / "plancia", ora, minuto, config.DATA_DIR / "recap.log",
+        Path.home(), uid=_uid())
 
 
 def recap_daily_on(ora: str = "08:45", voce: bool = False) -> str:
@@ -823,32 +877,28 @@ def recap_daily_on(ora: str = "08:45", voce: bool = False) -> str:
         assert 0 <= h < 24 and 0 <= m < 60
     except Exception:
         return f"ora non valida: {ora}. Serve HH:MM."
+    piano = _piano_riepilogo(h, m)
+    if piano is None:
+        return ("riepilogo automatico non attivato: qui serve systemd --user "
+                "(in alternativa metti `plancia recap --daily --notify` in cron)")
     cfg = config.load_config()
     cfg["riepilogo_ora"] = f"{h:02d}:{m:02d}"
     cfg["riepilogo_voce"] = bool(voce)
     config.save_config(cfg)
 
-    percorso = ":".join([str(Path.home() / ".local/bin"), "/opt/homebrew/bin",
-                         "/usr/local/bin", "/usr/bin", "/bin"])
-    RECAP_PLIST.parent.mkdir(parents=True, exist_ok=True)
-    RECAP_PLIST.write_text(RECAP_TEMPLATE.format(
-        label=RECAP_LABEL, python=sys.executable, cmd=str(BIN / "plancia"),
-        ora=h, minuto=m, log=str(config.DATA_DIR / "recap.log"), path=percorso), "utf-8")
-    uid = os.getuid()
-    subprocess.run(["launchctl", "bootout", f"gui/{uid}/{RECAP_LABEL}"], capture_output=True)
-    res = subprocess.run(["launchctl", "bootstrap", f"gui/{uid}", str(RECAP_PLIST)],
-                         capture_output=True, text=True)
-    if res.returncode != 0:
-        return f"plist scritto, launchctl ha risposto: {res.stderr.strip()[:120]}"
+    piano, esito = _attiva(piano)
+    if esito is not None and esito.returncode != 0:
+        if piattaforma.nome() == piattaforma.MAC:
+            return f"plist scritto, launchctl ha risposto: {_errore_di(esito)}"
+        return f"riepilogo automatico non attivato ({piano['nome']}): {_errore_di(esito)}"
     return (f"riepilogo automatico alle {h:02d}:{m:02d}"
             + (" con la voce" if voce else " come notifica"))
 
 
 def recap_daily_off() -> str:
-    uid = os.getuid()
-    subprocess.run(["launchctl", "bootout", f"gui/{uid}/{RECAP_LABEL}"], capture_output=True)
-    if RECAP_PLIST.exists():
-        RECAP_PLIST.unlink()
+    piano = _piano_riepilogo()
+    if piano is not None:
+        _disattiva(piano)
     cfg = config.load_config()
     cfg.pop("riepilogo_ora", None)
     config.save_config(cfg)
@@ -856,14 +906,16 @@ def recap_daily_off() -> str:
 
 
 def recap_daily_installed() -> bool:
-    return RECAP_PLIST.exists()
+    return _installato(_piano_riepilogo())
 
 
 def install_all() -> list:
-    for script in ("plancia", "plancia-mcp", "plancia-hook"):
-        path = BIN / script
-        if path.exists():
-            path.chmod(0o755)
+    if piattaforma.nome() != piattaforma.WINDOWS:
+        # su Windows il permesso di esecuzione non esiste: si lancia con python
+        for script in ("plancia", "plancia-mcp", "plancia-hook"):
+            path = BIN / script
+            if path.exists():
+                path.chmod(0o755)
     from . import codex
     return [install_command(), install_mcp(), codex.registra_mcp(), install_hooks(),
             install_skill(), autostart_on()]
@@ -873,8 +925,8 @@ def uninstall_all() -> list:
     from . import codex
     out = [recap_daily_off(), autostart_off(), remove_hooks(), remove_mcp(),
            codex.rimuovi_mcp()]
-    link = Path.home() / ".local" / "bin" / "plancia"
-    if link.is_symlink():
+    link = piattaforma.percorso_comando(Path.home())
+    if link.is_symlink() or (piattaforma.nome() == piattaforma.WINDOWS and link.exists()):
         link.unlink()
         out.append("comando rimosso")
     for d in (SKILL_DIR, config.CLAUDE_DIR / "skills" / "riepilogo"):
@@ -955,14 +1007,14 @@ def doctor() -> list:
     lines.append(f"{ok(cx['installato'])}Codex trovato ({cx['sessioni']} sessioni)")
     lines.append(f"{ok(cx['mcp'])}server MCP registrato anche in Codex")
     lines.append(f"{ok((SKILL_DIR / 'SKILL.md').exists())}skill plancia")
-    lines.append(f"{ok(autostart_installed())}avvio automatico (launchd)")
+    lines.append(f"{ok(autostart_installed())}avvio automatico ({piattaforma.nome_avvio()})")
     ora = config.load_config().get("riepilogo_ora")
     lines.append(f"{ok(recap_daily_installed())}riepilogo automatico"
                  + (f" alle {ora}" if ora else "  (`plancia daily on 08:45`)"))
     try:
         from . import voice
         v = voice.stato()
-        lines.append(f"ok  voce: {v['motore']} · {v['voce_attuale']} · "
+        lines.append(f"ok  voce: {v['motore']} · {v['voce_attuale'] or 'voce predefinita del sistema'} · "
                      f"{'Voicebox attivo' if v['voicebox_vivo'] else 'voci di sistema'}")
     except Exception as exc:
         lines.append(f"no  voce: {exc}")
@@ -975,10 +1027,15 @@ def doctor() -> list:
         lines.append(f"no  registro eventi: {exc}")
     from . import recap as _recap
     lines.append(f"{ok(bool(_recap.claude_bin()))}claude per il riepilogo: {_recap.claude_bin() or 'non trovato'}")
-    app = Path("/Applications/Plancia.app")
-    lines.append(f"{ok(app.exists())}app macOS in {app}"
-                 + ("" if app.exists() else "  (`./mac/build.sh --install`)"))
-    link = Path.home() / ".local" / "bin" / "plancia"
+    if piattaforma.nome() == piattaforma.MAC:
+        app = Path("/Applications/Plancia.app")
+        lines.append(f"{ok(app.exists())}app macOS in {app}"
+                     + ("" if app.exists() else "  (`./mac/build.sh --install`)"))
+    else:
+        # l'app nativa esiste solo per macOS: qui la dashboard e' nel browser
+        lines.append("ok  app nativa: solo macOS, qui la dashboard si apre nel browser "
+                     "(`plancia serve --open`)")
+    link = piattaforma.percorso_comando(Path.home())
     lines.append(f"{ok(link.exists())}comando {link}")
     port = config.load_config().get("port", config.DEFAULT_PORT)
     import socket
