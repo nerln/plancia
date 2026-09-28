@@ -417,6 +417,26 @@ def esegui(prova, radice):
     prova("gli SVG sono percorsi M, L, Q, Z che il confronto sa leggere",
           bool(tutti_sp) and all(dagli_svg.values()), str({n: len(v) for n, v in dagli_svg.items()}))
 
+    # La forma del segno (terzo giro): una sagoma sola, leggera. Due misure sugli
+    # SVG, che valgono per qualunque segno futuro con lo stesso spirito.
+    #  - Pochi pezzi: in ogni strato, le forme piene (quelle che non sono un buco
+    #    dentro un'altra) sono al più due, cioè uno scafo e UNA casa del ponte. Il
+    #    secondo giro ne aveva tre (scafo, casa, ponte) e si leggeva pesante, a
+    #    gradini, da clip-art.
+    #  - Slanciato: il riquadro del segno intero è basso e lungo, altezza al più il
+    #    48 per cento della larghezza (il secondo giro era al 53: tozzo).
+    piene = {n: sum(1 for i, sp in enumerate(sps)
+                    if not any(i != j and _dentro(sp, altro) for j, altro in enumerate(sps)))
+             for n, sps in dagli_svg.items()}
+    prova("il segno ha pochi pezzi: in ogni strato al più due forme piene (scafo e una casa sola, niente gradini)",
+          bool(piene) and max(piene.values()) <= 2, str(piene))
+    riquadro_segno = _riquadro([sp for _, sp in tutti_sp])
+    slancio = ((riquadro_segno[3] - riquadro_segno[1]) / (riquadro_segno[2] - riquadro_segno[0])
+               if riquadro_segno else None)
+    prova("il segno è slanciato: il suo riquadro è alto al più il 48 per cento della larghezza (non tozzo)",
+          slancio is not None and slancio <= 0.48,
+          f"altezza/larghezza={None if slancio is None else round(slancio, 3)}")
+
     ricalcolate = {n: (_arrotonda(p, r), _arrotonda(p, r, inverso=True)) for n, (p, r) in forme.items()}
     non_trovati = [nome for nome, sp in tutti_sp
                    if not any(_uguali(sp, avanti) or _uguali(sp, indietro)

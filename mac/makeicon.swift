@@ -6,15 +6,18 @@
 // disegna a mano, con CoreGraphics, la stessa forma con un vetro imitato con
 // mano leggera, e mac/build.sh la trasforma in Plancia.icns con `iconutil`.
 //
-// Il segno è uno solo e sta nei due file allo stesso modo: uno scafo con la
-// prua che sale, una casa e un ponte con i vetri inclinati in avanti (la nave
-// crema, un unico strato, con il buco dei vetri) e i vetri accesi d'ambra (il
-// secondo strato). Sono quattro poligoni sulla tavola di 1024 dei file SVG
-// (mac/icona/Plancia.icon/Assets/nave.svg e vetri.svg), ognuno con un raggio che
-// ne arrotonda gli spigoli: dal vertice si va verso i due vicini per `raggio`
-// unità (al più metà lato) e si chiude la curva con una quadratica che ha il
-// vertice per punto di controllo. È la stessa regola con cui sono scritti gli
-// SVG. Se cambi il segno di là, cambialo anche qui: tools/prove-front/icona.py
+// Il segno è uno solo e sta nei due file allo stesso modo: una sagoma sola, bassa
+// e slanciata, fatta di uno scafo (poppa corta, prua che sale con un'unica curva)
+// e di UNA casa del ponte compatta con il fronte inclinato in avanti (la nave
+// crema, un unico strato, con il buco dei vetri) e i vetri accesi d'ambra, che
+// corrono su tutto il fronte della casa (il secondo strato). Sono tre poligoni sulla tavola di
+// 1024 dei file SVG (mac/icona/Plancia.icon/Assets/nave.svg e vetri.svg), ognuno con
+// un raggio che ne arrotonda gli spigoli: dal vertice si va verso i due vicini per
+// `raggio` unità (al più metà lato) e si chiude la curva con una quadratica che ha
+// il vertice per punto di controllo. È la stessa regola con cui sono scritti gli
+// SVG. I vetri stanno dentro la casa a distanza costante dai suoi bordi, e il loro
+// raggio è quello della casa meno quella distanza: gli angoli sono concentrici.
+// Se cambi il segno di là, cambialo anche qui: tools/prove-front/icona.py
 // ricalcola i percorsi da queste coordinate e li confronta con gli SVG.
 //
 // Coordinate uguali non bastano, conta anche il riferimento. In Icon Composer la
@@ -51,13 +54,12 @@ struct Forma {
     let raggio: CGFloat
 }
 
-// Lo strato crema (nave.svg): scafo, casa e ponte, con il buco dei vetri.
-let scafo = Forma(punti: [CGPoint(x: 134, y: 620), CGPoint(x: 898, y: 580), CGPoint(x: 774, y: 708), CGPoint(x: 156, y: 708)], raggio: 24)
-let casa = Forma(punti: [CGPoint(x: 240, y: 640), CGPoint(x: 240, y: 474), CGPoint(x: 590, y: 474), CGPoint(x: 590, y: 640)], raggio: 18)
-let ponte = Forma(punti: [CGPoint(x: 322, y: 486), CGPoint(x: 322, y: 306), CGPoint(x: 700, y: 306), CGPoint(x: 646, y: 486)], raggio: 28)
-// Lo strato ambra (vetri.svg): i vetri della plancia, inclinati in avanti. Sono
-// anche il buco dello strato crema, così l'ambra riempie esattamente la finestra.
-let vetri = Forma(punti: [CGPoint(x: 364, y: 350), CGPoint(x: 654, y: 350), CGPoint(x: 628, y: 440), CGPoint(x: 364, y: 440)], raggio: 18)
+// Lo strato crema (nave.svg): scafo e casa fusi in una sagoma, con il buco dei vetri.
+let scafo = Forma(punti: [CGPoint(x: 119, y: 576), CGPoint(x: 217, y: 576), CGPoint(x: 604, y: 561), CGPoint(x: 918, y: 486), CGPoint(x: 872, y: 605), CGPoint(x: 787, y: 669), CGPoint(x: 173, y: 669)], raggio: 35)
+let casa = Forma(punti: [CGPoint(x: 229, y: 659), CGPoint(x: 260, y: 330), CGPoint(x: 597, y: 330), CGPoint(x: 546, y: 659)], raggio: 58)
+// Lo strato ambra (vetri.svg): la fascia dei vetri, inclinata in avanti come la casa.
+// È anche il buco dello strato crema, così l'ambra riempie esattamente la finestra.
+let vetri = Forma(punti: [CGPoint(x: 294, y: 368), CGPoint(x: 552, y: 368), CGPoint(x: 538, y: 459), CGPoint(x: 285, y: 459)], raggio: 21)
 
 func colore(_ hex: UInt32, _ alfa: CGFloat = 1) -> CGColor {
     CGColor(red: CGFloat((hex >> 16) & 0xff) / 255, green: CGFloat((hex >> 8) & 0xff) / 255,
@@ -109,11 +111,10 @@ func arrotondata(_ forma: Forma, _ lato: CGFloat) -> CGPath {
     return percorso
 }
 
-/// Lo strato crema: scafo, casa e ponte fusi in una forma sola, meno i vetri.
+/// Lo strato crema: scafo e casa fusi in una forma sola, meno i vetri.
 func nave(_ lato: CGFloat) -> CGPath {
     let corpo = arrotondata(scafo, lato)
         .union(arrotondata(casa, lato), using: .winding)
-        .union(arrotondata(ponte, lato), using: .winding)
     return corpo.subtracting(arrotondata(vetri, lato), using: .winding)
 }
 
