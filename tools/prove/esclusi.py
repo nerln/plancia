@@ -71,6 +71,7 @@ anche che `ingest.sync()` diventi fail-closed invece di far entrare tutto.
 import json
 import os
 import re
+import shlex
 import sqlite3
 import subprocess
 import sys
@@ -78,6 +79,72 @@ import tempfile
 from pathlib import Path
 
 RADICE = Path(__file__).resolve().parent.parent.parent
+
+# --------------------------------------------------------------------------
+# ambiente comune a OGNI subprocess.run di questo file
+# --------------------------------------------------------------------------
+#
+# Il difetto grave trovato dal tester precedente: `ingest.sync(modo="tutto")`
+# lancia, in un thread demone, `recap.prepara()` (vedi plancia/ingest.py,
+# `freddo`), che con il motore di default (config.json senza
+# "motore_riepilogo", o rotto: `plancia/config.load_config()` ricade sui
+# default) chiama `recap.claude_bin()`, e quella funzione trova un `claude`
+# vero anche fuori dal PATH (percorsi fissi sotto `config.HOME`). Un
+# `config.json` con "motore_riepilogo": "template" evita che si CERCHI un
+# binario; questo ambiente è il secondo fusibile, indipendente dal primo:
+# anche quando la ricerca parte (config rotto, motore non impostato), qui non
+# trova mai il binario vero. HOME finta (mai quella vera, o
+# `~/.local/bin/claude` risolverebbe a un binario vero) e PATH che fa trovare
+# PRIMA un `claude` finto (scrive un file segnale ed esce 1), poi le
+# cartelle di sistema minime che servono a git/python veri.
+#
+# Un solo ambiente per l'intero modulo (non uno per prova): la prova finale
+# (`_claude_chiamato`, in fondo a `esegui()`) deve poter vedere se QUALUNQUE
+# sottoprocesso lanciato da QUALUNQUE prova di questo file ha anche solo
+# provato a lanciare claude, non solo l'ultimo.
+_FAKE_HOME = None
+_FAKE_BIN = None
+_FAKE_SEGNALE = None
+
+
+def _ambiente_condiviso() -> tuple:
+    """(home_finta, bin_finto, segnale): creati una sola volta per modulo."""
+    global _FAKE_HOME, _FAKE_BIN, _FAKE_SEGNALE
+    if _FAKE_HOME is None:
+        radice_finta = Path(tempfile.mkdtemp(prefix="plancia-prova-esclusi-fake-"))
+        _FAKE_HOME = radice_finta / "home"
+        _FAKE_HOME.mkdir(parents=True, exist_ok=True)
+        _FAKE_BIN = radice_finta / "bin"
+        _FAKE_BIN.mkdir(parents=True, exist_ok=True)
+        _FAKE_SEGNALE = radice_finta / "claude-chiamato"
+        finto = _FAKE_BIN / "claude"
+        finto.write_text(
+            "#!/bin/sh\n"
+            f"touch {shlex.quote(str(_FAKE_SEGNALE))}\n"
+            "exit 1\n", "utf-8")
+        finto.chmod(0o755)
+    return _FAKE_HOME, _FAKE_BIN, _FAKE_SEGNALE
+
+
+def _env_prova(**extra) -> dict:
+    """Ambiente per OGNI subprocess.run di questa prova (vedi il commento sopra):
+    parte da `os.environ`, impone HOME/PATH finte, e ci mette sopra `extra`
+    (tipicamente PLANCIA_HOME/CLAUDE_CONFIG_DIR/CODEX_HOME, che restano
+    espliciti: `plancia.config` li legge con `os.environ.get(...)` PRIMA del
+    fallback su HOME, quindi la cartella finta non li sposta)."""
+    home, bin_finto, _ = _ambiente_condiviso()
+    env = dict(os.environ)
+    env["HOME"] = str(home)
+    env["PATH"] = f"{bin_finto}:/usr/bin:/bin:/usr/sbin:/sbin"
+    env.update(extra)
+    return env
+
+
+def _claude_chiamato() -> bool:
+    """True se un qualunque `claude` finto, di un qualunque sottoprocesso di
+    questo modulo, è stato eseguito almeno una volta."""
+    _, _, segnale = _ambiente_condiviso()
+    return segnale.exists()
 
 
 def _codifica_cartella(path: Path) -> str:
@@ -255,13 +322,18 @@ def _prepara(base: Path) -> dict:
     ])
 
     # config.json: le due chiavi nuove, code_roots vuoto e gh spento per non
-    # toccare ne' `~/dev` vero ne' la rete.
+    # toccare ne' `~/dev` vero ne' la rete. "motore_riepilogo": "template"
+    # perche' il sync qui sotto e' un giro vero (modo="tutto"): senza questa
+    # chiave il motore di default e' "claude" (plancia/recap.py) e il giro
+    # freddo proverebbe a chiamarlo davvero (vedi il commento su _env_prova
+    # in cima al file per il secondo fusibile, indipendente da questo).
     plancia_home.mkdir(parents=True, exist_ok=True)
     (plancia_home / "config.json").write_text(json.dumps({
         "cartelle_escluse": [str(priv)],
         "sessioni_escluse": [sid_escluso],
         "code_roots": [],
         "gh_enabled": False,
+        "motore_riepilogo": "template",
     }), "utf-8")
 
     codex_home.mkdir(parents=True, exist_ok=True)
@@ -339,6 +411,24 @@ try:
 except Exception as exc:
     esito["sync2_ok"] = False
     esito["sync2_errore"] = repr(exc)
+
+# I due sync qui sopra (modo="tutto") possono aver lanciato, in un thread
+# demone, recap.prepara() (vedi plancia/ingest.py: freddo=True), che scrive
+# in meta (recap_testo, recap_impronta, ...) con la sua stessa connessione.
+# La fase 2 qui sotto scrive apposta dei valori sentinella in QUEGLI STESSI
+# meta.key per poi controllare che purga() li tolga: se il demone scrivesse
+# ANCORA DOPO che purga() li ha già invalidati, la prova diventerebbe
+# intermittente (a volte il valore sentinella resta, a volte no): lo stesso
+# tipo di gara che questo modulo esiste per chiudere, non solo quella con
+# claude vero. Un join con un tetto (10s: con "motore_riepilogo": "template"
+# il demone non chiama nessun binario, e finisce all'istante; il tetto serve
+# solo a non restare bloccati per sempre se qualcosa si impalla) prima di fase
+# 2 rende deterministico l'ordine: quando arriva la sentinella, il demone ha
+# già scritto (o è stato aspettato abbastanza), e non riscrive più dopo.
+import threading as _th_join
+for _t_join in _th_join.enumerate():
+    if _t_join is not _th_join.current_thread():
+        _t_join.join(timeout=10)
 
 conn = store.connect()
 
@@ -554,11 +644,26 @@ try:
          "2026-01-01T00:00:00Z"))
     oid_eventi = cur.lastrowid
 
-    conn.execute("INSERT INTO meta(key, value) VALUES (?,?)",
-                 (f"git_lento:{priv}", "2026-01-01T00:00:00Z"))
-    conn.execute("INSERT INTO meta(key, value) VALUES ('recap_testo','PRIMA della pulizia')")
-    conn.execute("INSERT INTO meta(key, value) VALUES ('recap_impronta','x|it|2026-01-01')")
-    conn.execute("INSERT INTO meta(key, value) VALUES ('proposte','[]')")
+    # ON CONFLICT DO UPDATE (non un INSERT semplice) su tutte e quattro:
+    # "recap_testo"/"recap_impronta"/"proposte" sono le stesse chiavi che il
+    # thread demone di recap.prepara() (join già fatto qui sopra, prima di
+    # questa fase) può aver già scritto per davvero con "motore_riepilogo":
+    # "template": un INSERT semplice su una riga già esistente romperebbe
+    # con IntegrityError (misurato), non con l'esito che questa prova vuole
+    # controllare (che purga() la tolga di nuovo).
+    conn.execute(
+        "INSERT INTO meta(key, value) VALUES (?,?) "
+        "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        (f"git_lento:{priv}", "2026-01-01T00:00:00Z"))
+    conn.execute(
+        "INSERT INTO meta(key, value) VALUES ('recap_testo','PRIMA della pulizia') "
+        "ON CONFLICT(key) DO UPDATE SET value=excluded.value")
+    conn.execute(
+        "INSERT INTO meta(key, value) VALUES ('recap_impronta','x|it|2026-01-01') "
+        "ON CONFLICT(key) DO UPDATE SET value=excluded.value")
+    conn.execute(
+        "INSERT INTO meta(key, value) VALUES ('proposte','[]') "
+        "ON CONFLICT(key) DO UPDATE SET value=excluded.value")
 
     conn.execute(
         "INSERT INTO meta(key, value) VALUES ('live_session','man-priv-0001') "
@@ -673,6 +778,16 @@ except Exception as exc:
     esito["purga_ok"] = False
     esito["purga_errore"] = repr(exc)
 
+# Secondo giro dello stesso join (vedi il commento più sopra, prima di fase
+# 2): a questo punto non dovrebbe restare niente da aspettare, ma un demone
+# lanciato da qualcos'altro dentro fase 2 (non c'è, ma non deve MAI restare
+# fuori controllo) troverebbe comunque un tetto qui, prima che lo script
+# finisca sul serio.
+import threading as _th_join
+for _t_join in _th_join.enumerate():
+    if _t_join is not _th_join.current_thread():
+        _t_join.join(timeout=10)
+
 print(json.dumps(esito))
 """
 
@@ -694,10 +809,9 @@ def _esegui_sottoprocesso(fix: dict) -> dict:
     script_path = fix["plancia_home"].parent / "sottoprocesso.py"
     script_path.write_text(script, "utf-8")
 
-    env = dict(os.environ)
-    env["PLANCIA_HOME"] = str(fix["plancia_home"])
-    env["CLAUDE_CONFIG_DIR"] = str(fix["claude_dir"])
-    env["CODEX_HOME"] = str(fix["codex_home"])
+    env = _env_prova(PLANCIA_HOME=str(fix["plancia_home"]),
+                      CLAUDE_CONFIG_DIR=str(fix["claude_dir"]),
+                      CODEX_HOME=str(fix["codex_home"]))
     proc = subprocess.run([sys.executable, str(script_path)], capture_output=True,
                           text=True, env=env, timeout=60)
     try:
@@ -725,8 +839,9 @@ def _prova_hook(prova) -> None:
         (plancia_home / "config.json").write_text(json.dumps({
             "cartelle_escluse": [str(priv)],
             "sessioni_escluse": ["99999999-9999-9999-9999-999999999999"],
+            "motore_riepilogo": "template",
         }), "utf-8")
-        env = dict(os.environ, PLANCIA_HOME=str(plancia_home))
+        env = _env_prova(PLANCIA_HOME=str(plancia_home))
 
         def lancia(cwd, session_id):
             payload = json.dumps({"hook_event_name": "SessionStart",
@@ -744,8 +859,9 @@ def _prova_hook(prova) -> None:
         prova("hook con cwd esclusa: niente invito a creare una scheda",
               "creala" not in r1.stdout.decode("utf-8", "replace"),
               r1.stdout.decode("utf-8", "replace")[:200])
-        prova("hook con cwd esclusa: dice che la cartella è privata",
-              "privata" in r1.stdout.decode("utf-8", "replace").lower())
+        prova("hook con cwd esclusa: dice che la sessione è privata",
+              "sessione privata" in r1.stdout.decode("utf-8", "replace").lower(),
+              r1.stdout.decode("utf-8", "replace")[:200])
 
         if coda.exists():
             coda.unlink()
@@ -753,6 +869,13 @@ def _prova_hook(prova) -> None:
         prova("hook con id escluso: niente in coda",
               not coda.exists() or not coda.read_text().strip())
         prova("hook con id escluso: esce comunque con 0", r2.returncode == 0)
+        # Stessa frase generica dell'esclusione per cwd qui sopra: prima
+        # della correzione diceva "Cartella privata" anche quando l'unico
+        # motivo dell'esclusione era l'id di sessione, non la cartella.
+        prova("hook con id escluso: dice che la sessione è privata (stessa "
+              "frase dell'esclusione per cwd, non 'cartella')",
+              "sessione privata" in r2.stdout.decode("utf-8", "replace").lower(),
+              r2.stdout.decode("utf-8", "replace")[:200])
 
         # controllo: una sessione normale (ne' cwd ne' id esclusi) finisce in
         # coda come sempre — la regressione da evitare e' un fail-closed che
@@ -779,14 +902,17 @@ def _prova_git_locale(prova) -> None:
         priv_repo.mkdir()
         norm_repo = code_root / "progetto-normale"
         norm_repo.mkdir()
+        env_git = _env_prova()
         for cartella, autore in ((priv_repo, "priv"), (norm_repo, "norm")):
-            subprocess.run(["git", "init", "-q"], cwd=str(cartella), check=True)
-            subprocess.run(["git", "config", "user.email", "p@p.it"], cwd=str(cartella), check=True)
-            subprocess.run(["git", "config", "user.name", "p"], cwd=str(cartella), check=True)
+            subprocess.run(["git", "init", "-q"], cwd=str(cartella), env=env_git, check=True)
+            subprocess.run(["git", "config", "user.email", "p@p.it"], cwd=str(cartella),
+                           env=env_git, check=True)
+            subprocess.run(["git", "config", "user.name", "p"], cwd=str(cartella),
+                           env=env_git, check=True)
             (cartella / "file.txt").write_text(f"contenuto {autore}\n", "utf-8")
-            subprocess.run(["git", "add", "."], cwd=str(cartella), check=True)
+            subprocess.run(["git", "add", "."], cwd=str(cartella), env=env_git, check=True)
             subprocess.run(["git", "commit", "-q", "-m", f"COMMITGITLOCALE{autore.upper()}XX"],
-                           cwd=str(cartella), check=True)
+                           cwd=str(cartella), env=env_git, check=True)
 
         claude_dir = base / "claude-config"
         plancia_home = base / "plancia-home"
@@ -798,6 +924,7 @@ def _prova_git_locale(prova) -> None:
             "sessioni_escluse": [],
             "code_roots": [str(code_root)],
             "gh_enabled": False,
+            "motore_riepilogo": "template",
         }), "utf-8")
 
         script = (
@@ -819,8 +946,8 @@ def _prova_git_locale(prova) -> None:
             "LIKE ?\", ('%' + marcatore_norm + '%',)).fetchone()[0],\n"
             "}\n"
             "print(json.dumps(esito))\n")
-        env = dict(os.environ, PLANCIA_HOME=str(plancia_home), CLAUDE_CONFIG_DIR=str(claude_dir),
-                   CODEX_HOME=str(codex_home))
+        env = _env_prova(PLANCIA_HOME=str(plancia_home), CLAUDE_CONFIG_DIR=str(claude_dir),
+                         CODEX_HOME=str(codex_home))
         r = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True,
                            env=env, timeout=30)
         try:
@@ -855,6 +982,7 @@ def _prova_mcp_scrittura(prova) -> None:
             c.mkdir(parents=True, exist_ok=True)
         (plancia_home / "config.json").write_text(json.dumps({
             "cartelle_escluse": [str(priv)], "sessioni_escluse": [], "gh_enabled": False,
+            "motore_riepilogo": "template",
         }), "utf-8")
 
         script = (
@@ -873,7 +1001,7 @@ def _prova_mcp_scrittura(prova) -> None:
             "n = conn2.execute(\"SELECT COUNT(*) FROM tasks WHERE title LIKE ?\","
             " ('%' + marcatore + '%',)).fetchone()[0]\n"
             "print(json.dumps({'rifiutato': rifiutato, 'righe_scritte': n}))\n")
-        env = dict(os.environ, PLANCIA_HOME=str(plancia_home), CLAUDE_CONFIG_DIR=str(claude_dir))
+        env = _env_prova(PLANCIA_HOME=str(plancia_home), CLAUDE_CONFIG_DIR=str(claude_dir))
         r = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True,
                            env=env, timeout=30)
         try:
@@ -905,12 +1033,18 @@ def _prova_config_rotto(prova) -> None:
         for c in (claude_dir, plancia_home, codex_home):
             c.mkdir(parents=True, exist_ok=True)
 
+        # "cartella_troppo_ampia_home" deve essere la STESSA HOME che vedrà il
+        # sottoprocesso (quella finta di _env_prova, non quella vera di questo
+        # processo): config.HOME, nel sottoprocesso, è Path.home() letta con
+        # la HOME finta impostata da _env_prova, e deve coincidere col
+        # percorso scritto qui per riconoscerlo come "troppo ampio".
+        home_finta, _, _ = _ambiente_condiviso()
         casi = {
             "stringa_al_posto_di_lista": json.dumps({"cartelle_escluse": str(priv)}),
             "virgola_finale": '{"cartelle_escluse": [' + json.dumps(str(priv)) + '],}',
             "cartella_inesistente": json.dumps({"cartelle_escluse": [str(base / "non-esiste-x")]}),
             "cartella_relativa": json.dumps({"cartelle_escluse": ["relativa/x"]}),
-            "cartella_troppo_ampia_home": json.dumps({"cartelle_escluse": [str(Path.home())]}),
+            "cartella_troppo_ampia_home": json.dumps({"cartelle_escluse": [str(home_finta)]}),
             "id_non_uuid": json.dumps({"sessioni_escluse": ["non-e-un-uuid"]}),
             "non_e_un_oggetto": "[1, 2, 3]",
         }
@@ -923,7 +1057,7 @@ def _prova_config_rotto(prova) -> None:
 
         for nome, contenuto in casi.items():
             (plancia_home / "config.json").write_text(contenuto, "utf-8")
-            env = dict(os.environ, PLANCIA_HOME=str(plancia_home))
+            env = _env_prova(PLANCIA_HOME=str(plancia_home))
             r = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True,
                                env=env, timeout=15)
             try:
@@ -937,8 +1071,9 @@ def _prova_config_rotto(prova) -> None:
 
         # caso valido, di controllo: la stessa cartella scritta bene passa.
         (plancia_home / "config.json").write_text(
-            json.dumps({"cartelle_escluse": [str(priv)]}), "utf-8")
-        env = dict(os.environ, PLANCIA_HOME=str(plancia_home))
+            json.dumps({"cartelle_escluse": [str(priv)], "motore_riepilogo": "template"}),
+            "utf-8")
+        env = _env_prova(PLANCIA_HOME=str(plancia_home))
         r = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True,
                            env=env, timeout=15)
         dati = json.loads([l for l in r.stdout.splitlines() if l.strip()][-1])
@@ -951,7 +1086,8 @@ def _prova_config_rotto(prova) -> None:
         vera = base / "CartellaMaiuscola"
         vera.mkdir()
         (plancia_home / "config.json").write_text(
-            json.dumps({"cartelle_escluse": [str(base / "cartellamaiuscola")]}), "utf-8")
+            json.dumps({"cartelle_escluse": [str(base / "cartellamaiuscola")],
+                       "motore_riepilogo": "template"}), "utf-8")
         r = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True,
                            env=env, timeout=15)
         dati = json.loads([l for l in r.stdout.splitlines() if l.strip()][-1])
@@ -959,9 +1095,16 @@ def _prova_config_rotto(prova) -> None:
               dati.get("ok") is True, str(dati))
 
         # fail-closed vero: un sync su un config.json rotto non deve far
-        # entrare la sessione privata, e non deve sollevare.
+        # entrare la sessione privata, e non deve sollevare. "cartelle_escluse"
+        # resta rotta apposta (una stringa, non una lista: quello che si sta
+        # controllando qui); "motore_riepilogo": "template" ci sta comunque
+        # accanto, perche' non c'entra con QUELLA rottura e chiude anche qui
+        # il primo fusibile (config-level), oltre al secondo (l'ambiente
+        # finto di _env_prova, che da solo basterebbe: e' quello che il resto
+        # di questo test verifica, "esclusi_errore"/"sessione_entrata").
         (plancia_home / "config.json").write_text(
-            json.dumps({"cartelle_escluse": str(priv)}), "utf-8")
+            json.dumps({"cartelle_escluse": str(priv), "motore_riepilogo": "template"}),
+            "utf-8")
         sid_priv_config = "88888888-8888-8888-8888-888888888888"
         cod_priv = _codifica_cartella(priv)
         _scrivi_transcript(
@@ -971,13 +1114,20 @@ def _prova_config_rotto(prova) -> None:
             f"import sys, json; sys.path.insert(0, {str(RADICE)!r})\n"
             "from plancia import ingest, store\n"
             "r = ingest.sync(modo='tutto', skip_git=True)\n"
+            # Il join aspetta il thread demone di recap.prepara() prima che
+            # lo script esca, cosi' il finto claude (se mai ci provasse) ha
+            # gia' scritto il suo segnale quando questo processo termina.
+            "import threading as _th\n"
+            "for _t in _th.enumerate():\n"
+            "    if _t is not _th.current_thread():\n"
+            "        _t.join(timeout=10)\n"
             "conn = store.connect()\n"
             "n = conn.execute(\"SELECT COUNT(*) FROM sessions WHERE session_id=?\", "
             f"({sid_priv_config!r},)).fetchone()[0]\n"
             "print(json.dumps({'esclusi_errore': r.get('esclusi_errore'), "
             "'sessione_entrata': n, 'ha_esclusi_key': 'esclusi' in r}))\n")
-        env2 = dict(os.environ, PLANCIA_HOME=str(plancia_home), CLAUDE_CONFIG_DIR=str(claude_dir),
-                    CODEX_HOME=str(codex_home))
+        env2 = _env_prova(PLANCIA_HOME=str(plancia_home), CLAUDE_CONFIG_DIR=str(claude_dir),
+                          CODEX_HOME=str(codex_home))
         r2 = subprocess.run([sys.executable, "-c", script_sync], capture_output=True, text=True,
                             env=env2, timeout=30)
         try:
@@ -1049,15 +1199,27 @@ def _prova_spostata_un_giro(prova) -> None:
         ]
         path.write_text("\n".join(righe) + "\n", "utf-8")
 
-        # Primo sync: PRIMA della regola, config.json senza le due chiavi.
+        # Primo sync: PRIMA della regola, config.json senza le due chiavi
+        # (ma valido: "motore_riepilogo": "template" perche' e' un sync
+        # vero, modo="tutto").
         (plancia_home / "config.json").write_text(
-            json.dumps({"gh_enabled": False, "code_roots": []}), "utf-8")
-        env = dict(os.environ, PLANCIA_HOME=str(plancia_home),
-                   CLAUDE_CONFIG_DIR=str(claude_dir), CODEX_HOME=str(codex_home))
+            json.dumps({"gh_enabled": False, "code_roots": [],
+                       "motore_riepilogo": "template"}), "utf-8")
+        env = _env_prova(PLANCIA_HOME=str(plancia_home),
+                         CLAUDE_CONFIG_DIR=str(claude_dir), CODEX_HOME=str(codex_home))
         script1 = (
             f"import sys; sys.path.insert(0, {str(RADICE)!r})\n"
             "from plancia import ingest\n"
-            "ingest.sync(modo='tutto', skip_git=True, full=True)\n")
+            "ingest.sync(modo='tutto', skip_git=True, full=True)\n"
+            # aspetta il thread demone di recap.prepara() (vedi il commento
+            # sul join nello SCRIPT principale, in cima al file) prima che
+            # lo script esca: qui non si legge lo stdout per un esito, ma un
+            # demone lasciato a correre per conto suo e' comunque il rischio
+            # che questa prova esiste per escludere.
+            "import threading as _th\n"
+            "for _t in _th.enumerate():\n"
+            "    if _t is not _th.current_thread():\n"
+            "        _t.join(timeout=10)\n")
         r1 = subprocess.run([sys.executable, "-c", script1], capture_output=True,
                             text=True, env=env, timeout=30)
         if r1.returncode != 0:
@@ -1071,12 +1233,17 @@ def _prova_spostata_un_giro(prova) -> None:
         (plancia_home / "config.json").write_text(json.dumps({
             "gh_enabled": False, "code_roots": [],
             "cartelle_escluse": [str(privata)],
+            "motore_riepilogo": "template",
         }), "utf-8")
 
         script2 = (
             f"import sys, json; sys.path.insert(0, {str(RADICE)!r})\n"
             "from plancia import ingest, store\n"
             "ingest.sync(modo='tutto', skip_git=True)\n"
+            "import threading as _th\n"
+            "for _t in _th.enumerate():\n"
+            "    if _t is not _th.current_thread():\n"
+            "        _t.join(timeout=10)\n"
             "conn = store.connect()\n"
             f"sid = {sid!r}\n"
             "n_sessioni = conn.execute(\"SELECT COUNT(*) FROM sessions WHERE session_id=?\", "
@@ -1142,6 +1309,11 @@ def _prova_hook_valida_come_esclusi(prova) -> None:
             c.mkdir(parents=True, exist_ok=True)
 
         sid_valido = "12345678-1234-1234-1234-123456789abc"
+        # "cartella_troppo_ampia_home" deve essere la stessa HOME che vedranno
+        # questi sottoprocessi (quella finta di _env_prova): sia esclusi.valida()
+        # (via config.HOME) sia bin/plancia-hook (via os.path.expanduser("~"))
+        # la leggono dalla stessa variabile d'ambiente HOME.
+        home_finta, _, _ = _ambiente_condiviso()
         casi = {
             "valido": {"cartelle_escluse": [str(esiste)], "sessioni_escluse": [sid_valido]},
             "liste_vuote": {},
@@ -1149,7 +1321,7 @@ def _prova_hook_valida_come_esclusi(prova) -> None:
             "cartella_relativa": {"cartelle_escluse": ["relativa/x"]},
             "cartella_inesistente": {"cartelle_escluse": [str(base / "non-esiste-davvero")]},
             "cartella_troppo_ampia_claude_dir": {"cartelle_escluse": [str(claude_dir)]},
-            "cartella_troppo_ampia_home": {"cartelle_escluse": [str(Path.home())]},
+            "cartella_troppo_ampia_home": {"cartelle_escluse": [str(home_finta)]},
             "sessione_non_uuid": {"cartelle_escluse": [str(esiste)],
                                   "sessioni_escluse": ["non-e-un-uuid"]},
         }
@@ -1178,8 +1350,8 @@ def _prova_hook_valida_come_esclusi(prova) -> None:
             conn_min.commit()
             conn_min.close()
             (plancia_home / "config.json").write_text(json.dumps(cfg), "utf-8")
-            env = dict(os.environ, PLANCIA_HOME=str(plancia_home),
-                       CLAUDE_CONFIG_DIR=str(claude_dir), CODEX_HOME=str(codex_home))
+            env = _env_prova(PLANCIA_HOME=str(plancia_home),
+                             CLAUDE_CONFIG_DIR=str(claude_dir), CODEX_HOME=str(codex_home))
 
             r_val = subprocess.run([sys.executable, "-c", script_valida],
                                    input=json.dumps(cfg), capture_output=True,
@@ -1425,16 +1597,21 @@ def esegui(prova) -> None:
         for c in (plancia_home, claude_dir, codex_home):
             c.mkdir(parents=True, exist_ok=True)
         (plancia_home / "config.json").write_text(
-            json.dumps({"cartelle_escluse": [], "sessioni_escluse": [], "gh_enabled": False}),
+            json.dumps({"cartelle_escluse": [], "sessioni_escluse": [], "gh_enabled": False,
+                       "motore_riepilogo": "template"}),
             "utf-8")
         script = (
             f"import sys, json; sys.path.insert(0, {str(RADICE)!r})\n"
             "from plancia import ingest\n"
             "r = ingest.sync(modo='tutto', skip_git=True)\n"
+            "import threading as _th\n"
+            "for _t in _th.enumerate():\n"
+            "    if _t is not _th.current_thread():\n"
+            "        _t.join(timeout=10)\n"
             "print(json.dumps({'ha_esclusi': 'esclusi' in r, "
             "'ha_errore': 'esclusi_errore' in r}))\n")
-        env = dict(os.environ, PLANCIA_HOME=str(plancia_home), CLAUDE_CONFIG_DIR=str(claude_dir),
-                   CODEX_HOME=str(codex_home))
+        env = _env_prova(PLANCIA_HOME=str(plancia_home), CLAUDE_CONFIG_DIR=str(claude_dir),
+                         CODEX_HOME=str(codex_home))
         r = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True,
                            env=env, timeout=30)
         dati = json.loads([l for l in r.stdout.splitlines() if l.strip()][-1])
@@ -1445,3 +1622,22 @@ def esegui(prova) -> None:
     finally:
         import shutil
         shutil.rmtree(str(base_vuoto), ignore_errors=True)
+
+    # -------------------------------------------------- claude mai vero
+    # Il difetto grave del tester precedente: ingest.sync(modo="tutto") (lo
+    # fanno quasi tutte le prove qui sopra) lancia in un thread demone
+    # recap.prepara(), che con il motore di default "claude" (config.json
+    # senza motore_riepilogo, o rotto: vedi plancia/config.load_config())
+    # chiama davvero il binario `claude`: spesa di quota reale, e un
+    # fallimento intermittente di questa stessa suite (1 su 11, misurato dal
+    # tester: una gara col thread). _env_prova() mette un `claude` finto
+    # davanti nel PATH di OGNI sottoprocesso lanciato da questo modulo (con
+    # un'HOME finta: mai quella vera, che risolverebbe ~/.local/bin/claude a
+    # un binario vero), e ogni script che chiama ingest.sync(modo='tutto')
+    # aspetta (con un tetto) i suoi thread demoni prima di uscire: cosi' la
+    # gara diventa un ordine deterministico, e il segnale, se c'e', c'e' gia'
+    # quando si arriva qui. Un solo controllo, alla fine di tutte le prove di
+    # questo modulo, su tutti i sottoprocessi lanciati finora: se anche uno
+    # solo avesse provato a lanciare claude, il file esisterebbe.
+    prova("nessuna prova di questo modulo ha provato a lanciare claude davvero",
+          not _claude_chiamato())

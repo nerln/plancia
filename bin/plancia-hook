@@ -283,7 +283,7 @@ def run():
             if not valido:
                 pass
             elif escluso:
-                text += "\n\nCartella privata: non registrare niente in Plancia."
+                text += "\n\nSessione privata: non registrare niente in Plancia."
             else:
                 text += ancoraggio(record["cwd"])
         except Exception:
