@@ -44,8 +44,10 @@ echo "· icona"
 #     Composer (uno sfondo e due strati SVG). actool 26 o piu' recente lo compila
 #     in Assets.car + Plancia.icns, e il sistema applica vetro, riflessi e
 #     profondita' strato per strato, anche nelle versioni scura e "tinted".
-#     Il manifesto porta CFBundleIconName (per Assets.car) e CFBundleIconFile
-#     (per l'icns, che i sistemi vecchi leggono ancora).
+#     Il manifesto porta CFBundleIconName (per Assets.car: da macOS 13 in su,
+#     con CFBundleIconName, il sistema legge quello, e ci sono le Icon Image
+#     appiattite) e CFBundleIconFile (per l'icns di actool, che arriva solo a
+#     256 px: e' un ripiego per gli strumenti che leggono l'icns direttamente).
 #  2. Ripiego: un Mac senza Xcode 26+, o con un actool che rifiuta il .icon,
 #     disegna la stessa forma con un vetro imitato (mac/makeicon.swift) e la
 #     trasforma in icns con `iconutil`. Il manifesto porta solo CFBundleIconFile.

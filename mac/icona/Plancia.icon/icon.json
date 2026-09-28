@@ -10,7 +10,7 @@
           "image-name": "sud.svg",
           "name": "sud",
           "position": {
-            "scale": 1.2,
+            "scale": 1.35,
             "translation-in-points": [
               0,
               0
@@ -22,7 +22,7 @@
           "image-name": "nord.svg",
           "name": "nord",
           "position": {
-            "scale": 1.2,
+            "scale": 1.35,
             "translation-in-points": [
               0,
               0

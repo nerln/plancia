@@ -8,10 +8,18 @@
 //
 // Il segno è uno solo e sta nei due file allo stesso modo: due triangoli
 // (nord in ambra, sud in crema) ruotati di 40 gradi attorno al centro di una
-// tavola di 1024, ingranditi di 1,2, con gli spigoli arrotondati da un bordo di
+// tavola di 1024, ingranditi di 1,35, con gli spigoli arrotondati da un bordo di
 // 40. Le coordinate qui sotto sono quelle di mac/icona/Plancia.icon/Assets/*.svg:
 // se cambi il segno di là, cambialo anche qui (lo controlla
-// tools/prove-front/icona.py). Il vetro imitato è: un fondo con un gradiente
+// tools/prove-front/icona.py).
+//
+// Coordinate uguali non bastano, conta anche il riferimento. In Icon Composer la
+// tela da 1024 del .icon coincide con il CORPO dell'icona (il quadrato
+// arrotondato da 824 px sulla griglia di Apple): actool la rimpicciolisce dentro
+// i margini. Quindi qui la tavola si porta dentro il corpo, non dentro l'intera
+// immagine: se la si portasse sull'intera immagine l'ago uscirebbe più grande
+// di 1024/824, cioè del 24 per cento, e con e senza Xcode 26 l'app avrebbe due
+// icone diverse (misurato sulle PNG di actool e del ripiego). Il vetro imitato è: un fondo con un gradiente
 // sobrio, un filo di luce dentro il bordo in alto, un riflesso morbido, e per
 // ogni metà un'ombra corta sotto e un bordo di luce sopra.
 //
@@ -27,8 +35,12 @@ try? FileManager.default.createDirectory(atPath: out, withIntermediateDirectorie
 // La tavola dei file SVG: 1024 per 1024, con l'origine in alto a sinistra.
 let tavola: CGFloat = 1024
 let rotazione: CGFloat = 40 * .pi / 180   // in senso orario, come rotate(40) di SVG
-let ingrandimento: CGFloat = 1.2          // il "scale" dello strato nel .icon
+let ingrandimento: CGFloat = 1.35        // il "scale" dello strato nel .icon
 let bordoSpigoli: CGFloat = 40            // lo stroke-width con linejoin round
+// Il margine del corpo sull'immagine intera, in frazione del lato: 0,098 è il
+// 100 px su 1024 della griglia di Apple. Una costante sola, usata dal corpo
+// (in disegna) e dalla mappa della tavola (in punto e in metà).
+let margineCorpo: CGFloat = 0.098
 
 // nord: M512 190 L634 500 H390 Z  ·  sud: M390 524 H634 L512 834 Z
 let nord: [CGPoint] = [CGPoint(x: 512, y: 190), CGPoint(x: 634, y: 500), CGPoint(x: 390, y: 500)]
@@ -45,16 +57,25 @@ func gradiente(_ colori: [CGColor], _ punti: [CGFloat]) -> CGGradient {
     CGGradient(colorsSpace: spazio, colors: colori as CFArray, locations: punti)!
 }
 
-/// Un punto della tavola SVG (y in giù) portato nel disegno di `lato` pixel (y in su).
+/// Quanti pixel del disegno di `lato` pixel valgono un'unità della tavola: la tavola
+/// occupa il corpo dell'icona (lato meno i due margini), non l'immagine intera.
+func scalaTavola(_ lato: CGFloat) -> CGFloat {
+    (lato - 2 * lato * margineCorpo) / tavola
+}
+
+/// Un punto della tavola SVG (y in giù) portato nel disegno di `lato` pixel (y in su),
+/// dentro il corpo dell'icona.
 func punto(_ p: CGPoint, _ lato: CGFloat) -> CGPoint {
     let c = tavola / 2
+    let margine = lato * margineCorpo
+    let scala = scalaTavola(lato)
     let dx = p.x - c, dy = p.y - c
     // rotate(40) di SVG con l'asse y in giù è una rotazione oraria sullo schermo
     let rx = dx * cos(rotazione) - dy * sin(rotazione)
     let ry = dx * sin(rotazione) + dy * cos(rotazione)
     let x = c + rx * ingrandimento
     let y = c + ry * ingrandimento
-    return CGPoint(x: x * lato / tavola, y: (tavola - y) * lato / tavola)
+    return CGPoint(x: margine + x * scala, y: margine + (tavola - y) * scala)
 }
 
 /// Il triangolo con gli spigoli arrotondati: il poligono più il suo bordo.
@@ -62,7 +83,7 @@ func metà(_ triangolo: [CGPoint], _ lato: CGFloat) -> CGPath {
     let poligono = CGMutablePath()
     poligono.addLines(between: triangolo.map { punto($0, lato) })
     poligono.closeSubpath()
-    let largo = bordoSpigoli * ingrandimento * lato / tavola
+    let largo = bordoSpigoli * ingrandimento * scalaTavola(lato)
     let bordo = poligono.copy(strokingWithWidth: largo, lineCap: .round, lineJoin: .round,
                               miterLimit: 10)
     return poligono.union(bordo, using: .winding)
@@ -78,7 +99,7 @@ func disegna(lato: Int) -> Data? {
     // ------------------------------------------------------------ il fondo
     // Il corpo dell'icona è un quadrato arrotondato di 824 su 1024, come da
     // griglia di Apple, lasciando il margine per l'ombra.
-    let margine = s * 0.098
+    let margine = s * margineCorpo
     let corpo = CGRect(x: margine, y: margine, width: s - margine * 2, height: s - margine * 2)
     let raggio = corpo.width * 0.225
     let forma = CGPath(roundedRect: corpo, cornerWidth: raggio, cornerHeight: raggio, transform: nil)
