@@ -61,9 +61,11 @@ def esegui(prova):
         dove = setup_claude.cartella_installata()
         prova(f"la skill ({nome}) dice dove sta questo checkout ({dove})",
               f"`{dove}`" in testo, dove)
-        if dove != "~/dev/plancia":
-            prova(f"la skill ({nome}) non dice ~/dev/plancia se il checkout e' altrove",
-                  "`~/dev/plancia`" not in testo)
+        # Sempre eseguita (il numero di prove non deve dipendere dalla
+        # cartella del checkout): e' vera da sola quando il checkout sta
+        # proprio in ~/dev/plancia.
+        prova(f"la skill ({nome}) non dice ~/dev/plancia se il checkout e' altrove",
+              dove == "~/dev/plancia" or "`~/dev/plancia`" not in testo)
         prova(f"la skill ({nome}) parla di riprendere un task",
               "riprendi" in testo)
         prova(f"la skill ({nome}) cita send_message",
