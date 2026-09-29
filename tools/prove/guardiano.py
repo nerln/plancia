@@ -29,6 +29,16 @@ guardiano` (`_prove_cli_config`), i falsi positivi di Bash per un nominato e il
 motivo del diniego per `/tmp` (`_prove_falsi_positivi_bash`) e la ricerca nelle
 trascrizioni di tutte le sessioni (`_prove_ricerca_trascrizioni`).
 
+Il quarto giro aggiunge: il testo di echo/printf e i corpi degli heredoc che
+arrivano a un comando che li usa (`_prove_flusso_testo`, 58 idiomi), la cartella
+e le variabili simulate lungo il comando (`_prove_cd_variabili`), il guardiano
+che non parte (`_prove_non_parte`), la config illeggibile che non si riscrive
+(`_prove_config_illeggibile`), settings.json (`_prove_settings`), gli
+interpreti con il percorso costruito e le altre scritture nella cartella dei
+dati (`_prove_interpreti_e_scritture`), le cartelle annidate, i nominati sulla
+stessa cartella e la madre di un subagente (`_prove_annidati`) e i minori
+(`_prove_minori`).
+
 Gli strumenti di sessione si provano con gli id che l'app manda davvero
 (`local_<uuid>`, nomi, `self`, `main`), risolti da un registro dell'app finto
 nella HOME temporanea (`claude-code-sessions/*/*/local_<uuid>.json`), con l'id
@@ -240,9 +250,17 @@ class Ambiente:
         sessione e' stata aperta (da cui il transcript_path); `cwd`: dove si
         trova adesso (di norma la stessa)."""
         aperta = aperta_in or self.comune
+        tp = self.trascrizione(aperta, sid, madre, workflows=workflows)
+        if madre:
+            # il guardiano crede all'id della madre solo se il transcript del
+            # subagente esiste davvero e la madre ha il suo: qui esistono
+            Path(tp).parent.mkdir(parents=True, exist_ok=True)
+            Path(tp).write_text("{}\n", "utf-8")
+            mamma = self.claude / "projects" / _codifica(aperta) / f"{madre}.jsonl"
+            mamma.parent.mkdir(parents=True, exist_ok=True)
+            mamma.write_text("{}\n", "utf-8")
         return {"session_id": sid, "cwd": str(cwd or aperta),
-                "transcript_path": self.trascrizione(aperta, sid, madre,
-                                                     workflows=workflows),
+                "transcript_path": tp,
                 "hook_event_name": "PreToolUse", "tool_name": tool,
                 "tool_input": ti}
 
@@ -1807,6 +1825,832 @@ def _prove_cli_config(prova, a: Ambiente):
     a.togli_config()
 
 
+# --------------------------------------------------------------------------
+# quarto giro
+# --------------------------------------------------------------------------
+
+# I 58 idiomi con cui un agente appena rifiutato prova a leggere lo stesso file
+# passando il percorso da un comando che lo usa (una pipe, una sostituzione,
+# una shell, un heredoc dato a un esecutore). `@@` e' il bersaglio vietato,
+# `@D@` una cartella dove chi chiama puo' scrivere. Devono essere tutti negati.
+CASI_FLUSSO = [
+    "echo @@ | xargs cat",
+    "printf 'PFMT' @@ | xargs cat",
+    "printf '@@' | xargs -0 cat",
+    "echo \"cat @@\" | sh",
+    "echo \"cat @@\" | bash",
+    "echo 'cat @@' | zsh",
+    "echo @@ | while read f; do cat $f; done",
+    "f=$(echo @@); cat $f",
+    "f=$(echo @@); cat \"$f\"",
+    "cat $(echo @@)",
+    "cat `echo @@`",
+    "echo @@ > @D@/lista; xargs cat < @D@/lista",
+    "read f <<< @@; cat $f",
+    "eval \"$(cat <<'EOF'\ncat @@\nEOF\n)\"",
+    "cat <<'EOF' | bash\ncat @@\nEOF",
+    "cat <<'EOF' | sh\ncat @@\nEOF",
+    "cat <<EOF > /dev/null\nx\nEOF\ncat @@",
+    "cat <<-EOF\n\tx\n\tEOF\ncat @@",
+    "bash -s <<'EOF'\ncat @@\nEOF",
+    "source /dev/stdin <<'EOF'\ncat @@\nEOF",
+    ". /dev/stdin <<'EOF'\ncat @@\nEOF",
+    "sh -c \"$(cat <<'EOF'\ncat @@\nEOF\n)\"",
+    "xargs -I{} sh -c '{}' <<'EOF'\ncat @@\nEOF",
+    "python3 <<'EOF'\nprint(open('@@').read())\nEOF",
+    "python3 - <<'EOF'\nimport os\nprint(open(os.path.join('@@')).read())\nEOF",
+    "node <<'EOF'\nconsole.log(require('fs').readFileSync('@@','utf8'))\nEOF",
+    "ruby <<'EOF'\nputs File.read('@@')\nEOF",
+    "perl <<'EOF'\nopen(F,'@@'); print <F>;\nEOF",
+    "awk -f - <<'EOF'\nBEGIN{while((getline l < \"@@\")>0) print l}\nEOF",
+    "sqlite3 :memory: <<'EOF'\n.read @@\nEOF",
+    "ssh localhost <<'EOF'\ncat @@\nEOF",
+    "cat << EOF > @D@/s.sh\ncat @@\nEOF\nbash @D@/s.sh",
+    "echo 'cat @@' > @D@/s.sh && sh @D@/s.sh",
+    "echo 'cat @@' > run.sh && bash run.sh",
+    "printf 'cat @@' > @D@/x.sh; . @D@/x.sh",
+    "cat -- @@",
+    "cat < @@",
+    "cat @@/../segreto.txt",
+    "tail -n +1 @@",
+    "$(echo cat) @@",
+    "'cat' @@",
+    "c=cat; $c @@",
+    "\\cat @@",
+    "command cat @@",
+    "env cat @@",
+    "nice cat @@",
+    "time cat @@",
+    "sudo cat @@",
+    "exec cat @@",
+    "builtin echo x; cat @@",
+    "{ cat @@; }",
+    "( cat @@ )",
+    "if true; then cat @@; fi",
+    "while false; do :; done; cat @@",
+    "cat @@ | head -1",
+    "test -f @@ && cat @@",
+    "cat @@ 2>&1",
+    "cat @@ &",
+]
+
+
+def _prove_flusso_testo(prova, a: Ambiente):
+    """Quarto giro, punto 1: il testo di echo/printf e il corpo di un heredoc
+    sono inerti SOLO se non arrivano a un comando che li usa. I 58 idiomi del
+    tester devono essere negati tutti, dal predefinito (verso alfa) e da alfa
+    (verso il comune); gli usi ordinari (echo $HOME, git commit con heredoc,
+    heredoc verso un file, echo verso un file) restano ammessi."""
+    a.togli_config()
+    a.scrivi_config(a.config("bloccante"))
+    prova("flusso-testo: la lista dei casi e' di 58 idiomi", len(CASI_FLUSSO) == 58)
+    fuori_alfa, fuori_comune = str(a.alfa1 / "segreto.txt"), str(a.comune / "nota.txt")
+
+    def esegui(chi, cmd):
+        if chi == "P":
+            return a.chiama(a.pl("Bash", {"command": cmd}, sid=S_COMUNE, aperta_in=a.progetto))
+        return a.chiama(a.pl("Bash", {"command": cmd}, sid=S_ALFA_LIBERA, aperta_in=a.alfa1))
+
+    passati = {"P": [], "A": []}
+    for c in CASI_FLUSSO:
+        for chi, tgt, cartella in (("P", fuori_alfa, str(a.progetto)),
+                                   ("A", fuori_comune, str(a.alfa1))):
+            cmd = c.replace("@@", tgt).replace("PFMT", "%s\\n").replace("@D@", cartella)
+            if not esegui(chi, cmd).negato:
+                passati[chi].append(cmd[:80])
+    prova("flusso-testo: dal predefinito 0 idiomi su 58 passano (verso un file di alfa)",
+          not passati["P"], f"{len(passati['P'])} passati: {passati['P'][:6]}")
+    prova("flusso-testo: da alfa 0 idiomi su 58 passano (verso un file del comune)",
+          not passati["A"], f"{len(passati['A'])} passati: {passati['A'][:6]}")
+    for chi, tgt in (("P", fuori_alfa), ("A", fuori_comune)):
+        for nome, cmd in (
+                ("echo | xargs cat", f"echo {tgt} | xargs cat"),
+                ("echo | sh", f"echo \"cat {tgt}\" | sh"),
+                ("echo | while read", f"echo {tgt} | while read f; do cat $f; done"),
+                ("variabile con $(echo)", f"f=$(echo {tgt}); cat \"$f\""),
+                ("apici inversi", f"cat `echo {tgt}`"),
+                ("cat <<EOF | bash", f"cat <<'EOF' | bash\ncat {tgt}\nEOF"),
+                ("eval con heredoc", f"eval \"$(cat <<'EOF'\ncat {tgt}\nEOF\n)\""),
+                ("source /dev/stdin", f"source /dev/stdin <<'EOF'\ncat {tgt}\nEOF")):
+            r = esegui(chi, cmd)
+            prova(f"flusso-testo: {chi}, {nome}: negato", r.negato, repr(r))
+    # gli usi ordinari restano ammessi (i falsi positivi chiusi nel terzo giro)
+    nota = str(a.alfa1 / "nota-nuova.txt")
+    for cmd in ("echo $HOME", "echo \"vedi " + fuori_comune + "\"",
+                "echo \"vedi " + fuori_comune + "\" > " + nota,
+                "echo \"vedi " + fuori_comune + "\" > " + nota + " && cat " + nota,
+                "printf 'vedi %s' " + fuori_comune + " >> " + nota,
+                "cat <<'EOF' > " + nota + "\nvedi " + fuori_comune + "\nEOF",
+                "cat > " + nota + " <<'EOF'\nvedi " + fuori_comune + "\nEOF",
+                "cat <<'EOF' | git commit -F -\nnota su " + fuori_comune + "\nEOF",
+                "git commit -F - <<'EOF'\nnota su " + fuori_comune + "\nEOF",
+                "git commit -m \"$(cat <<'EOF'\nnota su " + fuori_comune + "\nEOF\n)\"",
+                "cat <<'EOF' | tee " + nota + "\nvedi " + fuori_comune + "\nEOF",
+                "cat <<'EOF'\nvedi " + fuori_comune + "\nEOF"):
+        r = esegui("A", cmd)
+        prova(f"flusso-testo: alfa, `{cmd[:60].splitlines()[0]}...`: ammesso (testo inerte)",
+              r.ammesso, repr(r))
+    nota_p = str(a.progetto / "nota-nuova.txt")
+    for cmd in ("echo \"vedi " + fuori_alfa + "\" > " + nota_p,
+                "cat <<'EOF' > " + nota_p + "\nvedi " + fuori_alfa + "\nEOF",
+                "git commit -m \"$(cat <<'EOF'\nnota su " + fuori_alfa + "\nEOF\n)\"",
+                "echo \"vedi " + fuori_alfa + "\"", "ls /"):
+        r = esegui("P", cmd)
+        prova(f"flusso-testo: predefinito, `{cmd[:60].splitlines()[0]}...`: ammesso",
+              r.ammesso, repr(r))
+    a.togli_config()
+
+
+def _prove_cd_variabili(prova, a: Ambiente):
+    """Quarto giro, punto 2: la cartella e le variabili si simulano lungo il
+    comando (`cd X && ...`, `cd X; ...`, `pushd`, subshell, `VAR=x; ...`)."""
+    a.togli_config()
+    a.scrivi_config(a.config("bloccante"))
+    r_ = str(a.radice)
+    enc = _codifica(a.alfa1)
+    proj = str(a.claude / "projects")
+    dati = str(a.dati)
+    (a.claude / "projects" / enc / "memory").mkdir(parents=True, exist_ok=True)
+    (a.claude / "projects" / enc / "memory" / "MEMORY.md").write_text("ricordo", "utf-8")
+    (a.claude / "projects" / enc / "sess-1.jsonl").write_text("{}", "utf-8")
+
+    def pred(cmd, cwd=None, aperta_in=None):
+        return a.chiama(a.pl("Bash", {"command": cmd}, sid=S_COMUNE,
+                             aperta_in=aperta_in or a.comune, cwd=cwd or a.radice))
+
+    negati = [
+        f"cd {r_} && cat alfa-uno/segreto.txt", f"cd {r_} && ls alfa-uno",
+        f"cd {r_} && cat */segreto.txt", f"cd {r_}; cat alfa-uno/segreto.txt",
+        f"cd {r_}\ncat alfa-uno/segreto.txt", f"(cd {r_}; cat alfa-uno/segreto.txt)",
+        f"pushd {r_} >/dev/null; cat alfa-uno/segreto.txt",
+        f"cd {r_}; python3 -c \"print(open('alfa-uno/segreto.txt').read())\"",
+        f"cd {r_}/alfa-uno/.. && cat alfa-uno/segreto.txt",
+        f"d={r_}; cat \"$d/alfa-uno/segreto.txt\"",
+        f"export d={r_}; cat $d/alfa-uno/segreto.txt", f"P={r_} && cat $P/alfa-uno/segreto.txt",
+        f"cd {proj} && cat {enc}/memory/MEMORY.md", f"cd {proj} && cat *alfa*/sess-1.jsonl",
+        f"cd {proj} && grep -r segreto .", f"cd {a.claude} && cat projects/{enc}/memory/MEMORY.md",
+        # la cartella che non si sa: si nega (prudenza)
+        "cd - && cat alfa-uno/segreto.txt", "cd $DIR_NON_DEFINITA && cat alfa-uno/segreto.txt",
+        f"cd {a.progetto} || cd {r_}; cat alfa-uno/segreto.txt",
+        # una subshell non sposta niente: dopo, si e' ancora dove si era
+        f"(cd {a.progetto}); cat alfa-uno/segreto.txt",
+    ]
+    for cmd in negati:
+        r = pred(cmd)
+        prova(f"cd: predefinito (cwd sopra alfa), `{cmd[:66].splitlines()[0]}`: negato",
+              r.negato, repr(r))
+    # il falso positivo opposto: `cd` dentro una cartella senza divieti e ricerca li'
+    for cmd in ("cd progetto && grep -rn x .", "cd progetto && find . -name '*.txt'",
+                "cd progetto && rg x", "cd progetto && ls -R", "cd progetto && cat p.txt",
+                "cd progetto; cat p.txt", "cd progetto && git grep x || true",
+                "d=progetto; cat $d/p.txt", "cd progetto && cd .. && ls progetto",
+                f"cd {a.progetto} && grep -rn x ."):
+        r = pred(cmd, cwd=a.comune)
+        prova(f"cd: predefinito (cwd che contiene percorsi vietati), `{cmd}`: ammesso "
+              "(la cartella simulata non ha divieti sotto)", r.ammesso, repr(r))
+    prova("cd: `grep -rn x .` senza `cd` dalla stessa cwd: negato (il `cd` e' quello che lo cambia)",
+          pred("grep -rn x .", cwd=a.comune).negato)
+    # il nominato
+    def alfa(cmd, aperta_in=None, cwd=None, sid=S_ALFA_LIBERA):
+        return a.chiama(a.pl("Bash", {"command": cmd}, sid=sid,
+                             aperta_in=aperta_in or a.alfa1, cwd=cwd))
+
+    r = alfa(f"cd {a.alfa2} && cat due.txt")
+    prova("cd: alfa, `cd <sua cartella> && cat due.txt`: ammesso", r.ammesso, repr(r))
+    r = alfa(f"cd {a.comune} && cat nota.txt")
+    prova("cd: alfa, `cd <comune> && cat nota.txt`: negato", r.negato, repr(r))
+    r = alfa("cd .. && ls")
+    prova("cd: alfa, `cd .. && ls`: negato", r.negato, repr(r))
+    r = alfa("cd - && ls")
+    prova("cd: alfa, `cd - && ls`: negato (cartella sconosciuta)",
+          r.negato and "non si sa determinare" in r.motivo, repr(r))
+    r = alfa(f"cd {a.alfa1} && cat segreto.txt", aperta_in=a.comune, sid=S_ALFA)
+    prova("cd: alfa aperta fuori, `cd <sua cartella> && cat segreto.txt`: ammesso "
+          "(parte da dentro)", r.ammesso, repr(r))
+    r = alfa("cat segreto.txt", aperta_in=a.comune, sid=S_ALFA)
+    prova("cd: ...e senza il `cd` resta negato (la cwd e' fuori)", r.negato, repr(r))
+    # l'autoprotezione non si aggira entrando nella cartella dei dati
+    for cmd in (f"cd {dati} && sed -i '' s/bloccante/spento/ config.json",
+                f"cd {dati}; sed -i '' s/a/b/ config.json",
+                f"cd {dati} && echo '{{}}' > config.json",
+                f"(cd {dati} && rm config.json)", f"cd {dati} && rm -rf .",
+                f"cd {dati} && rm -f *", f"F=config.json; cd {dati}; rm $F",
+                f"cd {dati} && mv config.json x", f"cd {dati}\nprintf x >> guardiano.log",
+                f"cd {dati} && truncate -s0 config.json", f"pushd {dati}; rm config.json"):
+        for chi, kw in (("predefinito", dict(sid=S_COMUNE, aperta_in=a.progetto)),
+                        ("alfa", dict(sid=S_ALFA_LIBERA, aperta_in=a.alfa1))):
+            r = a.chiama(a.pl("Bash", {"command": cmd}, **kw))
+            prova(f"cd: {chi}, `{cmd[:60].splitlines()[0]}`: negato", r.negato, repr(r))
+    r = a.chiama(a.pl("Bash", {"command": f"cd {dati} && cat config.json"}, sid=S_COMUNE,
+                      aperta_in=a.progetto))
+    prova("cd: ...la lettura della config dopo un `cd` resta ammessa", r.ammesso, repr(r))
+    a.togli_config()
+
+
+def _copia_checkout(a: Ambiente, dove: Path, completa=False):
+    """Una copia minima del checkout da cui gira l'hook (`bin/` e `plancia/`),
+    per romperla senza toccare quella vera. Con `completa` tutto il pacchetto."""
+    shutil.copytree(RADICE / "bin", dove / "bin", ignore=shutil.ignore_patterns("__pycache__"))
+    (dove / "plancia").mkdir()
+    for f in (RADICE / "plancia").iterdir():
+        if f.is_file() and f.suffix in (".py", ".json") and (
+                completa or f.name in ("__init__.py", "compartimenti.py")):
+            shutil.copy(f, dove / "plancia" / f.name)
+    return dove / "bin" / "plancia-guardiano"
+
+
+def _prove_non_parte(prova, a: Ambiente):
+    """Quarto giro, punto 3: il guardiano che non parte non e' silenzioso. Resta
+    fail-open (rc 0, nessun diniego), ma scrive `guardiano-non-parte` nel
+    registro, avvisa l'utente con `systemMessage`, e `plancia guardiano --stato`
+    lo mostra. Un `json.py` o un `re.py` accanto non lo spengono piu'."""
+    a.togli_config()
+    a.scrivi_config(a.config("bloccante"))
+    base = a.radice / "copia-hook"
+    hook = _copia_checkout(a, base)
+    seg = a.pl("Bash", {"command": f"cat {a.alfa1}/segreto.txt"}, sid=S_COMUNE, aperta_in=a.progetto)
+
+    def corri(payload=seg):
+        t0 = time.time()
+        p = subprocess.run([PYTHON, str(hook)], input=json.dumps(payload).encode(),
+                           capture_output=True, env=a.env(), timeout=60)
+        return Esito(p.returncode, p.stdout.decode("utf-8", "replace"),
+                     p.stderr.decode("utf-8", "replace"), time.time() - t0)
+
+    r = corri()
+    prova("non-parte: la copia intera nega (rc 0 con diniego)", r.negato, repr(r))
+    # un json.py nella radice e un re.py in bin/ non prendono il posto dei moduli di sistema
+    (base / "json.py").write_text("raise SystemExit(0)\n", "utf-8")
+    (base / "bin" / "re.py").write_text("raise SystemExit(0)\n", "utf-8")
+    (base / "bin" / "shlex.py").write_text("raise SystemExit(0)\n", "utf-8")
+    r = corri()
+    prova("non-parte: json.py nella radice, re.py e shlex.py in bin/: l'hook nega lo stesso",
+          r.negato, repr(r))
+    os.remove(base / "json.py")
+    os.remove(base / "bin" / "re.py")
+    os.remove(base / "bin" / "shlex.py")
+    log = a.dati / "guardiano.log"
+    guasti = {
+        "un refuso in plancia/__init__.py": lambda: (base / "plancia" / "__init__.py").write_text(
+            '__version__ = "1.1.0"\nsyntax error here (\n', "utf-8"),
+        "compartimenti.py che manca": lambda: os.remove(base / "plancia" / "compartimenti.py"),
+    }
+    ripristini = {
+        "un refuso in plancia/__init__.py": lambda: shutil.copy(
+            RADICE / "plancia" / "__init__.py", base / "plancia" / "__init__.py"),
+        "compartimenti.py che manca": lambda: shutil.copy(
+            RADICE / "plancia" / "compartimenti.py", base / "plancia" / "compartimenti.py"),
+    }
+    for guasto, rompi in guasti.items():
+        righe0 = len(a.registro())
+        marca = a.dati / "guardiano.non-parte"
+        if marca.exists():
+            marca.unlink()
+        rompi()
+        r = corri()
+        righe = a.registro()
+        nuove = [x for x in righe[righe0:] if x.get("esito") == "guardiano-non-parte"]
+        prova(f"non-parte: {guasto}: rc 0 e nessun diniego (fail-open)",
+              r.rc == 0 and not r.negato, repr(r))
+        prova(f"non-parte: {guasto}: una riga `guardiano-non-parte` nel registro",
+              len(nuove) == 1 and "guardiano-non-parte" in nuove[0].get("motivo", ""), str(righe[righe0:]))
+        try:
+            avviso = json.loads(r.out).get("systemMessage", "")
+        except ValueError:
+            avviso = ""
+        prova(f"non-parte: {guasto}: stdout e' JSON con `systemMessage` per l'utente",
+              "plancia-guardiano non parte" in avviso and "NON sono protetti" in avviso, r.out[:200])
+        r2 = corri()
+        prova(f"non-parte: {guasto}: una seconda chiamata subito dopo non riscrive la riga "
+              "ne' rimanda l'avviso (limite come per la config illeggibile)",
+              r2.rc == 0 and r2.out == ""
+              and len([x for x in a.registro() if x.get("esito") == "guardiano-non-parte"]) == len(
+                  [x for x in righe if x.get("esito") == "guardiano-non-parte"]),
+              repr(r2))
+        env = dict(a.env())
+        p = subprocess.run([PYTHON, str(RADICE / "bin" / "plancia"), "guardiano", "--stato"],
+                           env=env, capture_output=True, timeout=60)
+        out = p.stdout.decode("utf-8", "replace")
+        prova(f"non-parte: {guasto}: `plancia guardiano --stato` la mostra",
+              p.returncode == 0 and "ATTENZIONE" in out and "NON PARTE" in out
+              and "guardiano-non-parte" in out, out[:300])
+        ripristini[guasto]()
+    r = corri()
+    prova("non-parte: riparato, l'hook torna a negare", r.negato, repr(r))
+    # in `spento` un guasto non lascia niente: non fa danno
+    a.scrivi_config(a.config("spento"))
+    n0 = len(a.registro())
+    (base / "plancia" / "__init__.py").write_text("syntax error here (\n", "utf-8")
+    marca = a.dati / "guardiano.non-parte"
+    if marca.exists():
+        marca.unlink()
+    r = corri()
+    prova("non-parte: guardiano `spento` e pacchetto rotto: niente riga, niente avviso, rc 0",
+          r.ammesso and len(a.registro()) == n0, repr(r))
+    # senza config (guardiano mai acceso) neppure
+    (a.dati / "config.json").unlink()
+    r = corri()
+    prova("non-parte: senza config e pacchetto rotto: niente riga, niente avviso, rc 0",
+          r.ammesso and len(a.registro()) == n0, repr(r))
+    # una config illeggibile potrebbe essere accesa: si avvisa
+    a.scrivi_config("{ non json")
+    if marca.exists():
+        marca.unlink()
+    r = corri()
+    prova("non-parte: config illeggibile e pacchetto rotto: si avvisa (potrebbe essere acceso)",
+          r.rc == 0 and "systemMessage" in r.out, repr(r))
+    # `plancia guardiano --stato` senza il modulo: lo dice lo stesso
+    a.togli_config()
+    a.scrivi_config(a.config("bloccante"))
+    completa = a.radice / "copia-completa"
+    completa.mkdir()
+    _copia_checkout(a, completa, completa=True)
+    (completa / "plancia" / "compartimenti.py").write_text("syntax error here (\n", "utf-8")
+    log.write_text(json.dumps({"ts": "2999-01-01T00:00:00Z", "esito": "guardiano-non-parte",
+                               "motivo": "guardiano-non-parte: SyntaxError: finto"}) + "\n", "utf-8")
+    p = subprocess.run([PYTHON, str(completa / "bin" / "plancia"), "guardiano", "--stato"],
+                       env=dict(a.env()), capture_output=True, timeout=60)
+    out = p.stdout.decode("utf-8", "replace")
+    prova("non-parte: `--stato` con compartimenti.py che non si importa lo dice e mostra "
+          "l'ultima riga del guasto",
+          "non si importa" in out and "SyntaxError: finto" in out, out[:300])
+    # i file da cui l'hook dipende non si scrivono da una sessione
+    for chi, kw in (("predefinito", dict(sid=S_COMUNE, aperta_in=a.progetto)),
+                    ("alfa", dict(sid=S_ALFA_LIBERA, aperta_in=a.alfa1))):
+        for f in ("plancia/__init__.py", "plancia/config.py", "plancia/compartimenti.py",
+                  "bin/plancia-guardiano", "bin/re.py", "bin/nuovo.py", "json.py",
+                  "sitecustomize.py", "json/__init__.py"):
+            r = a.chiama(a.pl("Write", {"file_path": str(RADICE / f), "content": "x"}, **kw))
+            prova(f"non-parte: {chi}, Write su {f}: negato", r.negato, repr(r))
+        r = a.chiama(a.pl("Edit", {"file_path": str(RADICE / "plancia" / "__init__.py"),
+                                   "old_string": "1.1.0", "new_string": "9"}, **kw))
+        prova(f"non-parte: {chi}, Edit di plancia/__init__.py: negato", r.negato, repr(r))
+        for cmd in (f"echo x >> {RADICE}/plancia/__init__.py", f"cp x {RADICE}/json.py",
+                    f"sed -i '' s/a/b/ {RADICE}/plancia/config.py", f"touch {RADICE}/bin/re.py",
+                    f"cd {RADICE}/bin && echo x > re.py", f"rm {RADICE}/plancia/__init__.py"):
+            r = a.chiama(a.pl("Bash", {"command": cmd}, **kw))
+            prova(f"non-parte: {chi}, `{cmd[:56]}`: negato", r.negato, repr(r))
+    r = a.chiama(a.pl("Write", {"file_path": str(RADICE / "plancia" / "store.py"),
+                                "content": "x"}, sid=S_COMUNE, aperta_in=a.progetto))
+    prova("non-parte: un altro modulo del pacchetto (store.py) non e' protetto: ammesso",
+          r.ammesso, repr(r))
+    r = a.chiama(a.pl("Bash", {"command": f"cat {RADICE}/plancia/__init__.py"},
+                      sid=S_COMUNE, aperta_in=a.progetto))
+    prova("non-parte: leggere plancia/__init__.py resta ammesso", r.ammesso, repr(r))
+    a.togli_config()
+
+
+def _prove_config_illeggibile(prova, a: Ambiente):
+    """Quarto giro, punto 4a: `plancia config <chiave>` su un config.json che non
+    si legge non lo riscrive con i default (cancellerebbe guardiano,
+    compartimenti, esclusi): esce 2 senza scrivere."""
+    a.togli_config()
+    env = dict(a.env())
+    env["PYTHONPATH"] = str(RADICE)
+    guasto = ('{"guardiano": "bloccante", "cartelle_escluse": ["/x"], "compartimenti": '
+              '{"alfa": {"cartelle": ["/a"]}},}')
+    (a.dati / "config.json").write_text(guasto, "utf-8")
+
+    def plancia(*args):
+        p = subprocess.run([sys.executable, str(RADICE / "bin" / "plancia"), "config", *args],
+                           env=env, cwd=str(RADICE), capture_output=True, timeout=60)
+        return p.returncode, p.stdout.decode("utf-8", "replace") + p.stderr.decode("utf-8", "replace")
+
+    for args in (("port", "9999"), ("guardiano", "spento"), ("locale", "en")):
+        rc, out = plancia(*args)
+        prova(f"config-illeggibile: `config {' '.join(args)}` su un config.json rotto: "
+              "uscita 2, dice di ripararlo, il file non cambia",
+              rc == 2 and "riparalo a mano" in out
+              and (a.dati / "config.json").read_text("utf-8") == guasto, f"{rc} {out}")
+    rc, out = plancia("port")
+    prova("config-illeggibile: la lettura (`config port`) non scrive e non fallisce",
+          rc == 0 and (a.dati / "config.json").read_text("utf-8") == guasto, f"{rc} {out}")
+    codice = ("from plancia import config\n"
+              "try:\n    config.save_config({'port': 1})\n"
+              "except config.ConfigIlleggibile as e:\n    print('rifiutato')\n")
+    p = subprocess.run([sys.executable, "-c", codice], env=env, cwd=str(RADICE),
+                       capture_output=True, timeout=60)
+    prova("config-illeggibile: `save_config` solleva ConfigIlleggibile e non scrive",
+          b"rifiutato" in p.stdout and (a.dati / "config.json").read_text("utf-8") == guasto,
+          p.stdout.decode() + p.stderr.decode())
+    (a.dati / "config.json").write_text("[1, 2]", "utf-8")
+    rc, out = plancia("port", "9999")
+    prova("config-illeggibile: un config.json che e' JSON ma non un oggetto: rifiutato uguale",
+          rc == 2 and (a.dati / "config.json").read_text("utf-8") == "[1, 2]", f"{rc} {out}")
+    (a.dati / "config.json").write_text('{"guardiano": "solo-registro", "port": 1}', "utf-8")
+    rc, out = plancia("port", "9999")
+    valori = json.loads((a.dati / "config.json").read_text("utf-8"))
+    prova("config-illeggibile: riparato, `config port 9999` scrive e conserva il resto",
+          rc == 0 and valori.get("port") == 9999 and valori.get("guardiano") == "solo-registro",
+          f"{rc} {out} {valori}")
+    a.togli_config()
+    rc, out = plancia("port", "8888")
+    prova("config-illeggibile: senza config.json `config port 8888` lo crea (nessun guasto)",
+          rc == 0 and json.loads((a.dati / "config.json").read_text("utf-8")).get("port") == 8888,
+          f"{rc} {out}")
+    a.togli_config()
+
+
+VOCE_GUARDIANO = str(RADICE / "bin" / "plancia-guardiano")
+
+
+def _settings(extra=None, con_voce=True):
+    d = {"theme": "dark"}
+    if con_voce:
+        d["hooks"] = {"PreToolUse": [{"matcher": "*", "hooks": [
+            {"type": "command", "command": VOCE_GUARDIANO}]}]}
+    d.update(extra or {})
+    return json.dumps(d, indent=2)
+
+
+def _prove_settings(prova, a: Ambiente):
+    """Quarto giro, punto 4b: settings.json e settings.local.json (di ~, di
+    CLAUDE_CONFIG_DIR e dei progetti) sono protetti in modo MIRATO: Write/Edit/
+    MultiEdit passano solo se il risultato ha ancora la voce PreToolUse del
+    guardiano e non ha disableAllHooks a vero; Bash che li scrive e' negato con
+    l'invito a usare Edit."""
+    a.togli_config()
+    a.scrivi_config(a.config("bloccante"))
+    utente = a.claude / "settings.json"
+    utente.write_text(_settings(), "utf-8")
+    home_locale = a.home / ".claude" / "settings.local.json"
+    home_locale.parent.mkdir(parents=True, exist_ok=True)
+    home_locale.write_text(_settings(con_voce=False), "utf-8")
+    proj = a.progetto / ".claude" / "settings.local.json"
+    proj.parent.mkdir(parents=True, exist_ok=True)
+    proj.write_text('{"permissions": {"allow": ["Bash(ls:*)"]}}', "utf-8")
+    dentro_alfa = a.alfa1 / ".claude" / "settings.local.json"
+    dentro_alfa.parent.mkdir(parents=True, exist_ok=True)
+    dentro_alfa.write_text("{}", "utf-8")
+
+    def pred(tool, ti):
+        return a.chiama(a.pl(tool, ti, sid=S_COMUNE, aperta_in=a.progetto))
+
+    def alfa(tool, ti):
+        return a.chiama(a.pl(tool, ti, sid=S_ALFA_LIBERA, aperta_in=a.alfa1))
+
+    # Write
+    r = pred("Write", {"file_path": str(utente), "content": _settings({"model": "sonnet"})})
+    prova("settings: Write di ~/.claude/settings.json che tiene la voce del guardiano e cambia "
+          "altro: ammesso", r.ammesso, repr(r))
+    r = pred("Write", {"file_path": str(utente), "content": json.dumps({"theme": "dark"})})
+    prova("settings: Write che toglie la voce del guardiano: negato, dice perche'",
+          r.negato and "plancia-guardiano" in r.motivo, repr(r))
+    r = pred("Write", {"file_path": str(utente), "content": _settings({"disableAllHooks": True})})
+    prova("settings: Write con disableAllHooks true: negato",
+          r.negato and "disableAllHooks" in r.motivo, repr(r))
+    r = pred("Write", {"file_path": str(utente), "content": "{ non json"})
+    prova("settings: Write di un JSON rotto che perde la voce: negato", r.negato, repr(r))
+    r = pred("Write", {"file_path": str(utente), "content": _settings({"disableAllHooks": False})})
+    prova("settings: Write con disableAllHooks false: ammesso", r.ammesso, repr(r))
+    # Edit / MultiEdit
+    r = pred("Edit", {"file_path": str(utente), "old_string": '"theme": "dark"',
+                      "new_string": '"theme": "light"'})
+    prova("settings: Edit di un'altra chiave (chi modifica settings.json per altri motivi "
+          "non inciampa): ammesso", r.ammesso, repr(r))
+    r = pred("Edit", {"file_path": str(utente), "old_string": VOCE_GUARDIANO,
+                      "new_string": "/usr/bin/true"})
+    prova("settings: Edit che sostituisce il comando del guardiano: negato", r.negato, repr(r))
+    r = pred("Edit", {"file_path": str(utente), "old_string": '"theme": "dark"',
+                      "new_string": '"theme": "dark", "disableAllHooks": true'})
+    prova("settings: Edit che aggiunge disableAllHooks true: negato", r.negato, repr(r))
+    r = pred("Edit", {"file_path": str(utente), "old_string": "testo-che-non-c-e",
+                      "new_string": "x"})
+    prova("settings: Edit con un old_string che non c'e' (lo strumento fallira' da solo): ammesso",
+          r.ammesso, repr(r))
+    r = pred("MultiEdit", {"file_path": str(utente), "edits": [
+        {"old_string": '"theme": "dark"', "new_string": '"theme": "light"'},
+        {"old_string": VOCE_GUARDIANO, "new_string": "/usr/bin/true"}]})
+    prova("settings: MultiEdit dove la seconda modifica toglie la voce: negato", r.negato, repr(r))
+    r = pred("MultiEdit", {"file_path": str(utente), "edits": [
+        {"old_string": '"theme": "dark"', "new_string": '"theme": "light"'}]})
+    prova("settings: MultiEdit innocuo: ammesso", r.ammesso, repr(r))
+    # settings.local.json e i progetti
+    r = pred("Write", {"file_path": str(home_locale), "content": '{"disableAllHooks": true}'})
+    prova("settings: Write di ~/.claude/settings.local.json con disableAllHooks true: negato",
+          r.negato, repr(r))
+    r = pred("Write", {"file_path": str(home_locale), "content": '{"permissions": {}}'})
+    prova("settings: ...ma un altro contenuto (senza obbligo della voce) e' ammesso",
+          r.ammesso, repr(r))
+    r = pred("Write", {"file_path": str(proj), "content": '{"disableAllHooks": true}'})
+    prova("settings: Write di <progetto>/.claude/settings.local.json con disableAllHooks true: negato",
+          r.negato, repr(r))
+    r = pred("Write", {"file_path": str(proj), "content": '{"permissions": {"allow": []}}'})
+    prova("settings: ...e senza: ammesso", r.ammesso, repr(r))
+    r = pred("Write", {"file_path": str(a.progetto / ".claude" / "settings.json"),
+                       "content": '{"disableAllHooks": true}'})
+    prova("settings: settings.json di un progetto con disableAllHooks true: negato", r.negato, repr(r))
+    r = alfa("Write", {"file_path": str(dentro_alfa), "content": '{"disableAllHooks": true}'})
+    prova("settings: alfa, settings.local.json dentro la sua cartella con disableAllHooks: negato",
+          r.negato, repr(r))
+    r = alfa("Write", {"file_path": str(dentro_alfa), "content": '{"permissions": {}}'})
+    prova("settings: alfa, ...senza: ammesso", r.ammesso, repr(r))
+    # Bash
+    tmp = str(a.progetto / "s.json")
+    negati = [
+        f"sed -i '' s/plancia-guardiano/x/ {utente}", f"sed -i.bak s/a/b/ {utente}",
+        f"jq 'del(.hooks)' {utente} > {tmp} && mv {tmp} {utente}",
+        f"jq 'del(.hooks)' {utente} | sponge {utente}", f"echo '{{}}' > {utente}",
+        f"echo '{{}}' | tee {utente}", f"cp {tmp} {utente}", f"mv {tmp} {utente}",
+        f"cat {tmp} > {home_locale}", f"echo '{{\"disableAllHooks\": true}}' > {proj}",
+        f"python3 -c \"open('{utente}', 'w').write('{{}}')\"",
+        f"cd {a.claude} && sed -i '' s/a/b/ settings.json", f"rm {utente}", f"rm -rf {a.claude}",
+        f"perl -pi -e 's/a/b/' {proj}",
+    ]
+    for cmd in negati:
+        r = pred("Bash", {"command": cmd})
+        prova(f"settings: Bash `{cmd[:62]}`: negato, con l'invito a usare Edit",
+              r.negato and "Edit" in r.motivo, repr(r))
+    for cmd in (f"cat {utente}", f"jq . {utente}", f"grep hooks {utente}", f"head {proj}",
+                f"cp {utente} {a.progetto}/copia-settings.json", f"jq .hooks {utente} > {tmp}"):
+        r = pred("Bash", {"command": cmd})
+        prova(f"settings: Bash `{cmd[:62]}` (lettura): ammesso", r.ammesso, repr(r))
+    # in solo-registro non si nega ma si scrive la riga
+    a.scrivi_config(a.config("solo-registro"))
+    n0 = len(a.registro())
+    r = pred("Write", {"file_path": str(utente), "content": "{}"})
+    righe = a.registro()
+    prova("settings: in solo-registro il Write che spegne e' ammesso e lascia `avrebbe-negato`",
+          r.ammesso and len(righe) == n0 + 1 and righe[-1]["esito"] == "avrebbe-negato", str(righe[-1:]))
+    a.togli_config()
+
+
+def _prove_interpreti_e_scritture(prova, a: Ambiente):
+    """Quarto giro, punti 4c e 4d: interpreti con il percorso costruito e altre
+    scritture nella cartella dei dati di Plancia, negate a TUTTE le sessioni."""
+    a.togli_config()
+    a.scrivi_config(a.config("bloccante"))
+    dati, cfg = str(a.dati), str(a.dati / "config.json")
+    p = str(a.progetto)
+
+    def pred(cmd):
+        return a.chiama(a.pl("Bash", {"command": cmd}, sid=S_COMUNE, aperta_in=a.progetto))
+
+    def alfa(cmd):
+        return a.chiama(a.pl("Bash", {"command": cmd}, sid=S_ALFA_LIBERA, aperta_in=a.alfa1))
+
+    costruiti = [
+        "python3 -c \"from plancia.cli import main; main(['config','guardiano','spento'])\"",
+        "python3 -c \"import sys; sys.argv=['plancia','config','guardiano','spento']; "
+        "from plancia.cli import main; main()\"",
+        "python3 -c \"from plancia import config as c; c.CONFIG_FILE.write_text('{}')\"",
+        "python3 -c \"import os; p=os.path.join(os.environ['PLANCIA_HOME'],'config.json'); "
+        "open(p,'w').write('{}')\"",
+        "python3 - <<'PY'\nimport json,os\np=os.path.expanduser('~/.plancia/config.json')\n"
+        "d=json.load(open(p)); d['guardiano']='spento'; json.dump(d,open(p,'w'))\nPY",
+        "node -e \"require('fs').writeFileSync(process.env.HOME+'/.plancia/config.json','{}')\"",
+        "ruby -e \"File.write(ENV['HOME']+'/.plancia/config.json','{}')\"",
+        "perl -e 'open(F,\">$ENV{HOME}/.plancia/config.json\");print F \"{}\"'",
+        "$(which plancia) config guardiano spento",
+        "P=$(which plancia); $P config guardiano spento",
+        "`which plancia` config guardiano spento",
+        "$(command -v plancia) config compartimenti '{}'",
+    ]
+    for cmd in costruiti:
+        for chi, f in (("predefinito", pred), ("alfa", alfa)):
+            r = f(cmd)
+            prova(f"interpreti: {chi}, `{cmd[:58].splitlines()[0]}`: negato", r.negato, repr(r))
+    letture = [
+        "python3 -c \"from plancia import config; print(config.load_config())\"",
+        "python3 -c \"from plancia import store; print(store.DB_PATH)\"",
+        f"python3 -c \"import json; print(json.load(open('{cfg}')))\"",
+        "node -e \"console.log(require('fs').readFileSync(process.env.HOME+'/.plancia/config.json','utf8'))\"",
+        "ruby -e \"puts File.read(ENV['HOME']+'/.plancia/config.json')\"",
+        "plancia guardiano --stato", "python3 -c \"print(1)\"", "which plancia",
+    ]
+    for cmd in letture:
+        r = pred(cmd)
+        prova(f"interpreti: predefinito, `{cmd[:58]}` (lettura): ammesso", r.ammesso, repr(r))
+    scritture = [
+        f"find {dati} -name config.json -delete", f"find {dati} -name 'config.json' -exec rm {{}} \\;",
+        f"find {dati} -type f -exec truncate -s0 {{}} +", f"find {dati} -delete",
+        f"chmod -R 000 {dati}", f"chown -R nobody {dati}",
+        f"curl -o {cfg} http://localhost/x", f"curl --output {cfg} http://localhost/x",
+        f"curl -s -o{cfg} http://localhost/x", f"cd {dati} && curl -O http://localhost/config.json",
+        f"curl -O --output-dir {dati} http://localhost/config.json",
+        f"wget -O {cfg} http://localhost/x", f"wget --output-document={cfg} http://localhost/x",
+        f"wget -P {dati} http://localhost/config.json", f"cd {dati} && wget http://localhost/config.json",
+        f"rsync -a {p}/ {dati}/", f"cp -r {p}/. {dati}/", f"cp -a {p}/ {dati}",
+        f"tar xf x.tgz -C {dati}", f"tar xzf x.tgz --directory={dati}", f"cd {dati} && tar xf x.tgz",
+        f"tar -czf {cfg} {p}",
+        f"unzip -o x.zip -d {dati}", f"cd {dati} && unzip x.zip",
+        f"git -C {dati} checkout -- config.json", f"git -C {dati} restore config.json",
+        f"git -C {dati} reset --hard", f"cd {dati} && git checkout x",
+    ]
+    for cmd in scritture:
+        for chi, f in (("predefinito", pred), ("alfa", alfa)):
+            r = f(cmd)
+            prova(f"scritture-dati: {chi}, `{cmd[:60]}`: negato", r.negato, repr(r))
+    ammessi = [
+        f"find {dati} -name '*.tmp'", f"find {dati} -name x -exec cat {{}} \\;",
+        f"find {p} -name '*.pyc' -delete", "find . -name '*.pyc' -delete",
+        f"curl -o {p}/x http://localhost/x", "curl -s http://localhost/x",
+        f"cd {p} && curl -O http://localhost/x.txt", f"tar xf x.tgz -C {p}",
+        f"tar czf out.tgz {cfg}", f"tar tf x.tgz", f"unzip -l x.zip", f"unzip x.zip -d {p}",
+        f"git -C {dati} status", f"git -C {dati} log", f"git -C {p} checkout -b x",
+        f"chmod -R u+w {p}", f"rsync -a x/ {p}/", f"cp -r x {dati}/backup", f"wget -O {p}/y http://localhost/y",
+        f"ls -la {dati}", f"cat {cfg}",
+    ]
+    for cmd in ammessi:
+        r = pred(cmd)
+        prova(f"scritture-dati: predefinito, `{cmd[:60]}`: ammesso", r.ammesso, repr(r))
+    a.togli_config()
+
+
+def _prove_annidati(prova, a: Ambiente):
+    """Quarto giro, punto 5: l'appartenenza come in boa. Cartelle annidate fra
+    nominati: vince il piu' specifico (per componenti, indipendente dall'ordine
+    della config); due nominati sulla stessa cartella sono incerti; l'id della
+    madre di un subagente conta solo se il transcript esiste davvero."""
+    nido = a.radice / "nido"
+    interno = nido / "interno"
+    doppia = a.radice / "doppia"
+    for d in (interno / "x", nido / "altro", doppia):
+        d.mkdir(parents=True, exist_ok=True)
+    (nido / "f.txt").write_text("di gamma", "utf-8")
+    (nido / "altro" / "g.txt").write_text("di gamma", "utf-8")
+    (interno / "h.txt").write_text("di delta", "utf-8")
+    (interno / "x" / "k.txt").write_text("di delta", "utf-8")
+    (doppia / "d.txt").write_text("incerto", "utf-8")
+
+    def config(ordine, doppi=False):
+        comp = {}
+        for nome in ordine:
+            comp[nome] = {"cartelle": [str(nido) if nome == "gamma" else str(interno)]}
+        if doppi:
+            comp["uno"] = {"cartelle": [str(doppia)]}
+            comp["due"] = {"cartelle": [str(doppia)]}
+        comp["predefinito"] = {"manifesto_divieti": "", "divieti": [], "comandi_vietati": []}
+        return {"guardiano": "bloccante", "compartimenti": comp}
+
+    def sess(tool, ti, aperta_in, sid="s-annidata"):
+        return a.chiama(a.pl(tool, ti, sid=sid, aperta_in=aperta_in))
+
+    for ordine in (("gamma", "delta"), ("delta", "gamma")):
+        a.togli_config()
+        a.scrivi_config(config(ordine))
+        et = "/".join(ordine)
+        r = sess("Read", {"file_path": str(interno / "h.txt")}, interno / "x")
+        prova(f"annidati ({et}): una sessione in nido/interno/x e' di delta: Read di interno/h: ammesso",
+              r.ammesso, repr(r))
+        r = sess("Read", {"file_path": str(nido / "f.txt")}, interno / "x")
+        prova(f"annidati ({et}): ...e non entra in nido (di gamma): negato, appartiene a gamma",
+              r.negato and "appartiene a gamma" in r.motivo, repr(r))
+        r = sess("Read", {"file_path": str(nido / "altro" / "g.txt")}, nido / "altro")
+        prova(f"annidati ({et}): una sessione in nido/altro e' di gamma: Read di nido/altro/g: ammesso",
+              r.ammesso, repr(r))
+        r = sess("Read", {"file_path": str(interno / "h.txt")}, nido / "altro")
+        prova(f"annidati ({et}): ...ma dentro nido/interno (di delta, il piu' specifico) non entra: "
+              "negato, appartiene a delta", r.negato and "appartiene a delta" in r.motivo, repr(r))
+        r = sess("Read", {"file_path": str(interno / "x" / "k.txt")}, nido / "altro")
+        prova(f"annidati ({et}): ...neanche piu' in fondo (nido/interno/x/k)", r.negato, repr(r))
+        r = sess("Grep", {"pattern": "x", "path": str(nido)}, nido / "altro")
+        prova(f"annidati ({et}): gamma cerca in nido: la ricerca include interno, di delta: negata",
+              r.negato and "restringi" in r.motivo, repr(r))
+        r = sess("Grep", {"pattern": "x", "path": str(nido / "altro")}, nido / "altro")
+        prova(f"annidati ({et}): gamma cerca in nido/altro (niente di delta sotto): ammessa",
+              r.ammesso, repr(r))
+        r = sess("Bash", {"command": "cat h.txt"}, interno / "x")
+        prova(f"annidati ({et}): delta con la cwd in nido/interno/x, Bash `cat` relativo di un "
+              "file inesistente li': ammesso (la cwd e' sua)", r.ammesso, repr(r))
+        r = a.chiama(a.pl("Read", {"file_path": str(interno / "h.txt")}, sid=S_COMUNE,
+                          aperta_in=a.comune))
+        prova(f"annidati ({et}): il predefinito non entra in nido/interno: negato, appartiene a delta",
+              r.negato and "appartiene a delta" in r.motivo, repr(r))
+        r = a.chiama(a.pl("Read", {"file_path": str(nido / "f.txt")}, sid=S_COMUNE,
+                          aperta_in=a.comune))
+        prova(f"annidati ({et}): ...ne' in nido: appartiene a gamma",
+              r.negato and "appartiene a gamma" in r.motivo, repr(r))
+    # due nominati sulla stessa cartella: incerto, niente
+    a.togli_config()
+    a.scrivi_config(config(("gamma", "delta"), doppi=True))
+    for chi, kw in (("una sessione in doppia", dict(sid="s-doppia", aperta_in=doppia)),
+                    ("il predefinito", dict(sid=S_COMUNE, aperta_in=a.comune))):
+        r = a.chiama(a.pl("Read", {"file_path": str(doppia / "d.txt")}, **kw))
+        prova(f"annidati: due nominati sulla stessa cartella, {chi}, Read: negato"
+              + (", e il motivo dice che la config e' ambigua" if kw["sid"] == "s-doppia" else ""),
+              r.negato and (kw["sid"] != "s-doppia" or "piu' di un compartimento" in r.motivo),
+              repr(r))
+    r = a.chiama(a.pl("Read", {"file_path": str(nido / "f.txt")}, sid="s-doppia", aperta_in=doppia))
+    prova("annidati: ...e la sessione incerta non legge neanche altrove", r.negato, repr(r))
+    # il subagente: l'id della madre conta solo se i transcript esistono davvero
+    a.togli_config()
+    cfg = a.config()
+    cfg["compartimenti"]["alfa"]["sessioni"].append(S_MADRE)
+    a.scrivi_config(cfg)
+    fuori = str(a.comune / "nota.txt")
+    base_p = a.claude / "projects" / _codifica(a.comune)
+    r = a.chiama(a.pl("Read", {"file_path": fuori}, sid="agent-v", aperta_in=a.comune, madre=S_MADRE))
+    prova("madre: subagente con i transcript veri (suo e della madre): la madre e' in alfa.sessioni: negato",
+          r.negato, repr(r))
+    finto = a.pl("Read", {"file_path": fuori}, sid="agent-f", aperta_in=a.radice / "finto-1")
+    finto["transcript_path"] = str(a.claude / "projects" / "cartella-finta" / S_MADRE / "subagents" / "agent-f.jsonl")
+    r = a.chiama(finto)
+    prova("madre: un transcript_path di subagente INVENTATO (nessun file): l'id della madre non conta: "
+          "Read nel comune ammesso", r.ammesso, repr(r))
+    senza = a.radice / "senza-madre"
+    senza.mkdir(exist_ok=True)
+    solo_sub = a.claude / "projects" / _codifica(senza) / S_MADRE / "subagents"
+    solo_sub.mkdir(parents=True, exist_ok=True)
+    (solo_sub / "agent-s.jsonl").write_text("{}\n", "utf-8")
+    payload = a.pl("Read", {"file_path": fuori}, sid="agent-s", aperta_in=senza)
+    payload["transcript_path"] = str(solo_sub / "agent-s.jsonl")
+    r = a.chiama(payload)
+    prova("madre: il file del subagente c'e' ma la madre non ha il suo transcript: non conta: ammesso",
+          r.ammesso, repr(r))
+    lontano = a.radice / "fuori-projects" / _codifica(a.progetto) / S_MADRE / "subagents"
+    lontano.mkdir(parents=True, exist_ok=True)
+    (lontano / "agent-l.jsonl").write_text("{}\n", "utf-8")
+    (lontano.parent.parent / f"{S_MADRE}.jsonl").write_text("{}\n", "utf-8")
+    payload = a.pl("Read", {"file_path": fuori}, sid="agent-l", aperta_in=a.progetto)
+    payload["transcript_path"] = str(lontano / "agent-l.jsonl")
+    r = a.chiama(payload)
+    prova("madre: i file esistono ma fuori da <claude>/projects: non conta: ammesso", r.ammesso, repr(r))
+    a.togli_config()
+
+
+def _prove_minori(prova, a: Ambiente):
+    """Quarto giro, punto 6: find -maxdepth e tree -L, Glob con pattern
+    assoluto, url file://, id di sessione crudo, strumenti di sessione senza id."""
+    a.togli_config()
+    a.scrivi_config(a.config("bloccante"))
+
+    def pred(tool, ti, **kw):
+        kw.setdefault("aperta_in", a.albero)
+        return a.chiama(a.pl(tool, ti, sid=S_COMUNE, **kw))
+
+    # la cwd e' albero, che ha sotto alfa-tre (di alfa) alla profondita' 1
+    for cmd in ("find . -maxdepth 1", "find . -maxdepth 1 -name '*.md'", "tree -L 1", "tree -L 1 .",
+                "find . -maxdepth 1 -type f", "du -sh *"):
+        r = pred("Bash", {"command": cmd})
+        prova(f"minori: predefinito (cwd sopra alfa-tre), `{cmd}`: ammesso (non e' una ricerca "
+              "illimitata)", r.ammesso, repr(r))
+    for cmd in ("find . -maxdepth 2", "find . -maxdepth 1 -exec cat {} +", "tree -L 2", "find . -name x",
+                "find . -maxdepth 2 -name '*.py'", "tree", "ls -R"):
+        r = pred("Bash", {"command": cmd})
+        prova(f"minori: predefinito (cwd sopra alfa-tre), `{cmd}`: negato (arriva a alfa-tre)",
+              r.negato, repr(r))
+    # Glob con un pattern assoluto e senza path: la cwd non c'entra
+    r = pred("Glob", {"pattern": f"{a.progetto}/**/*.txt"})
+    prova("minori: Glob con pattern assoluto e senza path (cwd sopra una cartella di alfa): ammesso",
+          r.ammesso, repr(r))
+    r = pred("Glob", {"pattern": "~/nulla-di-questo/**/*.py"})
+    prova("minori: Glob con pattern che comincia con ~ e senza path: ammesso", r.ammesso, repr(r))
+    r = pred("Glob", {"pattern": "**/*.txt"})
+    prova("minori: Glob con pattern relativo e senza path da quella cwd: resta negato",
+          r.negato, repr(r))
+    r = pred("Glob", {"pattern": f"{a.alfa1}/**/*.txt"})
+    prova("minori: Glob con pattern assoluto dentro alfa: negato", r.negato, repr(r))
+    r = pred("Grep", {"pattern": "x"})
+    prova("minori: Grep senza path da quella cwd: resta negato", r.negato, repr(r))
+    # url file://
+    alfa_f, comune_f = str(a.alfa1 / "segreto.txt"), str(a.comune / "nota.txt")
+    for tool, chiave in (("WebFetch", "url"), ("mcp__Claude_Browser__navigate", "url"),
+                         ("mcp__claude-in-chrome__navigate", "url")):
+        r = pred(tool, {chiave: "file://" + alfa_f, "prompt": "x"})
+        prova(f"minori: predefinito, {tool} con un url file:// verso alfa: negato", r.negato, repr(r))
+        r = pred(tool, {chiave: "file://localhost" + alfa_f})
+        prova(f"minori: ...con file://localhost: negato", r.negato, repr(r))
+        r = pred(tool, {chiave: "file:" + alfa_f})
+        prova(f"minori: ...con file: senza barre: negato", r.negato, repr(r))
+        r = a.chiama(a.pl(tool, {chiave: "file://" + comune_f}, sid=S_ALFA_LIBERA, aperta_in=a.alfa1))
+        prova(f"minori: alfa, {tool} con un url file:// verso il comune: negato", r.negato, repr(r))
+        r = pred(tool, {chiave: "https://esempio.test/a/b"})
+        prova(f"minori: {tool} con un url https: ammesso", r.ammesso, repr(r))
+        r = pred(tool, {chiave: "file://" + str(a.progetto / "p.txt")})
+        prova(f"minori: ...e un file:// verso un posto non vietato: ammesso", r.ammesso, repr(r))
+    r = pred("Bash", {"command": f"curl file://{alfa_f}"})
+    prova("minori: Bash `curl file://...alfa`: negato", r.negato, repr(r))
+    r = pred("Bash", {"command": f"python3 -c \"import urllib.request as u; u.urlopen('file://{alfa_f}')\""})
+    prova("minori: python -c con un url file:// verso alfa: negato", r.negato, repr(r))
+    r = pred("Bash", {"command": "curl -s https://esempio.test/a/b"})
+    prova("minori: Bash `curl` https: ammesso", r.ammesso, repr(r))
+    # un id di sessione crudo (l'uuid del .jsonl) di una sessione che sta solo nel registro dell'app
+    nuova = "a4a4a4a4-0000-4000-8000-000000000020"
+    a.registra_app("local_aaaa0000-0000-4000-8000-000000000021", nuova, a.alfa1, "Solo nel registro")
+    ss = "mcp__ccd_session_mgmt__"
+    r = a.chiama(a.pl(ss + "get_session", {"session_id": nuova}, sid=S_COMUNE))
+    prova("minori: get_session con il session_id crudo (uuid) di una sessione di alfa che sta solo "
+          "nel registro dell'app: negato", r.negato and "alfa" in r.motivo, repr(r))
+    r = a.chiama(a.pl(ss + "get_session", {"session_id": "e5e5e5e5-0000-4000-8000-000000000022"},
+                      sid=S_COMUNE))
+    prova("minori: ...un uuid che nessuno conosce resta ammesso al predefinito", r.ammesso, repr(r))
+    # strumenti di sessione senza id da un nominato: negati (non e' certo che agiscano su di lei),
+    # con l'indicazione di passare "self"
+    for corto, ti in (("set_session_title", {"title": "x"}), ("clear_session", {}),
+                      ("set_session_model", {"model": "x"})):
+        r = a.chiama(a.pl(ss + corto, ti, sid=S_ALFA_LIBERA, aperta_in=a.alfa1))
+        prova(f"minori: alfa, {corto} senza id: negato, e il motivo dice di passare \"self\"",
+              r.negato and "self" in r.motivo, repr(r))
+        ti2 = dict(ti)
+        ti2["session_id"] = "self"
+        r = a.chiama(a.pl(ss + corto, ti2, sid=S_ALFA_LIBERA, aperta_in=a.alfa1))
+        prova(f"minori: alfa, {corto} con session_id \"self\": ammesso", r.ammesso, repr(r))
+    r = a.chiama(a.pl(ss + "get_usage", {}, sid=S_ALFA_LIBERA, aperta_in=a.alfa1))
+    prova("minori: alfa, get_usage senza id (il suo default e' \"self\"): ammesso", r.ammesso, repr(r))
+    a.togli_config()
+
+
 def _prove_forma(prova):
     """Il file, la versione di Python, la privacy del repo pubblico."""
     attesi = [GUARDIANO, RADICE / "plancia" / "compartimenti.py", Path(__file__)]
@@ -1892,5 +2736,13 @@ def esegui(prova):
         _prove_tempo(prova, a)
         _prove_cli(prova, a)
         _prove_cli_config(prova, a)
+        _prove_flusso_testo(prova, a)
+        _prove_cd_variabili(prova, a)
+        _prove_non_parte(prova, a)
+        _prove_config_illeggibile(prova, a)
+        _prove_settings(prova, a)
+        _prove_interpreti_e_scritture(prova, a)
+        _prove_annidati(prova, a)
+        _prove_minori(prova, a)
     finally:
         a.chiudi()

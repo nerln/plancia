@@ -652,8 +652,31 @@ def cmd_esclusi(args):
 def cmd_guardiano(args):
     """Il registro e lo stato del guardiano dei compartimenti (sola lettura:
     non scrive config.json ne' il registro)."""
-    from . import compartimenti
     dati = str(config.DATA_DIR)
+    try:
+        from . import compartimenti
+    except Exception as exc:  # noqa: BLE001 - il modulo non si importa: lo diciamo
+        # Lo stesso guasto che spegne l'hook (`guardiano-non-parte`): il registro si
+        # legge a mano, senza il modulo, e si mostrano le righe di quel guasto.
+        print(f"ATTENZIONE: plancia/compartimenti.py non si importa "
+              f"({type(exc).__name__}: {exc}): il guardiano non parte, i "
+              "compartimenti non sono protetti")
+        righe = []
+        try:
+            with open(os.path.join(dati, "guardiano.log"), "r", encoding="utf-8") as f:
+                for linea in f:
+                    try:
+                        d = json.loads(linea)
+                    except ValueError:
+                        continue
+                    if isinstance(d, dict) and d.get("esito") == "guardiano-non-parte":
+                        righe.append(d)
+        except OSError:
+            pass
+        for d in righe[-3:]:
+            print("  %s  %s" % (str(d.get("ts", "?")).replace("T", " ").rstrip("Z"),
+                                d.get("motivo") or ""))
+        return 1
     if args.registro is not None:
         righe = compartimenti.leggi_registro(dati, args.registro)
         if not righe:
@@ -667,6 +690,13 @@ def cmd_guardiano(args):
         return
     st = compartimenti.stato(dati)
     print(f"modalita: {st['modo']}")
+    if st["non_parte"]["righe"]:
+        u = st["non_parte"]["ultima"] or {}
+        print("ATTENZIONE: il guardiano NON PARTE (%d volte nelle ultime 24 ore, "
+              "ultima %s: %s): non protegge nessuna sessione finche' non si ripara"
+              % (st["non_parte"]["righe"],
+                 str(u.get("ts", "?")).replace("T", " ").rstrip("Z"),
+                 u.get("motivo") or ""))
     if st["config"] == "rotta":
         print(f"{st['errore']}: "
               + ("uso l'ultima config valida" if st["usa_copia"]
@@ -698,6 +728,15 @@ def cmd_open(args):
 
 
 def cmd_config(args):
+    if args.chiave and args.valore is not None:
+        # un config.json che esiste e non si legge non si riscrive: load_config()
+        # tornerebbe i default e la scrittura cancellerebbe guardiano,
+        # compartimenti ed esclusioni (vedi config.save_config)
+        errore = config.config_illeggibile()
+        if errore:
+            print(f"config: {errore}: non scrivo niente, riparalo a mano",
+                  file=sys.stderr)
+            return 2
     cfg = config.load_config()
     if args.chiave:
         value = args.valore
@@ -938,7 +977,11 @@ def build_parser():
 def main(argv=None):
     args = build_parser().parse_args(argv)
     config.ensure_dirs()
-    return args.func(args) or 0
+    try:
+        return args.func(args) or 0
+    except config.ConfigIlleggibile as exc:
+        print(f"config: {exc}: non scrivo niente, riparalo a mano", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":
