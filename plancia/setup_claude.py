@@ -714,7 +714,21 @@ RIEPILOGO_SKILL = RIEPILOGO_SKILL_IT
 # sull'italiano per qualunque lingua diversa da "en", invece di rompere
 # l'installazione.
 def skill_text(lang: str = "it") -> str:
-    return SKILL_EN if lang == "en" else SKILL_IT
+    testo = SKILL_EN if lang == "en" else SKILL_IT
+    # Il testo scritto a mano dice dove sta Plancia sulla macchina di chi l'ha
+    # scritto; chi clona altrove (un altro utente, un PC Windows) deve leggere
+    # il proprio percorso, non quello.
+    return testo.replace("`~/dev/plancia`", f"`{cartella_installata()}`")
+
+
+def cartella_installata() -> str:
+    """La cartella di questo checkout come la scriverebbe una persona: con `~`
+    se sta sotto la casa, sempre con le barre in avanti."""
+    radice = Path(config.ROOT).resolve()
+    try:
+        return "~/" + radice.relative_to(Path.home().resolve()).as_posix()
+    except ValueError:
+        return radice.as_posix()
 
 
 def install_skill(lang: str = None) -> str:

@@ -55,6 +55,15 @@ def esegui(prova):
     en = setup_claude.skill_text("en")
 
     for nome, testo in (("it", it), ("en", en)):
+        # Il percorso della skill e' quello di questo checkout, non quello
+        # della macchina di chi l'ha scritta: le prove girano da qualunque
+        # cartella, quindi il confronto e' con cartella_installata().
+        dove = setup_claude.cartella_installata()
+        prova(f"la skill ({nome}) dice dove sta questo checkout ({dove})",
+              f"`{dove}`" in testo, dove)
+        if dove != "~/dev/plancia":
+            prova(f"la skill ({nome}) non dice ~/dev/plancia se il checkout e' altrove",
+                  "`~/dev/plancia`" not in testo)
         prova(f"la skill ({nome}) parla di riprendere un task",
               "riprendi" in testo)
         prova(f"la skill ({nome}) cita send_message",
