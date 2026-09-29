@@ -269,11 +269,17 @@ AGGIUNTE = {
     # <host>" come motivo quando la sessione è persa
     "tasks": (("agent", "TEXT DEFAULT ''"), ("prompt", "TEXT DEFAULT ''"),
               ("cwd", "TEXT DEFAULT ''"), ("run_id", "INTEGER"),
-              ("host", "TEXT DEFAULT ''")),
+              ("host", "TEXT DEFAULT ''"),
+              # a mano: il compartimento (vedi plancia/compartimenti_viste.py) a
+              # cui una persona ha assegnato l'oggetto dalla dashboard. Vuoto
+              # nella quasi totalita' dei casi: il compartimento si ricava dai
+              # dati che l'oggetto ha gia' (sessione, cwd, progetto) e questa
+              # colonna si SOMMA a quelli, non li sostituisce.
+              ("compartimento", "TEXT DEFAULT ''")),
     # un progetto può avere un padre (una piattaforma sotto tanti studi):
     # project_links ha UNIQUE(kind, value) e non regge due figli con lo
     # stesso padre, quindi il padre è una colonna, non un link
-    "projects": (("parent_id", "INTEGER"),),
+    "projects": (("parent_id", "INTEGER"), ("compartimento", "TEXT DEFAULT ''")),
     # da quale conversazione è uscito questo commit
     "commits": (("session_id", "TEXT DEFAULT ''"),),
     # il testo di una skill: è roba che ha scritto lui, e sta in un posto solo
@@ -281,7 +287,10 @@ AGGIUNTE = {
     # un post senza immagine è l'eccezione, non la regola. L'immagine si decide
     # quando si scrive il post, insieme al testo: al momento di pubblicare non
     # c'è più il contesto per sceglierla, e finiva ripescata a mano ogni volta.
-    "posts": (("media", "TEXT DEFAULT ''"),),
+    "posts": (("media", "TEXT DEFAULT ''"), ("compartimento", "TEXT DEFAULT ''")),
+    # solo per le note scritte a mano (`plancia_log`, la dashboard) senza un
+    # progetto: le altre righe hanno il compartimento dal loro `ref` o progetto
+    "events": (("compartimento", "TEXT DEFAULT ''"),),
 }
 
 
@@ -448,7 +457,7 @@ def touch_project(conn, project_id: int, ts: str) -> None:
 # --------------------------------------------------------------------------
 
 def add_event(conn, ts, kind, title, detail="", project_id=None, ref=None,
-              source="", dedup=None) -> None:
+              source="", dedup=None, compartimento="") -> None:
     dedup = dedup or f"{kind}:{ref or title}:{ts}"
     conn.execute(
         "INSERT INTO events(ts, kind, title, detail, project_id, ref, source, dedup) "
@@ -457,6 +466,10 @@ def add_event(conn, ts, kind, title, detail="", project_id=None, ref=None,
         "project_id=COALESCE(excluded.project_id, events.project_id)",
         (ts, kind, title, detail, project_id, ref, source, dedup),
     )
+    if compartimento:
+        # il compartimento assegnato a mano (vedi compartimenti_viste.py)
+        conn.execute("UPDATE events SET compartimento=? WHERE dedup=?",
+                     (compartimento, dedup))
 
 
 # --------------------------------------------------------------------------

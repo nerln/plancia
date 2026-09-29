@@ -4,6 +4,7 @@ Viene scritto su file a ogni sync e a ogni scrittura, così l'hook SessionStart
 lo legge in un millisecondo invece di aprire il database.
 """
 
+import os
 from datetime import datetime, timedelta, timezone
 
 from . import config, slot, store
@@ -364,8 +365,56 @@ def write_cache() -> str:
     contesto di ogni sessione di Claude Code e di Codex, quindi ogni riga si paga
     tante volte quante sessioni apri. La versione lunga resta a un tool di
     distanza per chi la vuole davvero.
+
+    Con dei compartimenti nominati in config.json (vedi
+    plancia/compartimenti_viste.py) il file e' uno PER compartimento: la sessione
+    di un nominato riceve solo il suo (`briefing.<nome>.md`), quella del
+    predefinito solo il proprio (`briefing.predefinito.md`, che e' anche
+    `briefing.md` per chi lo legge da fuori). L'hook sceglie il file dal
+    compartimento della sessione e, con i compartimenti attivi, non legge mai il
+    `briefing.md` non separato che un sync di prima poteva aver lasciato. Senza
+    compartimenti e' un file solo, com'e' sempre stato. Se i compartimenti ci
+    sono ma non si riesce a separare, non si scrive niente: meglio un briefing
+    vecchio che uno che mescola.
     """
-    text = build(esteso=False)
+    from . import compartimenti_viste as viste
     config.ensure_dirs()
-    config.BRIEFING_FILE.write_text(text, "utf-8")
-    return text
+    ambito = viste.attivo()
+    if ambito is None:
+        text = build(esteso=False)
+        config.BRIEFING_FILE.write_text(text, "utf-8")
+        _togli_briefing_altrui(viste, [])
+        return text
+    conn = store.connect()
+    try:
+        appart = viste.Appartenenze(conn, ambito)
+    finally:
+        conn.close()
+    testi = {}
+    for nome in viste.elenco(ambito):
+        conn = store.connect()
+        try:
+            o = viste.applica(conn, ambito, nome, appart=appart)
+            testi[nome] = build(conn, esteso=False)
+        finally:
+            conn.close()
+    for nome, testo in testi.items():
+        with open(viste.file_briefing(str(config.DATA_DIR), nome), "w",
+                  encoding="utf-8") as fh:
+            fh.write(testo)
+    _togli_briefing_altrui(viste, [n for n in testi])
+    config.BRIEFING_FILE.write_text(testi[viste.PREDEFINITO], "utf-8")
+    return testi[viste.PREDEFINITO]
+
+
+def _togli_briefing_altrui(viste, nomi) -> None:
+    """Toglie i `briefing.*.md` di compartimenti che non ci sono piu' (config
+    cambiata, compartimenti spenti): un file vecchio con dentro il lavoro di
+    un compartimento non deve restare li' a farsi leggere."""
+    tengo = {os.path.basename(viste.file_briefing(str(config.DATA_DIR), n)) for n in nomi}
+    try:
+        for f in config.DATA_DIR.glob("briefing.*.md"):
+            if f.name not in tengo:
+                f.unlink()
+    except OSError:
+        pass

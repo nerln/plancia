@@ -371,12 +371,33 @@ def pulisci_vecchi(giorni: int = 7) -> int:
 
 def richiama(testo: str, cwd: str = "", session_id: str = "",
              limite: int = MAX_RICHIAMI, soglia: float = SOGLIA,
-             ricorda: bool = True) -> list:
-    """Il giro completo: cerca, esclude quello che è già in contesto, segna."""
+             ricorda: bool = True, payload: dict = None) -> list:
+    """Il giro completo: cerca, esclude quello che è già in contesto, segna.
+
+    Con dei compartimenti nominati (vedi plancia/compartimenti_viste.py) la
+    ricerca vede solo le memorie del compartimento della sessione che scrive:
+    una sessione del predefinito non riceve mai la memoria automatica di un
+    nominato (`<claude>/projects/<codifica della cartella del nominato>/
+    memory/`, che la cerca "scritta in altre cartelle" pescava), e viceversa.
+    Il compartimento lo dicono gli stessi segnali del guardiano: l'id di
+    sessione, la cartella in cui e' stata aperta (dal `transcript_path`, per
+    questo l'hook passa tutto il `payload`) e la cwd. Una sessione con segnali
+    di due nominati non riceve niente.
+    """
     conn = apri_ro()
     if conn is None:
         return []
     try:
+        from . import compartimenti_viste as viste
+        ambito = viste.attivo()
+        if ambito is not None:
+            base = dict(payload) if isinstance(payload, dict) else {}
+            base.setdefault("session_id", session_id)
+            base.setdefault("cwd", cwd)
+            visore = viste.visore_da_payload(ambito, base)
+            if visore == viste.INCERTO:
+                return []
+            viste.applica(conn, ambito, visore, solo=("knowledge",))
         trovati = cerca(conn, testo, escludi_scope=cartella_sessione(cwd),
                         limite=limite, soglia=soglia,
                         salta=gia_detto(session_id) if session_id else set())

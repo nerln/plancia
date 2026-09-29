@@ -10,8 +10,8 @@ import json
 import sys
 import traceback
 
-from . import (actions, briefing, cantiere, config, eventi, lavagna, recap, sessione,
-               store, turni, voice)
+from . import (actions, briefing, cantiere, compartimenti_viste as viste, config,
+               eventi, lavagna, recap, sessione, store, turni, voice)
 
 PROTOCOL = "2025-06-18"
 SUPPORTED = {"2024-11-05", "2025-03-26", "2025-06-18"}
@@ -317,6 +317,45 @@ def _sessione_bloccata(conn):
     return None
 
 
+def _progetto_scrivibile(conn, lettura, ombra, ident, esiste=False, chiave=False):
+    """Il progetto da usare in una scrittura, senza uscire dal compartimento.
+
+    Senza compartimenti torna `ident` com'e' (comportamento di sempre). Con i
+    compartimenti torna l'id del progetto SE la sessione lo vede; se `ident` ne
+    nomina esattamente uno di un altro compartimento rifiuta con un messaggio
+    chiaro (non nomina il compartimento dell'altro: e' quello che non si deve
+    sapere). Un progetto che non c'e' resta come prima (nessuna scheda, o
+    'inesistente' se `esiste` dice che ci deve essere): non si ripiega mai sulla
+    ricerca per somiglianza sull'intero archivio, che potrebbe pescare un
+    progetto altrui."""
+    if ombra is None:
+        return ident
+    if ident in (None, "", 0):
+        if esiste:
+            raise actions.BadInput("serve il progetto")
+        return None
+    riga = store.get_project(lettura, ident)
+    if riga:
+        return riga["key"] if chiave else riga["id"]
+    if viste.progetto_esatto(conn, ident):
+        raise actions.BadInput(viste.MSG_ALTRO % f"il progetto '{ident}'")
+    if esiste:
+        raise actions.BadInput(f"progetto '{ident}' inesistente")
+    return None
+
+
+def _oggetto_scrivibile(conn, lettura, ombra, leggi, chiave, nome):
+    """Rifiuta di toccare un task o un post che la sessione non vede: la
+    lettura con le viste non lo trova, quella senza si'. Se non esiste in
+    nessuno dei due la funzione che scrive dice da se' 'inesistente'."""
+    if ombra is None:
+        return
+    if leggi(lettura, chiave):
+        return
+    if leggi(conn, chiave):
+        raise actions.BadInput(viste.MSG_ALTRO % f"{nome} {chiave}")
+
+
 def call_tool(name: str, args: dict) -> str:
     # Il dispatcher: `plancia` con un'azione diventa il tool di prima che aveva
     # quel nome, e da li' in giu' non cambia niente. Tenere una catena sola vuol
@@ -337,7 +376,40 @@ def call_tool(name: str, args: dict) -> str:
 
     conn = store.connect()
     store.init_db(conn)
+    # Compartimenti (plancia/compartimenti_viste.py): se in config ce ne sono di
+    # nominati, questo server sa di che compartimento e' la sessione che lo ha
+    # lanciato (`sessione.corrente()`: l'id e la cwd di partenza; l'id si
+    # confronta anche con la cartella in cui e' stata aperta, trovando il suo
+    # transcript). Le LETTURE passano da `lettura`, una seconda connessione con
+    # le viste temporanee che nascondono gli altri compartimenti; le SCRITTURE
+    # da `conn`, dopo aver controllato a mano di che compartimento e' l'oggetto
+    # (una vista non si scrive). Senza compartimenti `lettura` e `conn` sono la
+    # stessa connessione e non cambia niente. Se la separazione non riesce
+    # (un'eccezione) la chiamata fallisce: niente lettura senza filtro.
+    lettura, ombra, visore = conn, None, None
     try:
+        ambito = viste.attivo()
+        if ambito is not None:
+            try:
+                s_ = sessione.corrente()
+            except Exception:
+                s_ = {}
+            visore = viste.visore_mcp(ambito, s_)
+            lettura = store.connect()
+            ombra = viste.applica(lettura, ambito, visore)
+    except Exception:
+        err(traceback.format_exc())
+        conn.close()
+        raise actions.BadInput("compartimenti: non riesco a stabilire da che "
+                               "compartimento sei, niente da qui.")
+    # cosa mettere nella colonna `compartimento` di quello che si scrive: il
+    # nominato dice sempre il suo (vale anche se la sessione non e' nota)
+    tag_comp = visore if visore not in (None, viste.PREDEFINITO, viste.INCERTO) else ""
+    try:
+        if ombra is not None and visore == viste.INCERTO:
+            raise actions.BadInput(
+                "questa sessione ha segnali di piu' compartimenti: Plancia non "
+                "mostra niente (e non scrive) finche' non e' chiaro di quale sia.")
         scrive_ora = name in _SCRITTURE or (
             name == "plancia_riprendi" and bool(args.get("background")))
         if scrive_ora:
@@ -346,7 +418,7 @@ def call_tool(name: str, args: dict) -> str:
                 raise actions.BadInput(motivo)
 
         if name == "plancia_briefing":
-            return briefing.build(conn, args.get("project"))
+            return briefing.build(lettura, args.get("project"))
 
         if name == "plancia_search":
             q = args.get("query", "")
@@ -355,16 +427,24 @@ def call_tool(name: str, args: dict) -> str:
             # ritrovare: fino al 9 agosto 2026 questa ricerca vedeva solo il
             # primo prompt di ogni sessione, lo 0,08% del materiale, ed e' il
             # motivo per cui e' stata chiamata cinque volte in tutto.
-            dai_turni = turni.cerca(conn, q, limit=min(limite, 12),
-                                    progetto=args.get("project"))
-            schede = store.search(conn, q, limite)
+            if ombra is not None:
+                # l'indice FTS non si filtra con una vista: si toglie a valle
+                dai_turni, gruppi = viste.cerca_turni(
+                    lettura, ombra, q, min(limite, 12), args.get("project"))
+                schede = viste.cerca_schede(lettura, ombra, q, limite)
+            else:
+                dai_turni = turni.cerca(conn, q, limit=min(limite, 12),
+                                        progetto=args.get("project"))
+                schede = store.search(conn, q, limite)
+                gruppi = None
             if not dai_turni and not schede:
                 return "nessun risultato"
             esito = {"nei_turni": dai_turni, "nelle_schede": schede}
             # Il conteggio per progetto sta su tutto l'indice: dice quanto resta
             # fuori dai dodici mostrati, e da dove, cosi si puo' richiamare con
             # `project` invece di andare a tentoni.
-            gruppi = turni.raggruppa(conn, q) if dai_turni else []
+            if gruppi is None:
+                gruppi = turni.raggruppa(conn, q) if dai_turni else []
             if len(gruppi) > 1:
                 esito["altrove"] = {g["progetto"]: g["turni"] for g in gruppi}
             return _fmt(esito)
@@ -383,17 +463,18 @@ def call_tool(name: str, args: dict) -> str:
                 sql += " AND p.status=?"
                 params.append(args["status"])
             sql += " ORDER BY p.pinned DESC, p.priority ASC, p.last_activity DESC"
-            return _fmt([dict(r) for r in conn.execute(sql, params).fetchall()])
+            return _fmt([dict(r) for r in lettura.execute(sql, params).fetchall()])
 
         if name == "plancia_project_update":
             return _fmt(actions.project_update(
-                conn, args.get("project"),
+                conn, _progetto_scrivibile(conn, lettura, ombra, args.get("project"),
+                                           esiste=True),
                 status=args.get("status"), next_action=args.get("next_action"),
                 summary=args.get("summary"), priority=args.get("priority"),
                 pinned=args.get("pinned")))
 
         if name == "plancia_tasks":
-            return _fmt(actions.tasks_list(conn, args.get("status"), args.get("project"),
+            return _fmt(actions.tasks_list(lettura, args.get("status"), args.get("project"),
                                            int(args.get("limit") or 50)))
 
         if name == "plancia_task_add":
@@ -421,28 +502,41 @@ def call_tool(name: str, args: dict) -> str:
                 err("sessione.corrente() non ha trovato niente: agent=%r cwd=%r" %
                     (s.get("agent"), s.get("cwd")))
             return _fmt(actions.task_add(
-                conn, args.get("title"), args.get("body", ""), args.get("project"),
+                conn, args.get("title"), args.get("body", ""),
+                _progetto_scrivibile(conn, lettura, ombra, args.get("project")),
                 args.get("priority", 2), args.get("due"), source="claude",
                 session_id=s.get("session_id"), cwd=s.get("cwd"), agent=s.get("agent"),
-                host=s.get("host")))
+                host=s.get("host"), compartimento=tag_comp))
 
         if name == "plancia_task_update":
+            _oggetto_scrivibile(conn, lettura, ombra, actions.task_get,
+                                int(args.get("id")), "il task")
             return _fmt(actions.task_update(
                 conn, int(args.get("id")), status=args.get("status"),
                 priority=args.get("priority"), title=args.get("title"),
-                body=args.get("body"), due=args.get("due"), project=args.get("project")))
+                body=args.get("body"), due=args.get("due"),
+                project=_progetto_scrivibile(conn, lettura, ombra, args.get("project"))
+                if args.get("project") is not None else None))
 
         if name == "plancia_posts":
-            return _fmt(actions.posts_list(conn, args.get("status"), args.get("platform")))
+            return _fmt(actions.posts_list(lettura, args.get("status"), args.get("platform")))
 
         if name == "plancia_post_add":
+            try:
+                sid_post = sessione.corrente().get("session_id")
+            except Exception:
+                sid_post = None
             return _fmt(actions.post_add(
                 conn, args.get("text"), args.get("platform", "x"),
-                args.get("status", "bozza"), args.get("project"), args.get("url"),
-                args.get("source_ref", ""), args.get("scheduled_for"),
-                media=args.get("media", "")))
+                args.get("status", "bozza"),
+                _progetto_scrivibile(conn, lettura, ombra, args.get("project")),
+                args.get("url"), args.get("source_ref", ""), args.get("scheduled_for"),
+                session_id=sid_post if ombra is not None else None,
+                media=args.get("media", ""), compartimento=tag_comp))
 
         if name == "plancia_post_update":
+            _oggetto_scrivibile(conn, lettura, ombra, actions.post_get,
+                                int(args.get("id")), "il post")
             return _fmt(actions.post_update(
                 conn, int(args.get("id")), status=args.get("status"), url=args.get("url"),
                 text=args.get("text"), metrics=args.get("metrics"),
@@ -455,7 +549,7 @@ def call_tool(name: str, args: dict) -> str:
                    "WHERE 1=1")
             params = []
             if args.get("project"):
-                row = store.get_project(conn, args["project"])
+                row = store.get_project(lettura, args["project"])
                 sql += " AND s.project_id=?"
                 params.append(row["id"] if row else -1)
             if args.get("query"):
@@ -463,17 +557,17 @@ def call_tool(name: str, args: dict) -> str:
                 params += [f"%{args['query']}%"] * 2
             sql += " ORDER BY s.started_at DESC LIMIT ?"
             params.append(int(args.get("limit") or 20))
-            return _fmt([dict(r) for r in conn.execute(sql, params).fetchall()])
+            return _fmt([dict(r) for r in lettura.execute(sql, params).fetchall()])
 
         if name == "plancia_memory":
             if args.get("name"):
-                row = conn.execute(
+                row = lettura.execute(
                     "SELECT name, description, type, body, updated_at FROM knowledge "
                     "WHERE name=? OR name LIKE ?", (args["name"], f"%{args['name']}%")
                 ).fetchone()
                 return _fmt(dict(row)) if row else "nessuna memoria con questo nome"
             like = f"%{args.get('query', '')}%"
-            rows = conn.execute(
+            rows = lettura.execute(
                 "SELECT name, description, type, updated_at FROM knowledge "
                 "WHERE name LIKE ? OR description LIKE ? OR body LIKE ? "
                 "ORDER BY updated_at DESC LIMIT 40", (like, like, like)).fetchall()
@@ -482,10 +576,11 @@ def call_tool(name: str, args: dict) -> str:
         if name == "plancia_log":
             return _fmt(actions.log_event(
                 conn, args.get("title"), args.get("kind", "nota"), args.get("detail", ""),
-                args.get("project"), args.get("ref")))
+                _progetto_scrivibile(conn, lettura, ombra, args.get("project")),
+                args.get("ref"), compartimento=tag_comp))
 
         if name == "plancia_recap":
-            data = recap.build(conn, args.get("day"), args.get("lang"))
+            data = recap.build(lettura, args.get("day"), args.get("lang"))
             if args.get("speak"):
                 info = voice.parla(data["testo"], data["lingua"], attendi=False)
                 if info["motore"] == "nessuno":
@@ -509,28 +604,46 @@ def call_tool(name: str, args: dict) -> str:
             return _fmt({"letto": True, "motore": info["motore"], "lingua": info["lingua"]})
 
         if name == "plancia_lavagna":
-            return _fmt({"voci": lavagna.elenco(conn, args.get("stato", "aperti"),
+            return _fmt({"voci": lavagna.elenco(lettura, args.get("stato", "aperti"),
                                                 args.get("fonte"),
                                                 int(args.get("limite") or 60)),
-                         "conteggi": lavagna.conteggi(conn)})
+                         "conteggi": lavagna.conteggi(lettura)})
 
         if name == "plancia_manda":
             titolo = (args.get("titolo") or "").strip()
             if not titolo:
                 raise actions.BadInput("serve un titolo")
+            progetto = args.get("progetto")
+            if ombra is not None:
+                if args.get("task_id") is not None:
+                    _oggetto_scrivibile(conn, lettura, ombra, actions.task_get,
+                                        int(args["task_id"]), "il task")
+                # la chiave, non l'id: e' quella che finisce nel registro degli eventi
+                progetto = _progetto_scrivibile(conn, lettura, ombra, progetto, chiave=True)
+                if progetto is None and visore != viste.PREDEFINITO:
+                    # senza un progetto l'agente partirebbe in una cartella
+                    # qualunque, che non e' detto sia del tuo compartimento
+                    raise actions.BadInput(
+                        "da un compartimento nominato plancia_manda vuole un "
+                        "progetto del compartimento (progetto=...).")
             return _fmt(cantiere.avvia(
-                conn, titolo, args.get("dettaglio", ""), args.get("progetto"),
+                conn, titolo, args.get("dettaglio", ""), progetto,
                 args.get("istruzioni", ""), args.get("agente", "claude"),
                 args.get("modo", "proposta"), None, args.get("task_id")))
 
         if name == "plancia_lanci":
             if args.get("id"):
-                return _fmt(cantiere.dettaglio(conn, int(args["id"])))
-            return _fmt(cantiere.elenco(conn, int(args.get("limite") or 10)))
+                return _fmt(cantiere.dettaglio(lettura, int(args["id"])))
+            return _fmt(cantiere.elenco(lettura, int(args.get("limite") or 10)))
 
         if name == "plancia_eventi":
-            return _fmt(eventi.leggi(args.get("dopo"), args.get("tipo"),
-                                     int(args.get("limite") or 50)))
+            limite = int(args.get("limite") or 50)
+            if ombra is None:
+                return _fmt(eventi.leggi(args.get("dopo"), args.get("tipo"), limite))
+            # il registro e' un file solo, di tutti: si legge piu' largo e si
+            # toglie cio' che non e' di questo compartimento
+            righe = eventi.leggi(args.get("dopo"), args.get("tipo"), max(limite * 20, 500))
+            return _fmt(ombra.filtra_eventi(righe)[:limite])
 
         if name == "plancia_sync":
             from . import ingest
@@ -543,11 +656,14 @@ def call_tool(name: str, args: dict) -> str:
             tid = args.get("id")
             if tid is None:
                 raise actions.BadInput("serve id")
-            task = actions.task_get(conn, int(tid))
+            if ombra is not None:
+                _oggetto_scrivibile(conn, lettura, ombra, actions.task_get,
+                                    int(tid), "il task")
+            task = actions.task_get(lettura, int(tid))
             if not task:
                 raise actions.BadInput(f"task {tid} inesistente")
             from . import riprendi as _riprendi
-            s = _riprendi.stato(conn, task)
+            s = _riprendi.stato(lettura, task)
             if args.get("apri"):
                 return _fmt(_riprendi.apri(task, conn))
             if args.get("background"):
@@ -568,13 +684,19 @@ def call_tool(name: str, args: dict) -> str:
                     conn, task.get("title") or "", "", task.get("project_key"),
                     args.get("istruzioni", ""), s.get("agent") or task.get("agent") or "claude",
                     bool(args.get("scrive")), None, task["id"], sessione=sessione_fork))
-            argv = _riprendi.comando(task, s, conn)
+            argv = _riprendi.comando(task, s, lettura)
             return _fmt({"stato": s.get("stato"), "motivo": s.get("motivo"),
                         "sessione": s.get("session_id"), "cwd": s.get("cwd"),
                         "comando": argv, "messaggio": _riprendi.messaggio(task)})
 
         raise actions.BadInput(f"tool sconosciuto: {name}")
     finally:
+        if lettura is not conn:
+            viste.chiudi(lettura, ombra)
+            try:
+                lettura.close()
+            except Exception:
+                pass
         try:
             conn.close()
         except Exception:
