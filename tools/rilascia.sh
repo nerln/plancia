@@ -70,6 +70,19 @@ echo "==> compilo"
 ./mac/build.sh >/dev/null
 mkdir -p "$FUORI"
 
+# La build per se' scrive in Info.plist `PlanciaExecutable`, il percorso del
+# comando `plancia` su questa macchina (dentro c'e' la cartella di chi compila).
+# Nell'app che si distribuisce non serve e non deve esserci: chi la scarica ha
+# il comando altrove, e l'app lo cerca da sola nei posti soliti. Tolta la
+# chiave, la firma locale ad hoc va rifatta (quella con il certificato, sotto,
+# la rifa' comunque).
+/usr/libexec/PlistBuddy -c "Delete :PlanciaExecutable" "$APP/Contents/Info.plist" 2>/dev/null || true
+codesign --force --deep --sign - "$APP" >/dev/null 2>&1 || true
+if grep -q "$HOME" "$APP/Contents/Info.plist"; then
+  echo "!! Info.plist contiene ancora la cartella di casa di chi compila: non si rilascia" >&2
+  exit 1
+fi
+
 # 4. firma
 # Il `|| true` serve: senza certificati `grep` esce con 1, e con `set -e` la
 # release si fermava qui, subito dopo aver compilato e senza dire perché.
