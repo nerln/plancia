@@ -39,16 +39,67 @@ xcrun swiftc \
   "$ROOT/mac/Sources/main.swift" "$ROOT/mac/Sources/jarvis.swift"
 
 echo "· icona"
-ICONSET="$BUILD/Plancia.iconset"
-rm -rf "$ICONSET"
-if xcrun swift "$ROOT/mac/makeicon.swift" "$ICONSET" >/dev/null 2>&1 && \
-   iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/Plancia.icns" 2>/dev/null; then
-  ICONA="<key>CFBundleIconFile</key><string>Plancia</string>"
+# Due strade, nell'ordine.
+#  1. Liquid Glass (macOS 26+): mac/icona/Plancia.icon e' un documento di Icon
+#     Composer (uno sfondo e due strati SVG). actool 26 o piu' recente lo compila
+#     in Assets.car + Plancia.icns, e il sistema applica vetro, riflessi e
+#     profondita' strato per strato, anche nelle versioni scura e "tinted".
+#     Il manifesto porta CFBundleIconName (per Assets.car: da macOS 13 in su,
+#     con CFBundleIconName, il sistema legge quello, e ci sono le Icon Image
+#     appiattite) e CFBundleIconFile (per l'icns di actool, che arriva solo a
+#     256 px: e' un ripiego per gli strumenti che leggono l'icns direttamente).
+#  2. Ripiego: un Mac senza Xcode 26+, o con un actool che rifiuta il .icon,
+#     disegna la stessa forma con un vetro imitato (mac/makeicon.swift) e la
+#     trasforma in icns con `iconutil`. Il manifesto porta solo CFBundleIconFile.
+#  Se falliscono tutte e due, l'app resta senza icona propria e si costruisce lo stesso.
+#  site/img/icon.png (apple-touch-icon del sito) NON lo produce questo script: e' un
+#  binario a parte, RGB 512x512 senza alfa, e va rigenerato a mano ogni volta che
+#  cambia il segno. Si parte da una resa iOS del .icon a tutto riquadro:
+#    ictool mac/icona/Plancia.icon --export-image --output-file resa.png \
+#      --platform iOS --rendition Default --width 1024 --height 1024 --scale 1
+#  (ictool sta in Icon Composer, dentro Xcode 26+), si riduce a 512 e si toglie il
+#  canale alfa; se la resa ha gli angoli trasparenti o un contorno, il fondo fuori
+#  dal rettangolo centrale va riempito con il blu notte dello sfondo (un gradiente
+#  lineare, senza cuciture). Non c'e' un'opzione di ictool per il quadrato pieno.
+#  Se ti scordi, non passa inosservato: tools/prove-front/icona.py misura il
+#  riquadro dei pixel chiari del PNG e lo confronta con quello degli SVG (entro 6 px).
+ICONA_SRC="$ROOT/mac/icona/Plancia.icon"
+ICONA_TMP="$BUILD/icona"
+ICONA=""
+rm -rf "$ICONA_TMP"
+mkdir -p "$ICONA_TMP"
+
+# La versione maggiore di actool, letta dal suo plist: "27.0" -> 27
+ACTOOL_MAGGIORE="$(xcrun actool --version 2>/dev/null \
+  | sed -n 's:.*<string>\([0-9][0-9]*\)\.[0-9.]*</string>.*:\1:p' | head -1 || true)"
+
+if [ -d "$ICONA_SRC" ] && [ "${ACTOOL_MAGGIORE:-0}" -ge 26 ] 2>/dev/null && \
+   xcrun actool "$ICONA_SRC" --compile "$ICONA_TMP" \
+     --platform macosx --target-device mac --minimum-deployment-target 13.0 \
+     --app-icon Plancia --include-all-app-icons --enable-on-demand-resources NO \
+     --development-region en \
+     --output-partial-info-plist "$ICONA_TMP/parziale.plist" >/dev/null 2>&1 && \
+   [ -f "$ICONA_TMP/Assets.car" ] && [ -f "$ICONA_TMP/Plancia.icns" ]; then
+  cp "$ICONA_TMP/Assets.car" "$ICONA_TMP/Plancia.icns" "$APP/Contents/Resources/"
+  ICONA="<key>CFBundleIconFile</key><string>Plancia</string><key>CFBundleIconName</key><string>Plancia</string>"
+  echo "  (Liquid Glass: Assets.car + icns da mac/icona/Plancia.icon)"
 else
-  echo "  (icona non generata, l'app userà quella di sistema)"
-  ICONA=""
+  if [ -d "$ICONA_SRC" ] && [ "${ACTOOL_MAGGIORE:-0}" -ge 26 ] 2>/dev/null; then
+    echo "  (actool non ha compilato il .icon: uso l'icona disegnata a mano)"
+  else
+    echo "  (serve Xcode 26 o piu' recente per il Liquid Glass: uso l'icona disegnata a mano)"
+  fi
+  ICONSET="$BUILD/Plancia.iconset"
+  rm -rf "$ICONSET"
+  if xcrun swift "$ROOT/mac/makeicon.swift" "$ICONSET" >/dev/null 2>&1 && \
+     iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/Plancia.icns" 2>/dev/null; then
+    ICONA="<key>CFBundleIconFile</key><string>Plancia</string>"
+  else
+    echo "  (icona non generata, l'app userà quella di sistema)"
+  fi
+  rm -rf "$ICONSET"
 fi
-rm -rf "$ICONSET"
+rm -rf "$ICONA_TMP"
 
 echo "· manifesto"
 cat > "$APP/Contents/Info.plist" <<PLIST
