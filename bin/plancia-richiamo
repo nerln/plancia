@@ -18,9 +18,10 @@ sys.path.insert(0, ROOT)
 
 def _leggi_stdin() -> str:
     """Lo stdin come UTF-8, non nella tabella del sistema (cp1252 su Windows, con lo
-    stdin in una pipe: un accento nel messaggio arrivava come mojibake e il richiamo
-    cercava le parole sbagliate). Un BOM iniziale si toglie. Stessa funzione di
-    bin/plancia-hook, che non si importa (deve partire da solo)."""
+    stdin in una pipe e il richiamo lanciato senza `-X utf8`, che `plancia install` mette
+    gia': un accento nel messaggio arrivava come mojibake e il richiamo cercava le parole
+    sbagliate). Un BOM iniziale si toglie. Stessa funzione di bin/plancia-hook, che non
+    si importa (deve partire da solo)."""
     buffer = getattr(sys.stdin, "buffer", None)
     if buffer is None:
         return sys.stdin.read()
@@ -28,9 +29,9 @@ def _leggi_stdin() -> str:
 
 
 def _scrivi_stdout(testo: str) -> None:
-    """Scrive `testo` in UTF-8 su stdout: con cp1252 (Windows, uscita in una pipe)
-    una freccia nella memoria richiamata alzava `UnicodeEncodeError` e il richiamo
-    spariva in silenzio."""
+    """Scrive `testo` in UTF-8 su stdout: con cp1252 (Windows, uscita in una pipe, script
+    lanciato senza `-X utf8`) una freccia nella memoria richiamata alzava
+    `UnicodeEncodeError` e il richiamo spariva in silenzio."""
     buffer = getattr(sys.stdout, "buffer", None)
     if buffer is None:
         sys.stdout.write(testo)

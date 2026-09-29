@@ -24,7 +24,10 @@ un Windows imitato, senza lanciare niente di vero:
    radice di `C:\\` non e' una cartella dentro `\\`, e ogni `cartelle_escluse` risultava
    «inesistente» (config invalida, fail-closed: niente entrava piu' nell'archivio);
    il progetto di una cwd si riconosce anche con il link scritto con altre barre o
-   altre maiuscole. Provati con un `os` di Windows imitato su un albero finto.
+   altre maiuscole. Provati con un `os` di Windows imitato su un albero finto;
+7. (terzo giro) il prompt di `claude -p` (il riepilogo e la risposta a voce) su Windows va
+   nello stdin, non come argomento: un `claude.cmd` di npm passa da cmd.exe, che taglia un
+   argomento alla prima riga a capo. Su macOS e Linux la riga di comando e' quella di sempre.
 
 Per lanciare da sola: `python3 tools/prove/windows-testo.py`.
 """
@@ -234,6 +237,61 @@ def _prove_utf8(prova):
           .split("def main(")[1].split("build_parser()")[0])
 
 
+@contextlib.contextmanager
+def _piattaforma_env(nome):
+    vecchia = os.environ.get("PLANCIA_PIATTAFORMA")
+    os.environ["PLANCIA_PIATTAFORMA"] = nome
+    try:
+        yield
+    finally:
+        if vecchia is None:
+            os.environ.pop("PLANCIA_PIATTAFORMA", None)
+        else:
+            os.environ["PLANCIA_PIATTAFORMA"] = vecchia
+
+
+def _prove_prompt_da_stdin(prova):
+    """`recap.claude_text` (il riepilogo, la risposta a voce): il prompt e' un argomento su
+    macOS e Linux, com'e' sempre stato, e va nello stdin su Windows. Il prompt di prova ha
+    piu' righe e i caratteri che cmd.exe interpreta."""
+    from plancia import piattaforma as pf, recap
+
+    prova("prompt_da_stdin: si' su Windows, no su macOS e Linux",
+          pf.prompt_da_stdin("windows") is True and pf.prompt_da_stdin("mac") is False
+          and pf.prompt_da_stdin("linux") is False)
+
+    prompt = 'Sei l\'assistente.\nDati: {"a": "x & y | %PATH% ^ \\"q\\""}\nDomanda: cosa?'
+    chiamate = []
+
+    def run_finto(argv, **kw):
+        chiamate.append((list(argv), kw))
+        return subprocess.CompletedProcess(argv, 0, "risposta\n", "")
+
+    vecchi = recap.claude_bin, recap.subprocess.run
+    recap.claude_bin = lambda: "/x/claude"
+    recap.subprocess.run = run_finto
+    try:
+        esiti = {}
+        for piatt in ("mac", "linux", "windows"):
+            with _piattaforma_env(piatt):
+                testo = recap.claude_text(prompt, timeout=5)
+            esiti[piatt] = (testo,) + chiamate[-1]
+    finally:
+        recap.claude_bin, recap.subprocess.run = vecchi
+
+    for piatt in ("mac", "linux"):
+        testo, argv, kw = esiti[piatt]
+        prova("claude_text su %s: il prompt e' l'ultimo argomento di `claude -p --model <m>`, "
+              "senza stdin (la riga di comando di sempre)" % piatt,
+              testo == "risposta" and argv[:3] == ["/x/claude", "-p", "--model"] and len(argv) == 5
+              and argv[-1] == prompt and "input" not in kw, str((argv, sorted(kw))))
+    testo, argv, kw = esiti["windows"]
+    prova("claude_text su Windows: nessun prompt fra gli argomenti (`claude -p --model <m>`), "
+          "il prompt intero, con le righe a capo e & | %, e' nello stdin",
+          testo == "risposta" and argv[:3] == ["/x/claude", "-p", "--model"] and len(argv) == 4
+          and prompt not in argv and kw.get("input") == prompt, str((argv, sorted(kw))))
+
+
 def _prove_porta_occupata(prova):
     """Una seconda copia del server sulla stessa porta non si aggancia (su Windows,
     con `SO_REUSEADDR`, si agganciava)."""
@@ -430,6 +488,7 @@ def esegui(prova):
     _prove_attribuzione(prova)
     _prove_padre_windows(prova)
     _prove_utf8(prova)
+    _prove_prompt_da_stdin(prova)
     _prove_porta_occupata(prova)
     _prove_finti(prova)
 

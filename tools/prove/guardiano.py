@@ -3390,7 +3390,11 @@ def _prove_settings_5(prova, a: Ambiente):
     for k, v in (("PLANCIA_HOME", "/tmp/nessuno"), ("HOME", "/tmp/nessuno"),
                  ("CLAUDE_CONFIG_DIR", "/tmp/nessuno"), ("PYTHONPATH", "/tmp/pp"),
                  ("PYTHONHOME", "/tmp/pp"), ("PYTHONSTARTUP", "/tmp/s.py"), ("PATH", "/tmp/bin"),
-                 ("LD_PRELOAD", "/tmp/x.so"), ("DYLD_INSERT_LIBRARIES", "/tmp/x.dylib")):
+                 ("LD_PRELOAD", "/tmp/x.so"), ("DYLD_INSERT_LIBRARIES", "/tmp/x.dylib"),
+                 # con questa gli script di Plancia crederebbero di essere su Windows
+                 # (dove il guardiano e i compartimenti sono spenti): non deve poterla
+                 # mettere una sessione, e nemmeno decidere lei se Plancia e' su Windows
+                 ("PLANCIA_PIATTAFORMA", "windows")):
         r = scrivi({"env": {k: v}})
         prova(f"settings5: Write con env {k}: negato, dice `env`",
               r.negato and "env" in r.motivo and k in r.motivo, repr(r))
@@ -3409,6 +3413,14 @@ def _prove_settings_5(prova, a: Ambiente):
           "negato (l'env dei progetti arriva anche all'hook)", r.negato, repr(r))
     r = pred("Write", {"file_path": str(proj), "content": json.dumps({"env": {"PYTHONPATH": "/x"}})})
     prova("settings5: ...con env PYTHONPATH: negato", r.negato, repr(r))
+    r = pred("Write", {"file_path": str(proj),
+                       "content": json.dumps({"env": {"PLANCIA_PIATTAFORMA": "windows"}})})
+    prova("settings5: settings.local.json di un progetto con env PLANCIA_PIATTAFORMA: negato "
+          "(spegnerebbe il guardiano e i compartimenti alla sessione dopo)",
+          r.negato and "PLANCIA_PIATTAFORMA" in r.motivo, repr(r))
+    r = pred("Edit", {"file_path": str(utente), "old_string": '"theme": "dark"',
+                      "new_string": '"theme": "dark", "env": {"PLANCIA_PIATTAFORMA": "windows"}'})
+    prova("settings5: Edit che aggiunge env PLANCIA_PIATTAFORMA: negato", r.negato, repr(r))
     # quello che resta ammesso
     for nome, extra, hooks in (
             ("env innocua", {"env": {"FOO": "bar", "PYTHONIOENCODING": "utf-8",

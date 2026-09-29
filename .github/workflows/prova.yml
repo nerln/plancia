@@ -25,10 +25,14 @@
 #   guardiano e 141 nei compartimenti (che su Windows non sono supportati: ora spenti nel
 #   codice e le loro prove sono "saltato: non supportato su Windows", controllo per
 #   controllo, con lo stesso totale degli altri sistemi), e 31 in altri moduli: l'hook di
-#   sessione che su Windows non dava il briefing (stdout in cp1252 e una freccia: vedi
-#   tools/prove/windows-hook.py), le cartelle escluse con la lettera di unita', il link
-#   di un progetto scritto con altre barre, e prove con aspettative POSIX o di un
-#   sistema che non e' Windows. Quelle correzioni sono provate con un Windows imitato
+#   sessione che nella prova usciva senza briefing (la prova lo lanciava senza `-X utf8`,
+#   che invece gli hook scritti da `plancia install` hanno gia': con stdout in cp1252 la
+#   freccia del briefing non si scriveva, e ora l'hook e' indipendente dalla tabella di
+#   caratteri; vedi tools/prove/windows-hook.py), le cartelle escluse con la lettera di
+#   unita', il link di un progetto scritto con altre barre, e prove con aspettative POSIX
+#   o di un sistema che non e' Windows. La risposta a voce e il riepilogo su Windows
+#   passano il prompt a `claude -p` da stdin (un `claude.cmd` di npm taglia l'argomento
+#   alla prima riga a capo). Quelle correzioni sono provate con un Windows imitato
 #   sul Mac, ma NON sono ancora state viste girare su un Windows vero: finche' non si
 #   vede un giro verde il passo resta rosso senza fermare il resto, con un tetto di tempo
 #   perche' una prova appesa non tenga il collaudo per ore. Al primo giro verde si toglie

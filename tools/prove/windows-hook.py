@@ -5,25 +5,40 @@ che riguarda anche chi non usa i compartimenti (il PC Windows di chi ha scritto
 Plancia non li ha): "senza compartimenti il briefing di SessionStart e' quello di
 sempre", con l'uscita dell'hook VUOTA.
 
-La causa e' la tabella di caratteri. Su Windows uno script lanciato come
-`[python, bin/plancia-hook]` con stdin e stdout in una pipe legge e scrive in cp1252,
-non in UTF-8. Il briefing ha una freccia (U+2192), che cp1252 non ha:
-`sys.stdout.write` alzava `UnicodeEncodeError`, l'eccezione finiva nel `except Exception`
-che protegge la sessione, e la sessione partiva SENZA briefing, in silenzio. Sullo stdin lo stesso difetto e' piu' sottile: una cartella con un accento
-(`Citta'`, con l'accento) arrivava come `CittÃ ` nella coda delle sessioni. Nessuno dei due
+Da dove veniva il vuoto: dalla prova, non dagli utenti. La prova lanciava
+`[python, bin/plancia-hook]` senza `-X utf8`; gli hook che scrive `plancia install`
+lo hanno gia' (`piattaforma.riga_script` mette `"<python>" -X utf8 "<script>"`), e con
+il flag lo stdio e' UTF-8 e il briefing arriva. Senza il flag, su Windows, con stdin e
+stdout in una pipe Python usa cp1252, non UTF-8. Il briefing ha una freccia (U+2192),
+che cp1252 non ha: `sys.stdout.write` alzava `UnicodeEncodeError`, l'eccezione finiva
+nel `except Exception` che protegge la sessione, e la sessione partiva SENZA briefing, in
+silenzio. Sullo stdin lo stesso difetto e' piu' sottile: una cartella con un accento
+(`Citta'`, con l'accento) arrivava come `CittÃ ` nella coda delle sessioni. Il difetto
+riguarda quindi un hook lanciato a mano o registrato prima di `-X utf8`, non chi ha
+installato con `plancia install`. La correzione rende l'hook indipendente dalla tabella
+di caratteri: legge e scrive i byte in UTF-8, qualunque sia la tabella. Nessuno dei due
 si vede da macOS, dove tutto e' UTF-8. Qui si simula quello che si puo': i sottoprocessi
-girano con `PYTHONUTF8=0` e `PYTHONIOENCODING=cp1252` (su Windows vero e' quello che
-succede da solo, e le prove restano vere), e la logica dei percorsi con `ntpath`.
+girano con `PYTHONUTF8=0` e `PYTHONIOENCODING=cp1252` (su Windows vero, senza il flag,
+e' quello che succede da solo, e le prove restano vere), e la logica dei percorsi con
+`ntpath`.
 
-1. l'hook `bin/plancia-hook`, lanciato come su Windows (senza `-X utf8`): il briefing
-   con la freccia arriva, l'accento nella cwd arriva in coda com'era, un BOM su stdin non
-   rompe il JSON; il richiamo (`bin/plancia-richiamo`) legge e scrive UTF-8 nello stesso modo;
-   l'intero `run()` dell'hook con percorsi di Windows (lettera di unita', barre rovesciate);
+1. l'hook `bin/plancia-hook`, lanciato senza `-X utf8`: il briefing con la freccia arriva,
+   l'accento nella cwd arriva in coda com'era, un BOM su stdin non rompe il JSON; il
+   richiamo (`bin/plancia-richiamo`) legge e scrive UTF-8 nello stesso modo; l'intero
+   `run()` dell'hook con percorsi di Windows (lettera di unita', barre rovesciate);
 2. `piattaforma.stdio_utf8` (il server MCP) fa leggere e scrivere UTF-8 su Windows;
 3. i compartimenti e il guardiano su Windows sono spenti, e lo dicono: `attivo()` torna
    None, l'hook manda il briefing di sempre anche con dei compartimenti in config.json, il
    guardiano non nega niente (nemmeno in `bloccante`) e avvisa UNA volta per sessione,
-   `plancia guardiano` e `plancia doctor` lo scrivono. Su macOS e Linux non cambia niente.
+   `plancia guardiano` e `plancia doctor` lo scrivono. Su macOS e Linux non cambia niente;
+4. "Windows" lo dice il sistema, mai una variabile. `PLANCIA_PIATTAFORMA` fa fingere una
+   piattaforma alle prove di piattaforma (i comandi che Plancia costruisce), ma non spegne
+   il guardiano ne' i compartimenti: chi scrive un `settings.json` puo' metterla in `env`,
+   e una sessione dentro un compartimento non deve potersi togliere il confine con una riga
+   di configurazione. Il guardiano e l'hook decidono da `os.name == "nt"`; la variabile e'
+   fra le `env` che il guardiano nega di scrivere. Per provare il ramo di Windows su un
+   altro sistema qui si fa credere agli script che `os.name` sia `nt`
+   (`tools/prove/_come_windows.py`) e si sostituisce `piattaforma.windows_reale`.
 
 Per lanciare da sola: `python3 tools/prove/windows-hook.py`.
 """
@@ -73,10 +88,16 @@ def _crea_db(percorso, link=()):
     con.close()
 
 
-def _hook(dati, payload_byte, env, script="plancia-hook", argomenti=()):
+def _hook(dati, payload_byte, env, script="plancia-hook", argomenti=(), come_windows=False):
     """Lancia uno script di `bin/` come si lancia su Windows: l'interprete e lo
-    script, senza `-X utf8`, con lo stdin in byte. Torna il processo (byte)."""
-    return subprocess.run([sys.executable, str(RADICE / "bin" / script)] + list(argomenti),
+    script, senza `-X utf8`, con lo stdin in byte. Torna il processo (byte).
+
+    Con `come_windows` lo script crede che `os.name` sia `nt` (`_come_windows.py`): e' il
+    solo modo di provare il ramo di Windows di un altro sistema, perche' gli script non
+    guardano piu' la variabile `PLANCIA_PIATTAFORMA` (vedi la sezione 4)."""
+    lanciatore = [str(RADICE / "tools" / "prove" / "_come_windows.py")] if come_windows else []
+    return subprocess.run([sys.executable] + lanciatore
+                          + [str(RADICE / "bin" / script)] + list(argomenti),
                           input=payload_byte, capture_output=True, env=env, timeout=60)
 
 
@@ -211,6 +232,7 @@ def _hook_con_ntpath(dati, db, briefing, coda):
                 os.environ[k] = v
 
     class _OsWindows:
+        name = "nt"
         path = ntpath
 
         def __getattr__(self, nome):
@@ -307,6 +329,9 @@ def _prove_stdio_utf8(prova):
 
 @contextlib.contextmanager
 def _piattaforma(nome):
+    """`PLANCIA_PIATTAFORMA` impostata (o tolta, con None) per il tempo del blocco. E' la
+    variabile con cui le prove di piattaforma FINGONO una piattaforma; non decide niente
+    che riguardi la sicurezza (vedi la sezione 4)."""
     vecchia = os.environ.get("PLANCIA_PIATTAFORMA")
     if nome is None:
         os.environ.pop("PLANCIA_PIATTAFORMA", None)
@@ -319,6 +344,51 @@ def _piattaforma(nome):
             os.environ.pop("PLANCIA_PIATTAFORMA", None)
         else:
             os.environ["PLANCIA_PIATTAFORMA"] = vecchia
+
+
+@contextlib.contextmanager
+def _windows_reale(pf, si):
+    """`piattaforma.windows_reale` sostituita per il tempo del blocco: `si=True` e' un
+    Windows vero (`os.name == "nt"`), `si=False` un sistema POSIX. E' l'unico modo di
+    fingere Windows per le decisioni di sicurezza; la variabile non conta."""
+    vecchia = getattr(pf, "windows_reale", None)
+    pf.windows_reale = lambda: si
+    try:
+        yield
+    finally:
+        if vecchia is None:
+            del pf.windows_reale      # sul commit di base la funzione non c'e'
+        else:
+            pf.windows_reale = vecchia
+
+
+class _OsNt:
+    """Il modulo `os` per come lo vede uno script su Windows: `name` e' `nt`, il resto
+    (l'ambiente, i percorsi, i file) e' quello vero di questo sistema."""
+    name = "nt"
+
+    def __getattr__(self, nome):
+        return getattr(os, nome)
+
+
+def _hook_modulo(dati, os_finto=None):
+    """Le funzioni di `bin/plancia-hook`, senza lanciare `run()`, con le cartelle dei dati
+    in `dati`. Con `os_finto` lo script vede quel modulo al posto di `os`."""
+    sorgente = (RADICE / "bin" / "plancia-hook").read_text("utf-8")
+    corpo = sorgente.split("\ntry:\n    run()")[0]
+    globali = {"__name__": "plancia_hook_prova"}
+    vecchia = os.environ.get("PLANCIA_HOME")
+    os.environ["PLANCIA_HOME"] = str(dati)
+    try:
+        exec(compile(corpo, "plancia-hook", "exec"), globali)
+    finally:
+        if vecchia is None:
+            os.environ.pop("PLANCIA_HOME", None)
+        else:
+            os.environ["PLANCIA_HOME"] = vecchia
+    if os_finto is not None:
+        globali["os"] = os_finto
+    return globali
 
 
 def _config_compartimenti(dati, w, guardiano="bloccante"):
@@ -338,11 +408,11 @@ def _prove_compartimenti_spenti(prova):
     prova("compartimenti_supportati: no su Windows, si' su macOS e Linux",
           pf.compartimenti_supportati("windows") is False and pf.compartimenti_supportati("mac") is True
           and pf.compartimenti_supportati("linux") is True)
-    with _piattaforma("windows"):
-        prova("compartimenti_supportati senza argomento segue la piattaforma (PLANCIA_PIATTAFORMA=windows)",
+    with _windows_reale(pf, True):
+        prova("compartimenti_supportati senza argomento: no su un Windows vero (os.name == nt)",
               pf.compartimenti_supportati() is False)
-    with _piattaforma("linux"):
-        prova("...e su Linux e' vero", pf.compartimenti_supportati() is True)
+    with _windows_reale(pf, False):
+        prova("...e su un sistema POSIX e' vero", pf.compartimenti_supportati() is True)
 
     base = Path(os.path.realpath(tempfile.mkdtemp(prefix="plancia-prova-wc-")))
     try:
@@ -350,7 +420,7 @@ def _prove_compartimenti_spenti(prova):
         dati.mkdir()
         (dati / "queue").mkdir()
         _config_compartimenti(dati, w)
-        with _piattaforma("linux"):
+        with _windows_reale(pf, False):
             sul_posix = viste.attivo(str(dati))
         # le cartelle dei compartimenti sono percorsi POSIX: con quelle di un Windows vero la
         # config non e' valida (e' proprio il motivo per cui su Windows sono spenti)
@@ -360,19 +430,20 @@ def _prove_compartimenti_spenti(prova):
               if os.name == "nt" else "")
         for f in dati.glob("compartimenti.e1-*"):
             f.unlink()
-        with _piattaforma("windows"):
+        with _windows_reale(pf, True):
             su_win = viste.attivo(str(dati))
         prova("attivo() su Windows, con gli stessi compartimenti in config: None (Plancia mostra tutto)",
               su_win is None, str(su_win))
         prova("attivo() su Windows non scrive nemmeno la copia dell'ultima config valida",
               not list(dati.glob("compartimenti.e1-*")))
 
-        # l'hook, come processo, con la piattaforma dichiarata Windows: il briefing di sempre
+        # l'hook, come processo, con `os.name` a `nt`: il briefing di sempre
         (dati / "briefing.md").write_text("# Plancia\n\nBRIEFING-DI-SEMPRE %s\n" % FRECCIA, "utf-8")
         _crea_db(dati / "plancia.db")
-        env = _env_windows(dati, PLANCIA_PIATTAFORMA="windows")
+        env = _env_windows(dati)
+        env.pop("PLANCIA_PIATTAFORMA", None)
         r = _hook(dati, _payload(sid="aaaaaaaa-0000-4000-8000-00000000000a",
-                                 cwd=str(w / "alfa")), env)
+                                 cwd=str(w / "alfa")), env, come_windows=True)
         try:
             testo = json.loads(r.stdout.decode("utf-8"))["hookSpecificOutput"]["additionalContext"]
         except Exception as exc:  # noqa: BLE001
@@ -381,15 +452,30 @@ def _prove_compartimenti_spenti(prova):
               "di sempre, non un silenzio", "BRIEFING-DI-SEMPRE" in testo, testo[:200])
         prova("hook su Windows con dei compartimenti in config: non si scrive nessun briefing per "
               "compartimento", not list(dati.glob("briefing.*.md")))
+
+        # le funzioni dell'hook, con `os` che dice `nt`: non cerca i nominati in config.json
+        g = _hook_modulo(dati, _OsNt())
+        prova("hook con os.name == nt: _su_windows() e' vero e _config_con_nominati() no, anche con "
+              "dei nominati in config.json",
+              g["_su_windows"]() is True and g["_config_con_nominati"]() is False)
     finally:
         _pulisci(base)
 
 
-def _guardiano(dati, sid, env, comando="cat /etc/passwd"):
+def _guardiano(dati, sid, env, comando="cat /etc/passwd", come_windows=False):
     payload = json.dumps({"hook_event_name": "PreToolUse", "session_id": sid,
                           "tool_name": "Bash", "tool_input": {"command": comando},
                           "cwd": "/tmp"}).encode("utf-8")
-    return _hook(dati, payload, env, script="plancia-guardiano")
+    return _hook(dati, payload, env, script="plancia-guardiano", come_windows=come_windows)
+
+
+def _nega(r) -> bool:
+    """Il guardiano ha negato lo strumento (`permissionDecision` a `deny`)."""
+    try:
+        u = json.loads(r.stdout.decode("utf-8"))
+    except Exception:  # noqa: BLE001
+        return False
+    return (u.get("hookSpecificOutput") or {}).get("permissionDecision") == "deny"
 
 
 def _prove_guardiano_windows(prova):
@@ -398,11 +484,12 @@ def _prove_guardiano_windows(prova):
         dati, w = base / "dati", base / "w"
         dati.mkdir()
         _config_compartimenti(dati, w, guardiano="bloccante")
-        env = _env_windows(dati, PLANCIA_PIATTAFORMA="windows")
+        env = _env_windows(dati)
+        env.pop("PLANCIA_PIATTAFORMA", None)
         sid1, sid2 = "aaaaaaaa-0000-4000-8000-00000000000a", "bbbbbbbb-0000-4000-8000-00000000000b"
         cmd_vietato = "rm -rf %s" % (w / "beta" / "x")
 
-        r1 = _guardiano(dati, sid1, env, cmd_vietato)
+        r1 = _guardiano(dati, sid1, env, cmd_vietato, come_windows=True)
         try:
             u1 = json.loads(r1.stdout.decode("utf-8"))
         except Exception:  # noqa: BLE001
@@ -414,28 +501,27 @@ def _prove_guardiano_windows(prova):
         prova("guardiano su Windows: la prima volta di una sessione avvisa (systemMessage) che non e' "
               "supportato su Windows",
               "non supportato su Windows" in u1.get("systemMessage", ""), str(u1))
-        r1b = _guardiano(dati, sid1, env, cmd_vietato)
+        r1b = _guardiano(dati, sid1, env, cmd_vietato, come_windows=True)
         prova("guardiano su Windows: la stessa sessione non e' avvisata una seconda volta",
               r1b.returncode == 0 and not r1b.stdout.strip(), r1b.stdout.decode("utf-8", "replace")[:200])
-        r2 = _guardiano(dati, sid2, env, cmd_vietato)
+        r2 = _guardiano(dati, sid2, env, cmd_vietato, come_windows=True)
         prova("guardiano su Windows: un'altra sessione e' avvisata a sua volta",
               "non supportato su Windows" in r2.stdout.decode("utf-8", "replace"))
         prova("guardiano su Windows: non scrive nel registro dei negati ne' carica il pacchetto "
               "(niente guardiano.log)", not (dati / "guardiano.log").exists())
         prova("guardiano su Windows: un file per sessione, in guardiano-windows/",
               sorted(p.name for p in (dati / "guardiano-windows").iterdir()) == [sid1, sid2])
-        r3 = _hook(dati, b"non e' json", env, script="plancia-guardiano")
+        r3 = _hook(dati, b"non e' json", env, script="plancia-guardiano", come_windows=True)
         prova("guardiano su Windows: uno stdin che non e' JSON non lo fa cadere (esce zero)",
               r3.returncode == 0 and not r3.stderr.strip(), r3.stderr.decode("utf-8", "replace")[:200])
 
-        # gli stessi dati su un sistema POSIX: il guardiano c'e' ancora e non stampa l'avviso di
-        # Windows (su un Windows vero il guardiano POSIX con cartelle di Windows non si lancia)
-        env_posix = _env_windows(dati, PLANCIA_PIATTAFORMA="linux")
+        # gli stessi dati su un sistema POSIX: il guardiano c'e' ancora, nega, e non stampa
+        # l'avviso di Windows (su un Windows vero il guardiano POSIX non si lancia)
         (w / "beta").mkdir(exist_ok=True)
         if os.name == "nt":
             r4 = None
         else:
-            r4 = _guardiano(dati, sid1, env_posix, cmd_vietato)
+            r4 = _guardiano(dati, sid1, env, cmd_vietato)
         prova("guardiano su Linux/macOS: la stessa configurazione non stampa l'avviso di Windows",
               r4 is None or "non supportato su Windows" not in r4.stdout.decode("utf-8", "replace"),
               "saltato: cartelle di Windows" if r4 is None else r4.stdout.decode("utf-8", "replace")[:200])
@@ -456,7 +542,7 @@ def _prove_avvisi(prova):
             rc = f(*a)
         return rc, buf.getvalue()
 
-    with _piattaforma("windows"):
+    with _windows_reale(pf, True):
         rc, out = _stampa(cli.cmd_guardiano, _Args())
     prova("plancia guardiano su Windows: dice che non e' supportato ed esce zero",
           rc == 0 and "non sono supportati su Windows" in out, out[:200])
@@ -470,14 +556,14 @@ def _prove_avvisi(prova):
                  {"compartimenti": {"predefinito": {}}, "guardiano": "spento"}, False),
                 ("config senza niente", {}, False)):
             config.load_config = lambda cfg=cfg: dict(cfg)
-            with _piattaforma("windows"):
+            with _windows_reale(pf, True):
                 righe = setup_claude._righe_compartimenti_windows()
             prova("doctor su Windows, config con %s: %s" % (
                 nome, "una riga che dice che sono spenti" if atteso else "nessuna riga"),
                   bool(righe) == atteso and (not atteso or "non sono supportati su Windows" in righe[0]),
                   str(righe))
         config.load_config = lambda: {"compartimenti": {"alfa": {"cartelle": []}}, "guardiano": "bloccante"}
-        with _piattaforma("mac"):
+        with _windows_reale(pf, False):
             righe = setup_claude._righe_compartimenti_windows()
         prova("doctor su macOS, con dei compartimenti in config: nessuna riga in piu'", righe == [], str(righe))
     finally:
@@ -485,6 +571,110 @@ def _prove_avvisi(prova):
     prova("doctor() aggiunge le righe dei compartimenti spenti",
           "_righe_compartimenti_windows()" in (RADICE / "plancia" / "setup_claude.py")
           .read_text("utf-8").split("def doctor(")[1])
+
+
+# --------------------------------------------------------------------------
+# 4. "Windows" lo dice il sistema, non una variabile
+# --------------------------------------------------------------------------
+
+def _prove_la_variabile_non_decide(prova):
+    """`PLANCIA_PIATTAFORMA` non spegne il guardiano ne' i compartimenti. Chi puo' scrivere
+    un `settings.json` puo' metterla in `env`: se bastasse a far credere a Plancia di essere
+    su Windows, una sessione dentro un compartimento si toglierebbe il confine con una riga.
+    Il valore che si prova e' quello OPPOSTO al sistema vero ("windows" su macOS e Linux,
+    "linux" su un Windows vero): in tutti e due i casi il risultato deve restare quello del
+    sistema."""
+    from plancia import compartimenti as C, compartimenti_viste as viste, piattaforma as pf
+
+    windows_vero = os.name == "nt"
+    opposto = "linux" if windows_vero else "windows"
+
+    esiti = []
+    for valore in ("windows", "linux", "mac", "amiga", None):
+        with _piattaforma(valore):
+            esiti.append(pf.compartimenti_supportati())
+    prova("compartimenti_supportati(): PLANCIA_PIATTAFORMA non la cambia, con nessun valore",
+          all(e is (not windows_vero) for e in esiti), str(esiti))
+    with _piattaforma("windows"):
+        prova("la variabile fa ancora fingere la piattaforma alle prove di piattaforma "
+              "(piattaforma.nome())", pf.nome() == "windows")
+
+    prova("la variabile e' fra le env che il guardiano nega di scrivere in un settings.json",
+          "PLANCIA_PIATTAFORMA" in C._ENV_PERICOLOSE)
+    prova("_env_pericolose la segnala, e non segnala una env innocua",
+          list(C._env_pericolose(json.dumps({"env": {"PLANCIA_PIATTAFORMA": "windows"}}))) == ["PLANCIA_PIATTAFORMA"]
+          and C._env_pericolose(json.dumps({"env": {"PYTHONIOENCODING": "utf-8"}})) == {})
+
+    base = Path(os.path.realpath(tempfile.mkdtemp(prefix="plancia-prova-wv-")))
+    try:
+        dati, w = base / "dati", base / "w"
+        dati.mkdir()
+        (dati / "queue").mkdir()
+        _config_compartimenti(dati, w, guardiano="bloccante")
+
+        with _piattaforma(opposto):
+            ambito = viste.attivo(str(dati))
+        if windows_vero:
+            atteso = ambito is None
+        else:
+            atteso = ambito is not None and sorted(ambito.nominati) == ["alfa", "beta"]
+        prova("attivo() con PLANCIA_PIATTAFORMA=%s: i compartimenti restano quelli del sistema "
+              "(%s)" % (opposto, "spenti" if windows_vero else "accesi"), atteso, str(ambito))
+
+        g = _hook_modulo(dati)
+        with _piattaforma(opposto):
+            windows_hook = g["_su_windows"]()
+            nominati = g["_config_con_nominati"]()
+        prova("hook con PLANCIA_PIATTAFORMA=%s: _su_windows() dice il sistema vero" % opposto,
+              windows_hook is windows_vero, str(windows_hook))
+        prova("hook con PLANCIA_PIATTAFORMA=%s: i compartimenti nominati in config.json %s" % (
+            opposto, "restano ignorati" if windows_vero else "si cercano ancora"),
+              nominati is (not windows_vero), str(nominati))
+        with _piattaforma("linux"):
+            g_nt = _hook_modulo(dati, _OsNt())
+            spento = g_nt["_su_windows"]() is True and g_nt["_config_con_nominati"]() is False
+        prova("hook con os.name == nt e PLANCIA_PIATTAFORMA=linux: resta Windows (la variabile non "
+              "riaccende niente)", spento)
+
+        # l'hook come processo: la sessione va a cercare i compartimenti (attivo() lascia la copia
+        # dell'ultima config valida), oppure su Windows no
+        (dati / "briefing.md").write_text("# Plancia\n\nBRIEFING-DI-SEMPRE %s\n" % FRECCIA, "utf-8")
+        _crea_db(dati / "plancia.db")
+        for f in dati.glob("compartimenti.e1-*"):
+            f.unlink()
+        env = _env_windows(dati, PLANCIA_PIATTAFORMA=opposto)
+        _hook(dati, _payload(sid="aaaaaaaa-0000-4000-8000-00000000000a", cwd=str(w / "alfa")), env)
+        cerca = bool(list(dati.glob("compartimenti.e1-*")))
+        prova("hook come processo con PLANCIA_PIATTAFORMA=%s: %s" % (
+            opposto, "non guarda i compartimenti" if windows_vero else "guarda ancora i compartimenti"),
+              cerca is (not windows_vero), str(sorted(p.name for p in dati.iterdir())))
+
+        # il guardiano come processo: sul sistema vero nega ancora (POSIX) o resta spento (Windows)
+        sid1 = "aaaaaaaa-0000-4000-8000-00000000000a"
+        cmd_vietato = "rm -rf %s" % (w / "beta" / "x")
+        r = _guardiano(dati, sid1, env, cmd_vietato)
+        avvisa = "non supportato su Windows" in r.stdout.decode("utf-8", "replace")
+        if windows_vero:
+            prova("guardiano con PLANCIA_PIATTAFORMA=%s su Windows: resta spento e lo dice" % opposto,
+                  avvisa and not _nega(r), r.stdout.decode("utf-8", "replace")[:200])
+        else:
+            prova("guardiano con PLANCIA_PIATTAFORMA=%s su macOS/Linux: nega ancora (bloccante), "
+                  "non spento" % opposto,
+                  _nega(r) and not avvisa, r.stdout.decode("utf-8", "replace")[:300]
+                  + " | " + r.stderr.decode("utf-8", "replace")[:200])
+            prova("guardiano con PLANCIA_PIATTAFORMA=%s su macOS/Linux: scrive il registro dei "
+                  "negati e non il file dell'avviso di Windows" % opposto,
+                  (dati / "guardiano.log").exists() and not (dati / "guardiano-windows").exists(),
+                  str(sorted(p.name for p in dati.iterdir())))
+        # e con os.name == nt la variabile non lo riaccende
+        env_l = _env_windows(dati, PLANCIA_PIATTAFORMA="linux")
+        r = _guardiano(dati, "bbbbbbbb-0000-4000-8000-00000000000b", env_l, cmd_vietato,
+                       come_windows=True)
+        prova("guardiano con os.name == nt e PLANCIA_PIATTAFORMA=linux: resta spento e lo dice",
+              "non supportato su Windows" in r.stdout.decode("utf-8", "replace") and not _nega(r),
+              r.stdout.decode("utf-8", "replace")[:200])
+    finally:
+        _pulisci(base)
 
 
 def _pulisci(percorso):
@@ -500,6 +690,7 @@ def esegui(prova):
     _prove_compartimenti_spenti(prova)
     _prove_guardiano_windows(prova)
     _prove_avvisi(prova)
+    _prove_la_variabile_non_decide(prova)
 
 
 if __name__ == "__main__":

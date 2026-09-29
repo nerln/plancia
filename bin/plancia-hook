@@ -156,11 +156,12 @@ def _cartelle_e_sessioni_escluse():
 
 
 def _su_windows():
-    """Si e' su Windows? Stessa regola di plancia/piattaforma.nome(): `os.name` (o la
-    variabile `PLANCIA_PIATTAFORMA=windows` che le prove usano per fingere). Qui non si
-    importa il pacchetto, quindi la regola vive in due posti."""
-    return os.name == "nt" or (
-        os.environ.get("PLANCIA_PIATTAFORMA", "").strip().lower() == "windows")
+    """Si e' su Windows davvero? Solo `os.name`: mai la variabile `PLANCIA_PIATTAFORMA`
+    che le prove di piattaforma usano per fingere, e che chiunque possa scrivere un
+    `settings.json` puo' mettere in `env` (una sessione si toglierebbe i compartimenti
+    da sola). Stessa regola di plancia/piattaforma.windows_reale(); qui non si importa
+    il pacchetto, quindi la regola vive in due posti."""
+    return os.name == "nt"
 
 
 def _config_con_nominati():
@@ -348,8 +349,10 @@ def _leggi_stdin():
     """Il JSON che Claude Code manda su stdin, sempre letto come UTF-8.
 
     `sys.stdin.read()` usa la tabella di caratteri del sistema: su Windows, con lo
-    stdin in una pipe, e' cp1252, e una cartella con un accento nel nome arrivava con
-    i caratteri sbagliati (`CittÃ `) nella coda e nei confronti dei percorsi. Un BOM
+    stdin in una pipe e l'hook lanciato senza `-X utf8`, e' cp1252, e una cartella con un
+    accento nel nome arrivava con i caratteri sbagliati (`CittÃ `) nella coda e nei
+    confronti dei percorsi. Gli hook che scrive `plancia install` hanno gia' `-X utf8`;
+    questo copre chi lo lancia a mano o lo ha registrato prima. Un BOM
     iniziale (lo mette PowerShell) non e' JSON e si toglie. Su macOS e Linux e' UTF-8
     gia' di suo: niente cambia. Uno stdin che non ha `.buffer` (le prove lo sostituiscono
     con un testo) si legge com'e'."""
@@ -362,11 +365,13 @@ def _leggi_stdin():
 def _scrivi_stdout(testo):
     """Scrive `testo` su stdout in UTF-8, qualunque sia la tabella del sistema.
 
-    Su Windows, con l'uscita in una pipe, `sys.stdout.write` usa cp1252: la freccia
-    del briefing (cp1252 non ha quel carattere) alzava `UnicodeEncodeError`,
+    Su Windows, con l'uscita in una pipe e l'hook lanciato senza `-X utf8` (gli hook
+    scritti da `plancia install` ce l'hanno gia'), `sys.stdout.write` usa cp1252: la
+    freccia del briefing (cp1252 non ha quel carattere) alzava `UnicodeEncodeError`,
     l'eccezione finiva nel `except` di chi chiama e la sessione partiva SENZA
     briefing, in silenzio; un accento arrivava a Claude Code, che legge UTF-8, come
-    mojibake. Con i byte diretti su `sys.stdout.buffer` non c'e' tabella di mezzo."""
+    mojibake. Con i byte diretti su `sys.stdout.buffer` l'hook non dipende piu' dalla
+    tabella di caratteri, qualunque sia il modo in cui e' stato lanciato."""
     buffer = getattr(sys.stdout, "buffer", None)
     if buffer is None:
         sys.stdout.write(testo)

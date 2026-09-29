@@ -50,7 +50,10 @@ sbaglia in silenzio su `C:/...` e' peggio di uno che dice di non esserci. Esce s
 senza negare niente e senza caricare il pacchetto, con un `systemMessage` UNA volta per
 sessione ("non supportato su Windows"): un file per sessione in
 `<dati>/guardiano-windows/`, ripulito dopo una settimana. Vedi
-`plancia/piattaforma.compartimenti_supportati`.
+`plancia/piattaforma.compartimenti_supportati`. "Windows" lo dice solo `os.name`:
+la variabile `PLANCIA_PIATTAFORMA`, con cui le prove fingono una piattaforma, qui non
+conta, perche' chi scrive un `settings.json` la puo' mettere in `env` e spegnerebbe il
+guardiano (e' fra le `env` che il guardiano stesso nega di scrivere).
 
 Non installato da questo file: si aggiunge a mano a `settings.json` (matcher
 `*`, evento PreToolUse), prima in `solo-registro`.
@@ -205,11 +208,12 @@ def _tempo_scaduto(exc):
 
 
 def _su_windows():
-    """Stessa regola di plancia/piattaforma.nome(): `os.name`, o la variabile
-    `PLANCIA_PIATTAFORMA=windows` con cui le prove fingono. Il pacchetto qui non si
-    importa, quindi la regola vive in due posti."""
-    return os.name == "nt" or (
-        os.environ.get("PLANCIA_PIATTAFORMA", "").strip().lower() == "windows")
+    """Si e' su Windows davvero? Solo `os.name`: mai la variabile `PLANCIA_PIATTAFORMA`,
+    che le prove di piattaforma usano per fingere ma che chiunque possa scrivere un
+    `settings.json` puo' mettere in `env`: se bastasse, una sessione si spegnerebbe il
+    guardiano da sola. Stessa regola di plancia/piattaforma.windows_reale(); il pacchetto
+    qui non si importa, quindi la regola vive in due posti."""
+    return os.name == "nt"
 
 
 _UNA_SETTIMANA = 7 * 24 * 3600

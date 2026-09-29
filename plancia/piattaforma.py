@@ -27,9 +27,15 @@ Due livelli, tenuti separati apposta:
 
 `nome()` dice dove si e': "mac", "windows" o "linux", da `sys.platform`,
 sovrascrivibile con `PLANCIA_PIATTAFORMA` (un valore che non sia uno dei tre
-nomi viene ignorato). Su macOS niente di quello che c'era prima cambia di un
-byte: gli argv, i plist e i testi sono quelli di sempre, e le prove lo
-confrontano con i valori misurati sulla versione precedente.
+nomi viene ignorato). La variabile serve alle prove, per far costruire i comandi
+di un'altra piattaforma, e a nient'altro: NON decide niente che riguardi la
+sicurezza. Chi puo' scrivere un `settings.json` puo' metterla in `env`, e se
+bastasse a far credere a Plancia di essere su Windows, una sessione si toglierebbe
+da sola il guardiano e i compartimenti. Quelle decisioni (`compartimenti_supportati`,
+e gli script `bin/plancia-guardiano` e `bin/plancia-hook`) passano da
+`windows_reale()`, cioe' da `os.name == "nt"`. Su macOS niente di quello che c'era
+prima cambia di un byte: gli argv, i plist e i testi sono quelli di sempre, e le
+prove lo confrontano con i valori misurati sulla versione precedente.
 
 Solo libreria standard, python 3.9.
 """
@@ -77,6 +83,19 @@ def _p(piatt):
     return piatt or nome()
 
 
+def windows_reale() -> bool:
+    """Si sta girando su Windows davvero (`os.name == "nt"`)?
+
+    E' l'unica risposta che vale per una decisione di sicurezza, e non guarda
+    `PLANCIA_PIATTAFORMA`: quella variabile la scrive chiunque possa scrivere un
+    `settings.json`, e le prove di piattaforma la usano per fingere. La stessa regola
+    vive in `bin/plancia-guardiano` e `bin/plancia-hook`, che non importano il
+    pacchetto. Su Cygwin e MSYS `os.name` e' `posix`, i percorsi sono POSIX e i
+    compartimenti funzionano: per loro e' falso. Le prove la sostituiscono per provare
+    il ramo di Windows su un altro sistema."""
+    return os.name == "nt"
+
+
 def compartimenti_supportati(piatt=None) -> bool:
     """I compartimenti e il guardiano funzionano su questa piattaforma?
 
@@ -89,8 +108,14 @@ def compartimenti_supportati(piatt=None) -> bool:
     Quindi su Windows sono spenti: `compartimenti_viste.attivo()` torna None (Plancia
     mostra tutto a tutti, com'e' senza compartimenti), il guardiano esce subito senza
     negare niente e lo dice una volta per sessione, `plancia doctor` lo scrive se
-    config.json ne ha. Su macOS e Linux e' sempre vero: non cambia niente."""
-    return _p(piatt) != WINDOWS
+    config.json ne ha. Su macOS e Linux e' sempre vero: non cambia niente.
+
+    Senza argomento la risposta viene dal sistema vero (`windows_reale`), mai da
+    `PLANCIA_PIATTAFORMA`: la variabile non spegne i compartimenti. Con `piatt`
+    esplicito (le prove) si chiede cosa vale per quella piattaforma."""
+    if piatt is None:
+        return not windows_reale()
+    return piatt != WINDOWS
 
 
 #: Cosa si dice a chi ha compartimenti o guardiano in config.json su Windows.
@@ -138,6 +163,22 @@ def opzioni_figlio(piatt=None, nt=None) -> dict:
     if _su_windows_vero(piatt, nt):
         return {"creationflags": _NO_WINDOW}
     return {}
+
+
+def prompt_da_stdin(piatt=None) -> bool:
+    """Il prompt di `claude -p` si scrive nello stdin invece di passarlo come argomento?
+
+    Su Windows si'. `claude` installato con npm e' uno shim `claude.cmd`, e per lanciare
+    un `.cmd` Python passa da cmd.exe: un argomento con una riga a capo viene tagliato
+    alla prima (il riepilogo e la risposta a voce allegano dati su piu' righe, e al
+    modello arrivava la sola prima riga), i caratteri speciali di cmd.exe (`%`, e con delle
+    virgolette nel testo anche `&`, `|`, `^`) dentro un titolo di task o un messaggio di
+    commit possono essere interpretati, e la riga ha un tetto di 8191 caratteri. Lo stdin
+    non passa da nessuna analisi della riga di comando. `claude -p` senza un prompt fra gli argomenti lo legge da stdin (l'aiuto:
+    `--input-format` e' `text` di default, "useful for pipes"; e' gia' la strada di Jarvis
+    e del cantiere). Su macOS e Linux resta l'argomento, com'e' sempre stato: l'argv non
+    cambia di un byte."""
+    return _p(piatt) == WINDOWS
 
 
 def opzioni_utf8(piatt=None, nt=None) -> dict:

@@ -357,12 +357,19 @@ def claude_bin() -> str:
 
 
 def claude_text(prompt: str, timeout: int = 120) -> str:
-    """Una domanda secca a Claude Code in modalità non interattiva."""
+    """Una domanda secca a Claude Code in modalità non interattiva.
+
+    Su macOS e Linux il prompt è un argomento (`claude -p --model <m> <prompt>`), come
+    sempre. Su Windows va nello stdin (`piattaforma.prompt_da_stdin`): un `claude.cmd` di
+    npm passa da cmd.exe, che taglia l'argomento alla prima riga a capo (e può interpretare
+    `%` e, con delle virgolette nel testo, anche `&` e `|`); il riepilogo e la risposta a
+    voce sono prompt su più righe."""
     cfg = config.load_config()
     exe = claude_bin()
     if not exe:
         return ""
-    cmd = [exe, "-p", prompt]
+    da_stdin = piattaforma.prompt_da_stdin()
+    cmd = [exe, "-p"] if da_stdin else [exe, "-p", prompt]
     model = cfg.get("modello_voce") or "sonnet"
     if model:
         cmd[2:2] = ["--model", model]
@@ -371,6 +378,7 @@ def claude_text(prompt: str, timeout: int = 120) -> str:
     try:
         res = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
                              cwd=str(config.DATA_DIR), env=env,
+                             **({"input": prompt} if da_stdin else {}),
                              **piattaforma.opzioni_figlio(), **piattaforma.opzioni_utf8())
     except Exception:
         return ""
