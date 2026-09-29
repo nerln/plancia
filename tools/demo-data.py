@@ -460,6 +460,9 @@ def main():
         # due agenti sullo stesso archivio: uno ogni tre è Codex
         agente = "codex" if i % 3 == 1 else "claude"
         scambi = 4 if (agente == "codex" and i % 6 == 1) else 0
+        # una sessione dura: con inizio e fine uguali la colonna Durata dell'app resta vuota
+        fine = (datetime.strptime(inizio, "%Y-%m-%dT%H:%M:%SZ")
+                + timedelta(seconds=90 * n_user)).strftime("%Y-%m-%dT%H:%M:%SZ")
         conn.execute(
             "INSERT INTO sessions(session_id, project_id, file, cwd, title, first_prompt, "
             "started_at, ended_at, n_user, n_assistant, n_tools, models, tools, "
@@ -467,7 +470,7 @@ def main():
             "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (f"demo-{i:03d}", ids[key], "", f"~/dev/{key}", titolo,
              titolo + ". Start from what is already there and do not rewrite the module.",
-             inizio, inizio, n_user, n_user * 6, n_tools,
+             inizio, fine, n_user, n_user * 6, n_tools,
              '["claude-opus-5"]' if agente == "claude" else '["gpt-5.4"]',
              '{"Read": 40, "Edit": 12, "Bash": 9}',
              out * 12, out, agente, scambi, store.now()))

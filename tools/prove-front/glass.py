@@ -1,5 +1,5 @@
 """Prove per L4-VETRO: il vetro esteso a ogni superficie, in web/style.css;
-il materiale nativo dietro tutta la finestra, in mac/Sources/main.swift.
+i sorgenti dell'app Mac (mac/Sources, SwiftUI dalla 2.0).
 
 Statiche, si guarda solo il sorgente (niente browser, niente server): sono
 le condizioni scritte in docs/lotti/LOTTO-L4-VETRO.md, sotto "Prove rosse
@@ -25,7 +25,6 @@ proverebbe più niente.
 import re
 
 FOGLIO = "web/style.css"
-FOGLIO_SWIFT = "mac/Sources/main.swift"
 
 # LOTTO-L5-RIFINITURA punto 3: il margine minimo di luminanza relativa (WCAG)
 # che --text-2 deve tenere sotto --text-3 nel tema chiaro perché la
@@ -656,106 +655,93 @@ def _prova_truncate_kcard_foot(prova, testo):
 
 
 def _prova_swift(prova, radice):
-    testo = (radice / FOGLIO_SWIFT).read_text(encoding="utf-8")
-    # Stringhe specifiche del punto 4 del lotto (non spariscono con L4-VETRO,
-    # restano invariate rispetto a L2-GLASS).
-    controlli = (
-        ('web.setValue(false, forKey: "drawsBackground")', 'web.setValue(false, forKey: "drawsBackground")'),
-        ("#available(macOS 26", "#available(macOS 26"),
-        ("window.isOpaque = false", "window.isOpaque = false"),
-        ("window.backgroundColor = .clear", "window.backgroundColor = .clear"),
-        # Nuovo in L4-VETRO: il ramo else usa ancora NSVisualEffectView, ma
-        # ora deve dichiarare blendingMode = .behindWindow esplicitamente
-        # accanto al materiale nativo a piena finestra (prima la stessa
-        # proprietà c'era già, questa prova la rende esplicita e non più
-        # solo dedotta dal commento).
-        ("blendingMode = .behindWindow", "blendingMode = .behindWindow"),
-    )
-    for frammento, nome in controlli:
-        prova(f"{FOGLIO_SWIFT}: contiene {nome}", frammento in testo, "")
+    """L'app Mac 2.0 e' SwiftUI nativa (LOTTO-MAC2): niente WKWebView, niente materiale
+    fatto a mano, niente colori o font fissi. Il vetro lo danno i controlli di sistema
+    (NavigationSplitView, toolbar, Inspector, fogli). Le prove del 1.x che leggevano
+    main.swift (NSGlassEffectView dietro una WKWebView, il messaggio `tema` dalla pagina)
+    non hanno piu' niente da provare: la finestra non contiene piu' una pagina web.
+    Queste guardano i sorgenti; il giudizio sul vetro resta a chi apre l'app."""
+    base = radice / "mac" / "Sources"
+    file_swift = sorted(base.rglob("*.swift"))
+    testi = {str(f.relative_to(base)): f.read_text(encoding="utf-8") for f in file_swift}
+    prova("mac/Sources: ci sono i sorgenti nelle quattro cartelle (Core, Guscio, Sistema, Viste)",
+          all(any(k.startswith(c + "/") for k in testi) for c in ("Core", "Guscio", "Sistema", "Viste")),
+          str(sorted({k.split("/")[0] for k in testi})))
+    nomi = [f.name for f in file_swift]
+    prova("mac/Sources: nessun nome di file si ripete fra cartelle (swiftc lo rifiuta)",
+          len(nomi) == len(set(nomi)), str({n for n in nomi if nomi.count(n) > 1}))
+    prova("mac/Sources: non c'e' piu' main.swift (il punto d'ingresso e' @main SwiftUI)",
+          not (base / "main.swift").exists())
 
-    # Decisione 18/09: il materiale nativo non è più largo solo quanto il
-    # rail (Self.railW), ma prende il bounds del contentView e segue il
-    # ridimensionamento della finestra su entrambi gli assi.
-    m_glass_frame = re.search(r"NSGlassEffectView\(\s*frame:\s*([\w.]+)\s*\)", testo)
-    prova(f"{FOGLIO_SWIFT}: NSGlassEffectView prende il frame dal bounds del contentView "
-          "(non più largo solo del rail)",
-          bool(m_glass_frame) and m_glass_frame.group(1).endswith(".bounds"),
-          m_glass_frame.group(1) if m_glass_frame else "NSGlassEffectView non trovato")
-    m_ns_frame = re.search(r"NSVisualEffectView\(\s*frame:\s*([\w.]+)\s*\)", testo)
-    prova(f"{FOGLIO_SWIFT}: NSVisualEffectView prende il frame dal bounds del contentView",
-          bool(m_ns_frame) and m_ns_frame.group(1).endswith(".bounds"),
-          m_ns_frame.group(1) if m_ns_frame else "NSVisualEffectView non trovato")
+    def senza_commenti(t):
+        t = re.sub(r"/\*.*?\*/", "", t, flags=re.S)
+        return re.sub(r"(?m)//.*$", "", t)
 
-    m_resize = re.search(r"\w+\.autoresizingMask\s*=\s*\[([^\]]+)\]\s*\n\s*\n?\s*let contenuto", testo)
-    # L'autoresizingMask del materiale nativo (qualunque nome di variabile
-    # gli sia stato dato) deve avere sia .width sia .height: a piena
-    # finestra deve seguire il ridimensionamento su entrambi gli assi, non
-    # solo in altezza come quando era largo solo Self.railW.
-    m_resize_generico = None
-    for m in re.finditer(r"(\w+)\.autoresizingMask\s*=\s*\[([^\]]+)\]", testo):
-        if m.group(1) not in ("web",):
-            m_resize_generico = m
-            break
-    prova(f"{FOGLIO_SWIFT}: il materiale nativo ha autoresizingMask con .width e .height "
-          "(prima era solo .height, largo un numero fisso)",
-          bool(m_resize_generico)
-          and ".width" in m_resize_generico.group(2)
-          and ".height" in m_resize_generico.group(2),
-          m_resize_generico.group(0) if m_resize_generico else "autoresizingMask non trovato")
+    codice = {k: senza_commenti(v) for k, v in testi.items()}
+    nativi = {k: v for k, v in codice.items() if not k.startswith("Sistema/")}
 
-    # NSGlassEffectView sta nel ramo #available(macOS 26, *); NSVisualEffectView
-    # con blendingMode = .behindWindow nel ramo else. Non un semplice "compare
-    # nel file": deve stare nel blocco giusto.
-    m_if = re.search(r"#available\(macOS 26,[^)]*\)\s*\{([^{}]*)\}\s*else\s*\{([^{}]*)\}", testo, re.S)
-    prova(f"{FOGLIO_SWIFT}: if #available(macOS 26, *) {{ ... }} else {{ ... }} è dichiarato per intero",
-          bool(m_if), "")
-    if m_if:
-        ramo_26, ramo_else = m_if.group(1), m_if.group(2)
-        prova(f"{FOGLIO_SWIFT}: NSGlassEffectView sta nel ramo #available(macOS 26, *)",
-              "NSGlassEffectView" in ramo_26, ramo_26.strip())
-        prova(f"{FOGLIO_SWIFT}: NSVisualEffectView con blendingMode = .behindWindow sta nel ramo else",
-              "NSVisualEffectView" in ramo_else and "blendingMode = .behindWindow" in ramo_else,
-              ramo_else.strip())
-        # Punto 6 del lotto L4-VETRO-2: style esplicito a .regular su
-        # NSGlassEffectView, non lasciato al default implicito - .clear è
-        # per un elemento piccolo e isolato, .regular per lo sfondo di
-        # un'intera finestra (vedi il commento sopra vetro.style in Swift).
-        prova(f"{FOGLIO_SWIFT}: NSGlassEffectView ha style = .regular nel ramo #available(macOS 26, *)",
-              bool(re.search(r"\.style\s*=\s*\.regular", ramo_26)), ramo_26.strip())
+    prova("nessun sorgente usa WKWebView o WebKit: la dashboard non e' il contenuto",
+          not any("WKWebView" in v or "import WebKit" in v for v in codice.values()))
+    app = codice.get("Guscio/PlanciaApp.swift", "")
+    prova("Guscio/PlanciaApp.swift: @main SwiftUI con NSApplicationDelegateAdaptor",
+          "@main" in app and "NSApplicationDelegateAdaptor" in app and "Settings" in app)
+    prova("@main compare una volta sola", sum(v.count("@main") for v in codice.values()) == 1)
+    radice_swift = codice.get("Guscio/Radice.swift", "")
+    prova("Radice: NavigationSplitView con barra laterale di sistema (.listStyle(.sidebar))",
+          "NavigationSplitView" in radice_swift and ".listStyle(.sidebar)" in radice_swift)
+    prova("Radice: campo di ricerca di sistema con gli ambiti e stato nel sottotitolo",
+          ".searchable(" in radice_swift and ".searchScopes(" in radice_swift
+          and ".navigationSubtitle(" in radice_swift)
+    prova("Radice: niente logo ne' wordmark nella barra laterale (nessuna Image(\"...\") di risorsa)",
+          not re.search(r'Image\("', radice_swift) and "Fraunces" not in radice_swift)
+    prova("Impostazioni: lingua e aspetto in una scena Settings, nessun pulsante Tema",
+          "Lingua" in codice.get("Guscio/Impostazioni.swift", "")
+          and "Aspetto" in codice.get("Guscio/Impostazioni.swift", "")
+          and not re.search(r'Button\([^)]*"Tema"', radice_swift))
+    prova("Comandi: le sezioni con ⌘1...⌘6 e Aggiorna con ⌘R",
+          "keyboardShortcut(KeyEquivalent(Character(String(s.numero)))" in codice.get("Guscio/Comandi.swift", "")
+          and 'keyboardShortcut("r", modifiers: .command)' in codice.get("Guscio/Comandi.swift", ""))
+    prova("Istantanee: la modalita' --istantanee esiste e non parte nel server",
+          "--istantanee" in codice.get("Guscio/Istantanee.swift", ""))
 
-    # Tema dell'app e tema della pagina (L4-VETRO-2, punto 7 del lotto,
-    # consigliata del critico del primo giro, contratto con L4-MEMORIA su
-    # web/app.js): il materiale nativo deve seguire il tema che la pagina ha
-    # risolto, non restare fermo sull'aspetto di sistema quando plancia-theme
-    # forza il contrario. Statica: guarda solo che l'handler sia registrato
-    # con name: "tema" e che da qualche parte nel file window.appearance
-    # venga assegnato a partire da un NSAppearance - non lancia una WKWebView
-    # vera, quindi non può verificare che il messaggio arrivi davvero.
-    prova(f'{FOGLIO_SWIFT}: userContentController.add(...) registra un handler name: "tema"',
-          bool(re.search(r'userContentController\.add\([^)]*name:\s*"tema"\s*\)', testo)), "")
-    prova(f"{FOGLIO_SWIFT}: contiene func userContentController(_:didReceive:) "
-          "(il metodo di WKScriptMessageHandler che riceve il messaggio 'tema')",
-          bool(re.search(r"func userContentController\([^)]*didReceive[^)]*\)", testo)), "")
-    # L4-VETRO-2, correzione del critico (secondo giro): il primo giro
-    # assegnava window.appearance, che è l'antenato di cui web/app.js legge
-    # prefers-color-scheme via matchMedia per risolvere 'auto' - forzarlo da
-    # Swift rompe 'auto' al primo messaggio (vedi il commento sopra
-    # costruisciFinestra() in main.swift). Il gestore deve assegnare
-    # .appearance sul MATERIALE (fratello della WKWebView), non sulla
-    # finestra: questa prova guarda esplicitamente "materiale.appearance",
-    # non un window.appearance qualunque, e sul commit di partenza di questo
-    # giro (che assegnava window.appearance) risulta rossa.
-    prova(f"{FOGLIO_SWIFT}: materiale.appearance viene assegnato a un NSAppearance(named: ...) "
-          "(il MATERIALE segue il tema che la pagina manda via 'tema', non la finestra: "
-          "window.appearance è quello che matchMedia legge dentro la pagina per 'auto')",
-          bool(re.search(r"materiale\.appearance\s*=\s*NSAppearance\(named:", testo)), "")
-    prova(f"{FOGLIO_SWIFT}: window.appearance NON viene mai assegnato "
-          "(romperebbe 'auto': vedi il commento sopra)",
-          "window.appearance =" not in testo, "")
-    prova(f"{FOGLIO_SWIFT}: AppDelegate dichiara la conformità a WKScriptMessageHandler",
-          bool(re.search(r"class AppDelegate[^{]*WKScriptMessageHandler", testo)), "")
-    return testo
+    # regole di design (LOTTO-MAC2, Regole di design)
+    fuori = []
+    for k, v in nativi.items():
+        if re.search(r"Color\(\s*(red|hue|white|\.sRGB)|NSColor\(\s*(red|calibrated|srgb|white)|#[0-9a-fA-F]{6}\b", v):
+            fuori.append(k + ": colore fisso")
+        if re.search(r"\.font\(\s*\.system\(\s*size:", v):
+            fuori.append(k + ": font a dimensione fissa")
+        if ".glassEffect(" in v or re.search(r"\.(ultraThin|thin|regular|thick|ultraThick)Material", v):
+            fuori.append(k + ": materiale fatto a mano")
+        if re.search(r"\.blur\(", v):
+            fuori.append(k + ": blur")
+        if re.search(r"Font\.custom|\.custom\(", v):
+            fuori.append(k + ": font non di sistema")
+    prova("Core, Guscio e Viste: solo colori semantici, font di sistema e stili semantici, "
+          "nessun materiale ne' blur fatto a mano", not fuori, "; ".join(fuori))
+    prova("Core non dipende da AppKit ne' da SwiftUI (si compila da solo, vedi tools/prova-mac.sh)",
+          not any(re.search(r"import (AppKit|SwiftUI|Cocoa)", v)
+                  for k, v in codice.items() if k.startswith("Core/")))
+
+    # quello che la 1.x sapeva fare e non si e' perso
+    sistema = "\n".join(v for k, v in codice.items() if k.startswith("Sistema/"))
+    for frammento, cosa in (
+            ("func ensureRunning", "avvio del server se non c'e'"),
+            ("func stopIfOurs", "l'uscita ferma solo il server avviato dall'app"),
+            ("NSStatusBar.system.statusItem", "la voce nella barra dei menu"),
+            ("kAEGetURL", "gli indirizzi plancia://"),
+            ("applicationShouldHandleReopen", "la riapertura dal Dock"),
+            ("final class JarvisPanel", "Jarvis"),
+            ("UNUserNotificationCenter", "le notifiche"),
+            ("app.log", "il registro")):
+        prova(f"Sistema/: {cosa} c'e' ancora", frammento in sistema)
+    build = (radice / "mac" / "build.sh").read_text(encoding="utf-8")
+    prova("mac/build.sh: target macOS 26 e LSMinimumSystemVersion 26.0, niente macosx13",
+          "macosx26.0" in build and "<key>LSMinimumSystemVersion</key><string>26.0</string>" in build
+          and "macosx13" not in build)
+    prova("mac/build.sh: compila tutti i sorgenti di mac/Sources con -parse-as-library, dietro un lucchetto",
+          "-parse-as-library" in build and "find \"$ROOT/mac/Sources\"" in build and "lucchetto.py" in build)
+    prova("mac/build.sh: si ferma se lo spazio libero e' sotto 1 GB", "1048576" in build)
 
 
 def esegui(prova, radice) -> None:

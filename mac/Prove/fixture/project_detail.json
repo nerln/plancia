@@ -1,0 +1,330 @@
+{
+ "progetto": {
+  "id": 2,
+  "key": "apiary",
+  "name": "Apiary",
+  "kind": "infra",
+  "status": "attivo",
+  "priority": 1,
+  "pinned": 1,
+  "summary": "Self-hosted gateway in front of three model providers, with per-project budgets.",
+  "next_action": "",
+  "auto": 0,
+  "hidden": 0,
+  "created_at": "2026-09-29T20:06:31Z",
+  "updated_at": "2026-09-29T20:06:31Z",
+  "last_activity": "2026-09-29T11:34:00Z",
+  "parent_id": 8,
+  "compartimento": ""
+ },
+ "link": [
+  {
+   "kind": "repo",
+   "value": "apiary"
+  }
+ ],
+ "task": [
+  {
+   "id": 1,
+   "title": "Write the migration note for Apiary 2.0",
+   "body": "",
+   "status": "aperto",
+   "priority": 1,
+   "project_id": 2,
+   "due": "2026-10-01",
+   "tags": "",
+   "source": "claude",
+   "session_id": null,
+   "agent": "",
+   "prompt": "",
+   "cwd": "",
+   "run_id": null,
+   "created_at": "2026-09-27T09:33:00Z",
+   "updated_at": "2026-09-27T09:33:00Z",
+   "done_at": null,
+   "host": "",
+   "compartimento": "",
+   "project": "Apiary",
+   "project_key": "apiary"
+  },
+  {
+   "id": 10,
+   "title": "Wire the retry budget into the nightly job",
+   "body": "",
+   "status": "aperto",
+   "priority": 1,
+   "project_id": 2,
+   "due": null,
+   "tags": "",
+   "source": "claude",
+   "session_id": "demo-closed-01",
+   "agent": "claude",
+   "prompt": "",
+   "cwd": "~/dev/apiary",
+   "run_id": null,
+   "created_at": "2026-09-28T09:48:00Z",
+   "updated_at": "2026-09-28T09:48:00Z",
+   "done_at": null,
+   "host": "",
+   "compartimento": "",
+   "project": "Apiary",
+   "project_key": "apiary"
+  },
+  {
+   "id": 7,
+   "title": "Move budgets off the in-memory store",
+   "body": "",
+   "status": "fatto",
+   "priority": 2,
+   "project_id": 2,
+   "due": null,
+   "tags": "",
+   "source": "claude",
+   "session_id": null,
+   "agent": "",
+   "prompt": "",
+   "cwd": "",
+   "run_id": null,
+   "created_at": "2026-09-24T09:59:00Z",
+   "updated_at": "2026-09-24T09:59:00Z",
+   "done_at": "2026-09-20T09:53:00Z",
+   "host": "",
+   "compartimento": "",
+   "project": "Apiary",
+   "project_key": "apiary"
+  }
+ ],
+ "post": [
+  {
+   "id": 2,
+   "platform": "x",
+   "status": "approvato",
+   "text": "Spent two hours on a bug where the proxy retried requests the server had already refused. The fix is one line. The lesson is not.",
+   "url": null,
+   "project_id": 2,
+   "source_ref": "commit 8c3e11d",
+   "scheduled_for": null,
+   "published_at": null,
+   "metrics": null,
+   "session_id": null,
+   "created_at": "2026-09-28T09:36:00Z",
+   "updated_at": "2026-09-28T09:36:00Z",
+   "media": "",
+   "compartimento": ""
+  }
+ ],
+ "sessioni": [
+  {
+   "session_id": "demo-002",
+   "title": "Per-project budget ceilings and a hard stop",
+   "prompt": "Per-project budget ceilings and a hard stop. Start from what is already there and do not rewrite the module.",
+   "started_at": "2026-09-29T11:34:00Z",
+   "n_user": 51,
+   "n_tools": 380,
+   "out_tokens": 96000,
+   "models": "[\"claude-opus-5\"]",
+   "dedotto_da": null,
+   "dir_dedotta": null
+  },
+  {
+   "session_id": "demo-003",
+   "title": "Rate limit backoff was retrying on 400s",
+   "prompt": "Rate limit backoff was retrying on 400s. Start from what is already there and do not rewrite the module.",
+   "started_at": "2026-09-27T12:51:00Z",
+   "n_user": 12,
+   "n_tools": 61,
+   "out_tokens": 11500,
+   "models": "[\"claude-opus-5\"]",
+   "dedotto_da": null,
+   "dir_dedotta": null
+  },
+  {
+   "session_id": "demo-012",
+   "title": "Move the budget store to SQLite",
+   "prompt": "Move the budget store to SQLite. Start from what is already there and do not rewrite the module.",
+   "started_at": "2026-09-20T13:47:00Z",
+   "n_user": 20,
+   "n_tools": 130,
+   "out_tokens": 27000,
+   "models": "[\"claude-opus-5\"]",
+   "dedotto_da": null,
+   "dir_dedotta": null
+  },
+  {
+   "session_id": "demo-017",
+   "title": "Streaming responses through the proxy",
+   "prompt": "Streaming responses through the proxy. Start from what is already there and do not rewrite the module.",
+   "started_at": "2026-09-08T10:00:00Z",
+   "n_user": 35,
+   "n_tools": 260,
+   "out_tokens": 58000,
+   "models": "[\"claude-opus-5\"]",
+   "dedotto_da": null,
+   "dir_dedotta": null
+  }
+ ],
+ "memoria": [
+  {
+   "id": 2,
+   "name": "apiary-budgets",
+   "description": "Budget ceilings are per project, enforced at the proxy, not the client",
+   "type": "project",
+   "updated_at": "2026-09-26T09:01:00Z"
+  }
+ ],
+ "repo": [
+  {
+   "id": 2,
+   "name": "apiary",
+   "description": "Self-hosted gateway in front of three model providers, with per-projec",
+   "visibility": "public",
+   "url": "https://github.com/example/apiary",
+   "pushed_at": "2026-09-28T09:55:00Z",
+   "project_id": 2,
+   "local_path": null,
+   "branch": null,
+   "dirty": 0,
+   "updated_at": "2026-09-29T20:06:31Z"
+  }
+ ],
+ "commit": [
+  {
+   "id": 3,
+   "repo": "apiary",
+   "sha": "0000000000000000000000000000000000000002",
+   "message": "Hard stop when a project passes its ceiling",
+   "date": "2026-09-29T11:02:00Z",
+   "url": "",
+   "session_id": "",
+   "sessione_titolo": null
+  },
+  {
+   "id": 4,
+   "repo": "apiary",
+   "sha": "0000000000000000000000000000000000000003",
+   "message": "Do not retry requests the server already refused",
+   "date": "2026-09-27T11:12:00Z",
+   "url": "",
+   "session_id": "",
+   "sessione_titolo": null
+  },
+  {
+   "id": 10,
+   "repo": "apiary",
+   "sha": "0000000000000000000000000000000000000009",
+   "message": "Keep budgets in SQLite, not in memory",
+   "date": "2026-09-20T11:29:00Z",
+   "url": "",
+   "session_id": "",
+   "sessione_titolo": null
+  },
+  {
+   "id": 12,
+   "repo": "apiary",
+   "sha": "000000000000000000000000000000000000000b",
+   "message": "Pass streamed responses straight through",
+   "date": "2026-09-08T11:28:00Z",
+   "url": "",
+   "session_id": "",
+   "sessione_titolo": null
+  }
+ ],
+ "eventi": [
+  {
+   "id": 4,
+   "ts": "2026-09-29T11:34:00Z",
+   "kind": "sessione",
+   "title": "Per-project budget ceilings and a hard stop",
+   "detail": "51 messaggi · 380 tool",
+   "project_id": 2,
+   "ref": "demo-002",
+   "source": "claude",
+   "dedup": "s2",
+   "compartimento": ""
+  },
+  {
+   "id": 27,
+   "ts": "2026-09-29T11:02:00Z",
+   "kind": "commit",
+   "title": "Hard stop when a project passes its ceiling",
+   "detail": "apiary",
+   "project_id": 2,
+   "ref": "c2",
+   "source": "github",
+   "dedup": "c2",
+   "compartimento": ""
+  },
+  {
+   "id": 5,
+   "ts": "2026-09-27T12:51:00Z",
+   "kind": "sessione",
+   "title": "Rate limit backoff was retrying on 400s",
+   "detail": "12 messaggi · 61 tool",
+   "project_id": 2,
+   "ref": "demo-003",
+   "source": "claude",
+   "dedup": "s3",
+   "compartimento": ""
+  },
+  {
+   "id": 28,
+   "ts": "2026-09-27T11:12:00Z",
+   "kind": "commit",
+   "title": "Do not retry requests the server already refused",
+   "detail": "apiary",
+   "project_id": 2,
+   "ref": "c3",
+   "source": "github",
+   "dedup": "c3",
+   "compartimento": ""
+  },
+  {
+   "id": 15,
+   "ts": "2026-09-20T13:47:00Z",
+   "kind": "sessione",
+   "title": "Move the budget store to SQLite",
+   "detail": "20 messaggi · 130 tool",
+   "project_id": 2,
+   "ref": "demo-012",
+   "source": "claude",
+   "dedup": "s12",
+   "compartimento": ""
+  },
+  {
+   "id": 34,
+   "ts": "2026-09-20T11:29:00Z",
+   "kind": "commit",
+   "title": "Keep budgets in SQLite, not in memory",
+   "detail": "apiary",
+   "project_id": 2,
+   "ref": "c9",
+   "source": "github",
+   "dedup": "c9",
+   "compartimento": ""
+  },
+  {
+   "id": 36,
+   "ts": "2026-09-08T11:28:00Z",
+   "kind": "commit",
+   "title": "Pass streamed responses straight through",
+   "detail": "apiary",
+   "project_id": 2,
+   "ref": "c11",
+   "source": "github",
+   "dedup": "c11",
+   "compartimento": ""
+  },
+  {
+   "id": 21,
+   "ts": "2026-09-08T10:00:00Z",
+   "kind": "sessione",
+   "title": "Streaming responses through the proxy",
+   "detail": "35 messaggi · 260 tool",
+   "project_id": 2,
+   "ref": "demo-017",
+   "source": "claude",
+   "dedup": "s17",
+   "compartimento": ""
+  }
+ ]
+}

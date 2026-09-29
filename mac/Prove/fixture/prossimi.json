@@ -1,0 +1,154 @@
+{
+ "aree": [
+  {
+   "key": "backlot",
+   "name": "Backlot",
+   "righe": [
+    {
+     "key": "postcard",
+     "name": "Postcard",
+     "area": "backlot",
+     "cosa": "Swap Postcard's template loader for something that caches",
+     "fonte": "task",
+     "task_id": 9,
+     "scadenza": "2026-09-27",
+     "ultima_attivita": "2026-09-26T09:30:00Z"
+    },
+    {
+     "key": "kiln",
+     "name": "Kiln",
+     "area": "backlot",
+     "cosa": "Cut the first Kiln cache eviction policy",
+     "fonte": "task",
+     "task_id": 8,
+     "scadenza": "2026-10-02",
+     "ultima_attivita": "2026-09-23T09:40:00Z"
+    },
+    {
+     "key": "backlot",
+     "name": "Backlot",
+     "area": null,
+     "cosa": "move the last export script off the machine under the desk",
+     "fonte": "next_action",
+     "task_id": null,
+     "scadenza": null,
+     "ultima_attivita": "2026-09-26T09:19:00Z"
+    }
+   ]
+  },
+  {
+   "key": "fieldcraft",
+   "name": "Fieldcraft",
+   "righe": [
+    {
+     "key": "harbour",
+     "name": "Harbour",
+     "area": "fieldcraft",
+     "cosa": "Harbour: rollback still leaves the old release dir",
+     "fonte": "task",
+     "task_id": 4,
+     "scadenza": "2026-09-28",
+     "ultima_attivita": "2026-09-27T15:40:00Z"
+    },
+    {
+     "key": "field-notes",
+     "name": "Field notes",
+     "area": "fieldcraft",
+     "cosa": "Rerun the ablation with the larger split",
+     "fonte": "task",
+     "task_id": 3,
+     "scadenza": "2026-10-04",
+     "ultima_attivita": "2026-09-28T13:56:00Z"
+    },
+    {
+     "key": "fieldcraft",
+     "name": "Fieldcraft",
+     "area": null,
+     "cosa": "write the packing list once, stop rebuilding it per trip",
+     "fonte": "next_action",
+     "task_id": null,
+     "scadenza": null,
+     "ultima_attivita": "2026-09-28T09:28:00Z"
+    }
+   ]
+  },
+  {
+   "key": "signalworks",
+   "name": "Signalworks",
+   "righe": [
+    {
+     "key": "lumen",
+     "name": "Lumen",
+     "area": "signalworks",
+     "cosa": "Decide whether Lumen keeps the plugin API",
+     "fonte": "task",
+     "task_id": 2,
+     "scadenza": "2026-09-30",
+     "ultima_attivita": "2026-09-29T09:09:00Z"
+    },
+    {
+     "key": "apiary",
+     "name": "Apiary",
+     "area": "signalworks",
+     "cosa": "Write the migration note for Apiary 2.0",
+     "fonte": "task",
+     "task_id": 1,
+     "scadenza": "2026-10-01",
+     "ultima_attivita": "2026-09-29T11:34:00Z"
+    },
+    {
+     "key": "signalworks",
+     "name": "Signalworks",
+     "area": null,
+     "cosa": "decide which two tools get the shared config format",
+     "fonte": "next_action",
+     "task_id": null,
+     "scadenza": null,
+     "ultima_attivita": "2026-09-29T09:06:00Z"
+    },
+    {
+     "key": "atlas",
+     "name": "Atlas",
+     "area": "signalworks",
+     "cosa": "score the fourth model before writing anything up",
+     "fonte": "next_action",
+     "task_id": null,
+     "scadenza": null,
+     "ultima_attivita": "2026-09-25T09:38:00Z"
+    }
+   ]
+  }
+ ],
+ "senza_area": [
+  {
+   "key": "gutter",
+   "name": "Gutter",
+   "area": null,
+   "cosa": "add the disk-full alert before it happens again",
+   "fonte": "next_action",
+   "task_id": null,
+   "scadenza": null,
+   "ultima_attivita": "2026-09-27T09:39:00Z"
+  },
+  {
+   "key": "spindle",
+   "name": "Spindle",
+   "area": null,
+   "cosa": "fix the timestamp drift on recordings over an hour",
+   "fonte": "next_action",
+   "task_id": null,
+   "scadenza": null,
+   "ultima_attivita": "2026-09-24T09:11:00Z"
+  },
+  {
+   "key": "almanac",
+   "name": "Almanac",
+   "area": null,
+   "cosa": "log last week's breakage before it is forgotten",
+   "fonte": "next_action",
+   "task_id": null,
+   "scadenza": null,
+   "ultima_attivita": "2026-09-19T09:50:00Z"
+  }
+ ]
+}

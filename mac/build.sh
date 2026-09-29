@@ -11,7 +11,7 @@ ROOT="$(pwd)"
 BUILD="$ROOT/mac/build"
 APP="$BUILD/Plancia.app"
 NOME="Plancia"
-VERSIONE="1.1.0"
+VERSIONE="2.0.0"
 BUNDLE_ID="sh.plancia.app"
 
 installa=0
@@ -28,15 +28,43 @@ if ! xcrun --find swiftc >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "· compilo"
+# Poco spazio libero: swiftc scrive file temporanei grandi e a meta' strada il disco si
+# riempie senza dire niente. Sotto 1 GB ci si ferma e lo si dice.
+LIBERO_KB="$(df -k "$ROOT" | awk 'NR==2 {print $4}')"
+if [ "${LIBERO_KB:-0}" -lt 1048576 ]; then
+  echo "Spazio libero insufficiente: $((LIBERO_KB / 1024)) MB, ne servono almeno 1024." >&2
+  exit 1
+fi
+
+# Tutti i sorgenti sotto mac/Sources, ricorsivamente. Ogni cartella ha un compito:
+# Core (modelli, cliente, store, lingua), Guscio (finestra, menu, impostazioni),
+# Sistema (server, barra dei menu, plancia://, voce), Viste (una per sezione).
+# swiftc rifiuta due file con lo stesso nome anche in cartelle diverse.
+SORGENTI=()
+while IFS= read -r f; do SORGENTI+=("$f"); done < <(find "$ROOT/mac/Sources" -name '*.swift' | sort)
+if [ "${#SORGENTI[@]}" -eq 0 ]; then
+  echo "Nessun sorgente in mac/Sources" >&2
+  exit 1
+fi
+
+# Un lucchetto intorno a swiftc: due compilazioni insieme (piu' agenti sulla stessa
+# macchina, o due terminali) esauriscono la memoria. Chi arriva dopo aspetta.
+# Lo stesso file per tutti (build.sh e tools/prova-mac.sh); PLANCIA_LUCCHETTO lo sposta.
+LUCCHETTO="${PLANCIA_LUCCHETTO:-/tmp/plancia-swiftc-$(id -u).lock}"
+mkdir -p "$(dirname "$LUCCHETTO")"
+OTTIMIZZAZIONE="-O -whole-module-optimization"
+[ "${PLANCIA_SENZA_OTTIMIZZAZIONE:-0}" = "1" ] && OTTIMIZZAZIONE="-Onone"
+
+echo "· compilo (${#SORGENTI[@]} file)"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-xcrun swiftc \
+python3 "$ROOT/mac/lucchetto.py" "$LUCCHETTO" xcrun swiftc \
   -swift-version 5 \
-  -O -whole-module-optimization \
-  -target "$(uname -m)-apple-macosx13.0" \
+  -parse-as-library \
+  $OTTIMIZZAZIONE \
+  -target "$(uname -m)-apple-macosx26.0" \
   -o "$APP/Contents/MacOS/$NOME" \
-  "$ROOT/mac/Sources/main.swift" "$ROOT/mac/Sources/jarvis.swift"
+  "${SORGENTI[@]}"
 
 echo "· icona"
 # Due strade, nell'ordine.
@@ -72,7 +100,7 @@ ACTOOL_MAGGIORE="$(xcrun actool --version 2>/dev/null \
 
 if [ -d "$ICONA_SRC" ] && [ "${ACTOOL_MAGGIORE:-0}" -ge 26 ] 2>/dev/null && \
    xcrun actool "$ICONA_SRC" --compile "$ICONA_TMP" \
-     --platform macosx --target-device mac --minimum-deployment-target 13.0 \
+     --platform macosx --target-device mac --minimum-deployment-target 26.0 \
      --app-icon Plancia --include-all-app-icons --enable-on-demand-resources NO \
      --development-region en \
      --output-partial-info-plist "$ICONA_TMP/parziale.plist" >/dev/null 2>&1 && \
@@ -123,7 +151,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleShortVersionString</key><string>$VERSIONE</string>
   <key>CFBundleVersion</key><string>$VERSIONE</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>LSMinimumSystemVersion</key><string>13.0</string>
+  <key>LSMinimumSystemVersion</key><string>26.0</string>
   <key>NSHighResolutionCapable</key><true/>
   $ICONA
   <key>PlanciaExecutable</key><string>$ROOT/bin/plancia</string>

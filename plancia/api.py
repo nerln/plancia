@@ -577,12 +577,15 @@ class Handler(BaseHTTPRequestHandler):
                         "turni": dai_turni, "progetti": gruppi,
                         "schede": viste.cerca_schede(conn, ombra, q, int(first("limit", 20))),
                     })
+                # Una passata sola per i turni e per il conteggio: l'indice si
+                # legge una volta (turni.ricerca), non due.
+                dai_turni, gruppi = turni.ricerca(
+                    conn, q, int(first("limit", 30)), first("progetto") or None)
                 return self._json({
-                    "turni": turni.cerca(conn, q, int(first("limit", 30)),
-                                         first("progetto") or None),
+                    "turni": dai_turni,
                     # Il conteggio è su tutto l'indice, non sulla pagina: dice se
                     # la cosa cercata sta in un progetto solo o è sparsa.
-                    "progetti": turni.raggruppa(conn, q),
+                    "progetti": gruppi,
                     "schede": store.search(conn, q, int(first("limit", 20))),
                 })
             if path == "/api/recap":

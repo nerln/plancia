@@ -1,0 +1,2 @@
+{"voci": [{"id": 1, "fonte": "claude", "titolo": 12, "task_id": "abc"}, null, {"id": 2, "fonte": "plancia", "titolo": "Vero", "stato": "aperto", "task_id": 9}],
+ "conteggi": {"claude": "x", "plancia": {"aperti": "4", "aperto": 4}}, "in_corso": null}

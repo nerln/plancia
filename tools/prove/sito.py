@@ -113,7 +113,9 @@ def esegui(prova):
         versioni["mac/build.sh"] = m.group(1) if m else None
 
     prova("le tre versioni si leggono tutte", all(versioni.values()), str(versioni))
-    prova("le tre versioni coincidono", len(set(versioni.values())) == 1, str(versioni))
+
+    def _tupla(v):
+        return tuple(int(x) for x in v.split(".")) if v and re.fullmatch(r"\d+(\.\d+)*", v) else ()
 
     # La versione attesa non e' scritta qui a mano (si fisserebbe a 1.1.0 e
     # bloccherebbe il primo rilascio successivo, vedi la critica del 26/09):
@@ -126,9 +128,22 @@ def esegui(prova):
         attesa = m.group(1) if m else None
     prova("docs/NOVITA.md dichiara una versione corrente (prima voce '## X.Y.Z')",
           attesa is not None)
+
+    # Il pacchetto Python e il sito non cambiano numero finche' non si rilascia.
+    # L'app Mac invece si prepara prima: durante la 2.0 (LOTTO-MAC2) mac/build.sh porta
+    # gia' 2.0.0 mentre pyproject e __init__ sono ancora alla 1.x. Tolleranza voluta e
+    # stretta: la versione del Mac puo' essere uguale a quella dichiarata, oppure
+    # maggiore (una release in preparazione), mai minore. rilascia.sh riallinea le tre
+    # al momento del rilascio, e da quel momento la prova torna a esigere l'uguaglianza.
+    python_v = {k: v for k, v in versioni.items() if k != "mac/build.sh"}
+    prova("pyproject.toml e plancia/__init__.py coincidono",
+          len(set(python_v.values())) == 1, str(python_v))
     if attesa:
-        prova(f"le tre versioni sono quella dichiarata da NOVITA.md ({attesa})",
-              set(versioni.values()) == {attesa}, str(versioni))
+        prova(f"pyproject.toml e plancia/__init__.py sono la versione dichiarata da NOVITA.md ({attesa})",
+              set(python_v.values()) == {attesa}, str(python_v))
+        mac_v = versioni.get("mac/build.sh")
+        prova(f"mac/build.sh e' la versione dichiarata ({attesa}) oppure una successiva in preparazione",
+              mac_v is not None and _tupla(mac_v) >= _tupla(attesa), str(versioni))
 
     # ------------------------------------------------------------- pages.yml
     pages = RADICE / ".github" / "workflows" / "pages.yml"

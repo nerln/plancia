@@ -3,6 +3,25 @@
 Onboarding scritto, da leggere una volta. Le stesse cose l'app te le fa provare
 al primo avvio, e restano sotto "Guida".
 
+## 2.0.0: l'app per Mac, nativa; la ricerca, veloce
+
+**App nativa (macOS 26 o più recente).** Non è più una finestra attorno alla
+dashboard web: è SwiftUI coi controlli di sistema. Barra laterale con Oggi,
+Task, Progetti, Social, Memoria, Archivio; il campo di ricerca è quello di
+sistema; a destra un Inspector per quello che selezioni; lingua e aspetto
+stanno nelle Impostazioni (⌘,). Lo stato "aggiornato alle…" sta nel sottotitolo
+della finestra. La Memoria non parte più dal grafo: è una lista per tipo, e il
+grafo è il "Vicinato" di un fatto, su due livelli. Perché: la 1.x sembrava una
+pagina web, e la barra laterale, il logo e i pulsanti Tema e lingua non
+seguivano le convenzioni di macOS. Su macOS 13-15 resta la 1.1.0, oppure la
+dashboard nel browser, che non cambia.
+
+**Ricerca più veloce, per tutti.** Nell'archivio grande una parola comune
+poteva metterci diversi secondi. Il server ora legge dall'indice solo i
+punteggi e ricava da una piccola mappa a quale file appartiene ogni risultato;
+la mappa si costruisce da sola al primo sync. Risultati e ordine sono gli
+stessi di prima.
+
 ## 1.1.0: aree, Prossimi, riprendere una conversazione
 
 **Aree.** `plancia riordina` calcola una mappa dei padri (`--proponi`), la fa

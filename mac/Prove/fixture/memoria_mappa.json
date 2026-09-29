@@ -1,0 +1,122 @@
+{
+ "nodi": [
+  {
+   "nome": "apiary-budgets",
+   "tipo": "project",
+   "descrizione": "Budget ceilings are per project, enforced at the proxy, not the client",
+   "aggiornata": "2026-09-26T09:01:00Z",
+   "peso": 159,
+   "path": "/demo/apiary-budgets.md",
+   "grado": 0,
+   "cartelle": [
+    "demo"
+   ],
+   "dove": [
+    "demo"
+   ],
+   "richiamabile": false,
+   "x": 0.97,
+   "y": 0.5
+  },
+  {
+   "nome": "lumen-architecture",
+   "tipo": "project",
+   "descrizione": "How Lumen is put together and why the index is a single file",
+   "aggiornata": "2026-09-19T09:24:00Z",
+   "peso": 143,
+   "path": "/demo/lumen-architecture.md",
+   "grado": 0,
+   "cartelle": [
+    "demo"
+   ],
+   "dove": [
+    "demo"
+   ],
+   "richiamabile": false,
+   "x": 0.03,
+   "y": 0.97
+  },
+  {
+   "nome": "machine-setup",
+   "tipo": "reference",
+   "descrizione": "Where the models live and why the cache is on the external drive",
+   "aggiornata": "2026-09-27T09:30:00Z",
+   "peso": 146,
+   "path": "/demo/machine-setup.md",
+   "grado": 0,
+   "cartelle": [
+    "demo"
+   ],
+   "dove": [
+    "demo"
+   ],
+   "richiamabile": false,
+   "x": 0.97,
+   "y": 0.03
+  },
+  {
+   "nome": "thesis-scope",
+   "tipo": "project",
+   "descrizione": "Chapter three covers retrieval failure, not generation",
+   "aggiornata": "2026-09-22T09:59:00Z",
+   "peso": 125,
+   "path": "/demo/thesis-scope.md",
+   "grado": 0,
+   "cartelle": [
+    "demo"
+   ],
+   "dove": [
+    "demo"
+   ],
+   "richiamabile": false,
+   "x": 0.97,
+   "y": 0.97
+  },
+  {
+   "nome": "writing-style",
+   "tipo": "feedback",
+   "descrizione": "Short sentences. Concrete nouns. No em dash.",
+   "aggiornata": "2026-09-28T09:13:00Z",
+   "peso": 106,
+   "path": "/demo/writing-style.md",
+   "grado": 0,
+   "cartelle": [
+    "demo"
+   ],
+   "dove": [
+    "demo"
+   ],
+   "richiamabile": false,
+   "x": 0.03,
+   "y": 0.03
+  }
+ ],
+ "archi": [],
+ "diagnosi": {
+  "totale": 5,
+  "richiamabili": 0,
+  "doppie": [],
+  "orfane": [
+   "apiary-budgets",
+   "lumen-architecture",
+   "machine-setup",
+   "thesis-scope",
+   "writing-style"
+  ],
+  "rotti": [],
+  "da_scrivere": [],
+  "vuote": [
+   "apiary-budgets",
+   "lumen-architecture",
+   "machine-setup",
+   "thesis-scope",
+   "writing-style"
+  ],
+  "cartelle": [
+   {
+    "nome": "demo",
+    "quante": 5
+   }
+  ]
+ }
+}

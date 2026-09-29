@@ -42,7 +42,7 @@ Cosa è cambiato di recente e perché: [docs/NOVITA.md](docs/NOVITA.md).
 cd ~/dev/plancia
 ./bin/plancia install      # comando, server MCP, hook, skill, avvio automatico
 ./bin/plancia init         # costruisce la mappa dei progetti dai tuoi dati
-./mac/build.sh --install   # costruisce Plancia.app in /Applications
+./mac/build.sh --install   # costruisce Plancia.app in /Applications (macOS 26 o più recente)
 ```
 
 `plancia uninstall` rimette tutto com'era. I dati restano in `~/.plancia/`.
@@ -138,8 +138,12 @@ dice cosa è collegato.
 
 ## Le tre porte
 
-**L'app.** Finestra nativa, voce nella barra dei menu, e tiene su il backend da
-sola. `plancia://recap`, `plancia://jarvis`, `plancia://ask?q=…`, `plancia://open?view=progetti` e
+**L'app.** Finestra nativa in SwiftUI (2.0, macOS 26 o più recente): barra
+laterale con Oggi, Task, Progetti, Social, Memoria e Archivio, il campo di
+ricerca di sistema, un Inspector a destra per quello che selezioni, e le
+Impostazioni per lingua e aspetto. Più la voce nella barra dei menu. Tiene su
+il backend da sola. Su macOS 13-15 l'ultima app che gira è la 1.1.0; la
+dashboard nel browser funziona ovunque. `plancia://recap`, `plancia://jarvis`, `plancia://ask?q=…`, `plancia://open?view=progetti` e
 `plancia://pdf` sono azioni da legare a una scorciatoia di sistema, a
 Raycast o a Comandi rapidi.
 
@@ -620,7 +624,7 @@ plancia/cantiere.py    mandare un lavoro a un agente
 plancia/proposte.py    cosa conviene fare, dai segnali
 plancia/eventi.py      il registro in append
 site/                  il sito, pubblicato su GitHub Pages
-mac/Sources/main.swift l'app macOS
+mac/Sources/          l'app macOS (SwiftUI, macOS 26 o più recente)
 web/                   dashboard, nessun framework, nessun build
 ```
 
@@ -638,9 +642,12 @@ da ⌘K. Al primo avvio una guida spiega le parti non ovvie, e resta lì sotto
 
 ## Cosa serve
 
-macOS 13 o più recente (o Windows o Linux, vedi sopra), Python 3.9+, Claude Code. Gli strumenti da riga di
-comando di Xcode solo per costruire l'app. `gh` è facoltativo e serve solo a
+Python 3.9+ e Claude Code, su macOS 13 o più recente, Windows o Linux (vedi sopra). L'app nativa per Mac
+richiede macOS 26 o più recente e gli strumenti da riga di comando di Xcode per costruirla. `gh` è facoltativo e serve solo a
 leggere i tuoi repo.
+
+L'app nativa per Mac 2.0 è in SwiftUI e richiede macOS 26 o più recente. Su macOS 13-15 resta la 1.1.0, oppure
+la dashboard nel browser (si installa come app web). La dashboard web non cambia nella 2.0.
 
 ## Sicurezza
 
@@ -679,7 +686,7 @@ git config core.hooksPath .githooks
 ```
 
 Accende il gancio che fa girare `python3 tools/prova.py` prima di ogni push:
-4118 controlli in pochi minuti, su un archivio finto che non tocca
+4142 controlli in pochi minuti, su un archivio finto che non tocca
 il tuo.
 
 ## Licenza

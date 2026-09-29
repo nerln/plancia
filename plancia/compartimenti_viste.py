@@ -817,59 +817,21 @@ def cerca_turni(conn, o, q, limit=12, progetto=None):
     """`turni.cerca` senza i turni degli altri (per sessione e per percorso del
     transcript). Torna `(turni, gruppi)`.
 
-    Come per le schede il filtro sta DENTRO la query (una funzione SQL che dice
-    se `(sessione, percorso)` e' visibile), prima del taglio per rango e del
-    `LIMIT`: un compartimento con un turno solo in un indice di migliaia lo
-    trova. La query e' quella di `turni.cerca` (stesse giunture, stesso ordine,
-    stesso scarto dei doppioni) e i gruppi contano per progetto sui soli turni
-    visibili, su tutto l'indice."""
-    from . import turni
-    turni.prepara(conn)
-    domanda = turni._domanda(q)
-    if not domanda:
-        return [], []
-    memo = {}
+    Come per le schede il filtro sta DENTRO la ricerca (`turni.ricerca` con un
+    `Filtro` che dice se `(sessione, percorso)` e' visibile), prima del taglio per
+    rango e del `LIMIT`: un compartimento con un turno solo in un indice di
+    migliaia lo trova. Stesso ordine, stesso scarto dei doppioni; i gruppi contano
+    per progetto sui soli turni visibili, su tutto l'indice.
 
-    def visibile_sql(sessione, percorso):
-        k = (sessione, percorso)
-        if k not in memo:
-            try:
-                memo[k] = 1 if o.sessione_ok(sessione, percorso or "") else 0
-            except Exception:  # noqa: BLE001 - nel dubbio, invisibile
-                memo[k] = 0
-        return memo[k]
-    conn.create_function("_e1_turno_ok", 2, visibile_sql)
-    guardia = "_e1_turno_ok(turni_fts.sessione, turni_fts.percorso)"
-    sql = ("SELECT turni_fts.sessione, turni_fts.ruolo, turni_fts.ts, "
-           "%s AS progetto, turni_fts.percorso, turni_fts.riga, "
-           "snippet(turni_fts, 0, '«', '»', '…', 24) AS frammento "
-           "FROM turni_fts %s WHERE turni_fts MATCH ? AND %s"
-           % (turni.ETICHETTA, turni.GIUNTURA, guardia))
-    args = [domanda]
-    if progetto:
-        sql += " AND %s LIKE ?" % turni.ETICHETTA
-        args.append("%%%s%%" % progetto)
-    sql += " ORDER BY rank, ts DESC LIMIT ?"
-    args.append(limit * 4)
-    try:
-        righe = conn.execute(sql, args).fetchall()
-        gr = conn.execute(
-            "SELECT %s e, COUNT(*) n FROM turni_fts %s WHERE turni_fts MATCH ? AND %s "
-            "GROUP BY e ORDER BY n DESC LIMIT 8" % (turni.ETICHETTA, turni.GIUNTURA, guardia),
-            (domanda,)).fetchall()
-    except Exception:  # noqa: BLE001 - FTS5 rifiuta certe query scritte a mano
-        return [], []
-    visti, esito = set(), []
-    for r in righe:
-        d = dict(r)
-        impronta = " ".join((d.get("frammento") or "").split())[:140]
-        if impronta in visti:
-            continue
-        visti.add(impronta)
-        esito.append(d)
-        if len(esito) >= limit:
-            break
-    return esito, [{"progetto": r[0] or "?", "turni": r[1]} for r in gr]
+    Le tabelle si leggono da `main`, non dalle viste temporanee di `applica`: la
+    visibilita' di sessioni e progetti la decide il `Filtro` con gli stessi id, e
+    una giuntura sulle viste faceva ripetere il controllo per ogni riga trovata."""
+    from . import turni
+
+    def vede(sessione, percorso):
+        return o.sessione_ok(sessione, percorso or "")
+    return turni.ricerca(conn, q, limit, progetto,
+                         filtro=turni.Filtro(vede, o.ok["sessions"], o.ok["projects"]))
 
 
 # --------------------------------------------------------------------------
