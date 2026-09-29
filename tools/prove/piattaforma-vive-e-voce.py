@@ -395,7 +395,6 @@ def _figlio_voce(piatt: str) -> None:
     import threading
     import urllib.error
     import urllib.request
-    from http.server import ThreadingHTTPServer
 
     from plancia import agente, api, cli, config, mcp, recap, setup_claude, store, voice
 
@@ -411,7 +410,7 @@ def _figlio_voce(piatt: str) -> None:
     store.migrate(conn)
     conn.close()
 
-    httpd = ThreadingHTTPServer(("127.0.0.1", 0), api.Handler)
+    httpd = api._Server(("127.0.0.1", 0), api.Handler)
     porta = httpd.server_address[1]
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
 

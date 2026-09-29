@@ -404,7 +404,11 @@ class _Pagina:
     def attendi(self, espressione, condizione, timeout=12, await_promise=True):
         """Ripete `espressione` finche' `condizione(valore)` e' vera. Torna
         l'ultimo valore (vero o no): chi chiama controlla di nuovo."""
-        scadenza = time.time() + timeout
+        # Le attese sono sondaggi: tornano appena la condizione e' vera, quindi un
+        # timeout largo non costa niente a chi passa. Sono triplicate perche' un
+        # runner di CI carico (o un Mac con la macchina occupata) impiega molto piu'
+        # di uno da sviluppo a chiudere una pagina e attivare un worker.
+        scadenza = time.time() + timeout * 3
         valore = None
         while time.time() < scadenza:
             valore = self.valuta(espressione, await_promise)

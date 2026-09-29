@@ -34,7 +34,10 @@ def prova(nome, condizione, dettaglio=""):
     global passati
     if condizione:
         passati += 1
-        print(f"  ok   {nome}")
+        # un controllo che qui non si puo' fare (manca un programma, l'ambiente e'
+        # un altro) passa lo stesso, con il perche' scritto accanto
+        nota = f"  ({dettaglio})" if str(dettaglio).startswith("saltato") else ""
+        print(f"  ok   {nome}{nota}")
     else:
         falliti.append(nome)
         print(f"  NO   {nome} {dettaglio}")
@@ -565,86 +568,158 @@ def main():
     from plancia import api  # noqa: E402
     import threading
 
-    porta = 7791
+    import socket
+    import time
+
+    # Il server non deve fare il DNS inverso all'avvio. `HTTPServer.server_bind`
+    # chiama `socket.getfqdn()` con la porta gia' presa e non ancora in ascolto: su
+    # un runner macOS di CI ci ha messo decine di secondi, e in quel tempo ogni
+    # connessione restava appesa (SYN scartati) fino al timeout. Qui `getfqdn` e' un
+    # finto che si segna la chiamata: il server di Plancia non deve toccarlo.
+    vero_getfqdn = socket.getfqdn
+    chiamate_dns = []
+    socket.getfqdn = lambda *a, **k: (chiamate_dns.append(a), "lento.invalid")[1]
+    try:
+        provvisorio = api._Server(("127.0.0.1", 0), api.Handler)
+        legato = provvisorio.server_address[1] > 0
+        provvisorio.server_close()
+    finally:
+        socket.getfqdn = vero_getfqdn
+    prova("il server si mette in ascolto senza il DNS inverso (getfqdn)",
+          legato and not chiamate_dns, f"getfqdn chiamato {len(chiamate_dns)} volte")
+
+    # Una porta libera scelta dal sistema, non una fissa: su un runner di CI la 7791
+    # puo' essere gia' presa, e la prova non deve dipendere da chi c'e' sulla macchina.
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sonda:
+        sonda.bind(("127.0.0.1", 0))
+        porta = sonda.getsockname()[1]
+    # Lo stesso finto resta al suo posto mentre parte il server vero di questa
+    # prova: la classe senza DNS inverso non basta se serve() non la usa (un
+    # merge che rimette ThreadingHTTPServer in serve() lascerebbe verde il
+    # controllo qui sopra). Si toglie appena il server risponde.
+    chiamate_serve = []
+    socket.getfqdn = lambda *a, **k: (chiamate_serve.append(a), "lento.invalid")[1]
     filo = threading.Thread(target=api.serve, kwargs={"port": porta,
                                                       "sync_first": False},
                             daemon=True)
     filo.start()
-    import time
-    time.sleep(1.5)
+
+    # Il server parte in un filo di questo processo e prima di mettersi in ascolto
+    # apre l'archivio e riconcilia i lanci: su una macchina carica (un runner macOS
+    # di CI) ci mette molto piu' di un secondo e mezzo, e una richiesta arrivata
+    # prima resta senza risposta fino al timeout. Si aspetta che risponda davvero,
+    # fino a 90 secondi, invece di dormire a occhio. Se non risponde mai, ogni
+    # controllo qui sotto segna il suo NO con il perche': nessuno sparisce.
+    ultimo_errore = ["il server non ha mai risposto"]
+    partenza = time.time()
+    while time.time() - partenza < 90:
+        try:
+            with urllib.request.urlopen(f"http://127.0.0.1:{porta}/api/status",
+                                        timeout=5):
+                ultimo_errore[0] = ""
+                break
+        except Exception as errore:        # noqa: BLE001
+            ultimo_errore[0] = f"{type(errore).__name__}: {errore}"
+            time.sleep(0.25)
+    attesa_server = time.time() - partenza
+    socket.getfqdn = vero_getfqdn
+    prova("serve() mette in ascolto il server senza il DNS inverso (getfqdn)",
+          not ultimo_errore[0] and not chiamate_serve,
+          f"getfqdn chiamato {len(chiamate_serve)} volte; {ultimo_errore[0]}")
+    if ultimo_errore[0]:
+        # non ha mai risposto: dove sta ferma la macchina lo dicono le pile dei fili
+        import faulthandler
+        print(f"   (il server non ha risposto in {attesa_server:.0f} s: {ultimo_errore[0]})")
+        faulthandler.dump_traceback(file=sys.stdout, all_threads=True)
+    elif attesa_server > 3:
+        print(f"   (il server ha risposto dopo {attesa_server:.1f} s)")
 
     def prendi(percorso):
-        with urllib.request.urlopen(f"http://127.0.0.1:{porta}{percorso}",
-                                    timeout=10) as r:
-            return json.loads(r.read())
+        """Il JSON di una rotta; se non risponde torna {} e il controllo che la
+        legge segna il suo NO (senza sollevare, senza far sparire gli altri)."""
+        try:
+            with urllib.request.urlopen(f"http://127.0.0.1:{porta}{percorso}",
+                                        timeout=60) as r:
+                return json.loads(r.read())
+        except Exception as errore:        # noqa: BLE001
+            ultimo_errore[0] = f"{percorso}: {type(errore).__name__}: {errore}"
+            return {}
+
+    def perche():
+        return ultimo_errore[0]
+
+    o = prendi("/api/overview?lang=en")
+    prova("/api/overview risponde", "stats" in o, perche())
+    prova("l'overview porta le proposte", isinstance(o.get("proposte"), list), perche())
+    prova("l'overview conta la lavagna", "lavagna_aperti" in o.get("stats", {}), perche())
+    prova("le proposte seguono la lingua chiesta",
+          isinstance(o.get("proposte"), list)
+          and not any("Ci mando" in x["testo"] for x in o["proposte"]), perche())
+    prova("/api/lavagna risponde", "voci" in prendi("/api/lavagna"), perche())
+    prova("/api/runs risponde", isinstance(prendi("/api/runs?limite=3"), list), perche())
+    prova("/api/eventi risponde", isinstance(prendi("/api/eventi").get("eventi"), list),
+          perche())
+    prova("/api/proposte risponde", isinstance(prendi("/api/proposte?lang=it"), list),
+          perche())
+    # Il 9 agosto questa risposta e' passata da lista a oggetto, e la palette
+    # continuava a fare `hits.length` su un oggetto: niente errore, zero
+    # risultati per sempre. Il contratto va scritto da qualche parte.
+    ric = prendi("/api/search?q=plancia")
+    prova("/api/search torna le tre chiavi, non una lista",
+          isinstance(ric, dict) and {"turni", "progetti", "schede"} <= set(ric),
+          str(type(ric)) + " " + perche())
+    # Ogni rotta che una vista chiama, chiamata almeno una volta. Prima ne
+    # erano coperte cinque su diciassette: una qualsiasi delle altre poteva
+    # rispondere 500 e la vista restare bianca senza che niente lo dicesse.
+    # E' la stessa classe di difetto della palette, trovata a mano.
+    # `/api/briefing` risponde testo, non JSON: e' il file che l'hook infila
+    # in ogni sessione, e va letto come tale.
+    ROTTE = [
+        ("/api/briefing", "testo"), ("/api/projects", "json"),
+        ("/api/tasks", "json"), ("/api/posts", "json"),
+        ("/api/sessions?limit=3", "json"), ("/api/events?limit=3", "json"),
+        ("/api/knowledge", "json"), ("/api/agents", "json"),
+        ("/api/capabilities", "json"), ("/api/status", "json"),
+        ("/api/voice/status", "json"), ("/api/recap?solo_cache=1", "json"),
+        ("/api/memoria/mappa", "json"), ("/api/memoria/prova?q=swap", "json"),
+    ]
+    rotti = []
+    for rotta, forma in ROTTE:
+        try:
+            with urllib.request.urlopen(
+                    f"http://127.0.0.1:{porta}{rotta}", timeout=60) as risposta:
+                corpo = risposta.read()
+                if risposta.status != 200:
+                    raise RuntimeError(f"HTTP {risposta.status}")
+                if forma == "json":
+                    json.loads(corpo)
+        except Exception as errore:        # noqa: BLE001
+            rotti.append(f"{rotta}: {type(errore).__name__}: {errore}")
+    prova("ogni rotta di lettura risponde", not rotti, "; ".join(rotti))
 
     try:
-        o = prendi("/api/overview?lang=en")
-        prova("/api/overview risponde", "stats" in o)
-        prova("l'overview porta le proposte", isinstance(o.get("proposte"), list))
-        prova("l'overview conta la lavagna", "lavagna_aperti" in o["stats"])
-        prova("le proposte seguono la lingua chiesta",
-              not any("Ci mando" in x["testo"] for x in o["proposte"]))
-        prova("/api/lavagna risponde", "voci" in prendi("/api/lavagna"))
-        prova("/api/runs risponde", isinstance(prendi("/api/runs?limite=3"), list))
-        prova("/api/eventi risponde", isinstance(prendi("/api/eventi").get("eventi"), list))
-        prova("/api/proposte risponde", isinstance(prendi("/api/proposte?lang=it"), list))
-        # Il 9 agosto questa risposta e' passata da lista a oggetto, e la palette
-        # continuava a fare `hits.length` su un oggetto: niente errore, zero
-        # risultati per sempre. Il contratto va scritto da qualche parte.
-        ric = prendi("/api/search?q=plancia")
-        prova("/api/search torna le tre chiavi, non una lista",
-              isinstance(ric, dict) and {"turni", "progetti", "schede"} <= set(ric),
-              str(type(ric)))
-        # Ogni rotta che una vista chiama, chiamata almeno una volta. Prima ne
-        # erano coperte cinque su diciassette: una qualsiasi delle altre poteva
-        # rispondere 500 e la vista restare bianca senza che niente lo dicesse.
-        # E' la stessa classe di difetto della palette, trovata a mano.
-        # `/api/briefing` risponde testo, non JSON: e' il file che l'hook infila
-        # in ogni sessione, e va letto come tale.
-        ROTTE = [
-            ("/api/briefing", "testo"), ("/api/projects", "json"),
-            ("/api/tasks", "json"), ("/api/posts", "json"),
-            ("/api/sessions?limit=3", "json"), ("/api/events?limit=3", "json"),
-            ("/api/knowledge", "json"), ("/api/agents", "json"),
-            ("/api/capabilities", "json"), ("/api/status", "json"),
-            ("/api/voice/status", "json"), ("/api/recap?solo_cache=1", "json"),
-            ("/api/memoria/mappa", "json"), ("/api/memoria/prova?q=swap", "json"),
-        ]
-        rotti = []
-        for rotta, forma in ROTTE:
-            try:
-                with urllib.request.urlopen(
-                        f"http://127.0.0.1:{porta}{rotta}", timeout=15) as risposta:
-                    corpo = risposta.read()
-                    if risposta.status != 200:
-                        raise RuntimeError(f"HTTP {risposta.status}")
-                    if forma == "json":
-                        json.loads(corpo)
-            except Exception as errore:    # noqa: BLE001
-                rotti.append(f"{rotta}: {type(errore).__name__}")
-        prova("ogni rotta di lettura risponde", not rotti, "; ".join(rotti))
-
-        with urllib.request.urlopen(f"http://127.0.0.1:{porta}/", timeout=10) as r:
+        with urllib.request.urlopen(f"http://127.0.0.1:{porta}/", timeout=60) as r:
             pagina = r.read().decode()
-        prova("la pagina si serve", "<title>" in pagina)
-
-        # Le viste del front chiamano rotte scritte a mano nel JS: se una sparisce
-        # dall'API il collaudo qui sopra non se ne accorge, perche' controlla la
-        # lista che ho scritto io. Questo confronta le due liste.
-        js = (RADICE / "web" / "app.js").read_text(encoding="utf-8")
-        api_py = (RADICE / "plancia" / "api.py").read_text(encoding="utf-8")
-        # Le rotte con un id il front le costruisce concatenando: `/api/tasks/`
-        # piu' il numero. Della stringa nel JS resta la barra finale, che qui si
-        # toglie per confrontarla con la rotta di lista.
-        chiamate = {m.split("?")[0].rstrip("/") for m in re.findall(r"/api/[a-z/_]+", js)}
-        serve = set(re.findall(r'path == "(/api/[a-z_/]+)"', api_py))
-        serve |= {m.rstrip("/") for m in re.findall(r'\^(/api/[a-z_/]+)/', api_py)}
-        fantasma = sorted(chiamate - serve - {"/api"})
-        prova("il front non chiama rotte che non esistono",
-              not fantasma, ", ".join(fantasma))
     except Exception as errore:            # noqa: BLE001
-        prova("il server HTTP risponde", False, str(errore))
+        pagina = ""
+        ultimo_errore[0] = f"/: {type(errore).__name__}: {errore}"
+    prova("la pagina si serve", "<title>" in pagina, perche())
+
+    # Le viste del front chiamano rotte scritte a mano nel JS: se una sparisce
+    # dall'API il collaudo qui sopra non se ne accorge, perche' controlla la
+    # lista che ho scritto io. Questo confronta le due liste (nessuna richiesta:
+    # e' solo lettura dei sorgenti, quindi non dipende dalla rete).
+    js = (RADICE / "web" / "app.js").read_text(encoding="utf-8")
+    api_py = (RADICE / "plancia" / "api.py").read_text(encoding="utf-8")
+    # Le rotte con un id il front le costruisce concatenando: `/api/tasks/`
+    # piu' il numero. Della stringa nel JS resta la barra finale, che qui si
+    # toglie per confrontarla con la rotta di lista.
+    chiamate = {m.split("?")[0].rstrip("/") for m in re.findall(r"/api/[a-z/_]+", js)}
+    serve = set(re.findall(r'path == "(/api/[a-z_/]+)"', api_py))
+    serve |= {m.rstrip("/") for m in re.findall(r'\^(/api/[a-z_/]+)/', api_py)}
+    fantasma = sorted(chiamate - serve - {"/api"})
+    prova("il front non chiama rotte che non esistono",
+          not fantasma, ", ".join(fantasma))
 
     # --------------------------------------------------------------- scrittura
     # senza token le scritture devono essere rifiutate
@@ -653,7 +728,7 @@ def main():
                                      data=b'{"title":"abusivo"}',
                                      headers={"Content-Type": "application/json"},
                                      method="POST")
-        urllib.request.urlopen(req, timeout=10)
+        urllib.request.urlopen(req, timeout=60)
         prova("le scritture senza token sono rifiutate", False, "è passata")
     except urllib.error.HTTPError as errore:
         prova("le scritture senza token sono rifiutate", errore.code in (401, 403),

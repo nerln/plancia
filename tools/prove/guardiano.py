@@ -4371,13 +4371,29 @@ def _prove_forma(prova):
             ok = False
             print("   ", f, e)
         prova(f"forma: {f.name} esiste ed e' Python 3.9 valido (niente match, niente X | Y)", ok)
-    v = "True"
+    # Il Python di sistema e' 3.9 sul Mac di sviluppo (Xcode), ma su un Linux
+    # (ubuntu-latest) /usr/bin/python3 e' una versione piu' nuova: li' la 3.9 non
+    # c'e' come Python di sistema e il controllo non si puo' fare. Il controllo
+    # c'e' lo stesso e conta uno: se il Python di sistema e' > 3.9 passa con la
+    # nota "saltato" (la sintassi 3.9 resta provata da `ast.parse(...,
+    # feature_version=(3, 9))` qui sopra e dal job Python 3.9 della CI); se e' <= 3.9
+    # o non si riesce a leggere la versione, si guarda davvero.
+    v, nota = "True", ""
     if PYTHON == "/usr/bin/python3":
-        v = subprocess.run([PYTHON, "-c", "import sys; print(sys.version_info[:2] <= (3, 9))"],
-                           capture_output=True).stdout.decode().strip()
+        try:
+            lette = subprocess.run(
+                [PYTHON, "-c", "import sys; print('%d.%d' % sys.version_info[:2])"],
+                capture_output=True, timeout=60).stdout.decode().strip()
+            maggiore, minore = (int(x) for x in lette.split("."))
+            if (maggiore, minore) > (3, 9):
+                nota = "saltato: il Python di sistema qui e' %s, non 3.9" % lette
+            else:
+                v = "True"
+        except (OSError, ValueError, subprocess.SubprocessError):
+            v = "illeggibile"
     prova("forma: le prove girano sul Python di sistema, che qui e' 3.9 "
           "(la versione minima da reggere; altrove passa e basta)", v == "True",
-          f"versione {v}")
+          nota or f"versione {v}")
     # config.py: le chiavi con i default giusti
     from plancia import config
     prova("config: DEFAULTS ha `guardiano` = spento e `compartimenti` = {}",

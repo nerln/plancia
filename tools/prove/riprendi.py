@@ -411,8 +411,23 @@ def _prova_apri_stdout_pulito(prova):
 # --------------------------------------------------------------------------
 
 def _prova_cantiere(prova):
+    """Prova l'argv di `cantiere._comando`, che senza `claude` o `codex` installati
+    solleva (e in CI non ci sono). Qui l'argv si costruisce SEMPRE con due
+    eseguibili finti (mai lanciati): la prova guarda l'ordine e le opzioni, non se
+    la macchina che la fa ha davvero i due programmi."""
     from plancia import cantiere
 
+    vero_codex, vero_claude = cantiere.codex_bin, cantiere.recap.claude_bin
+    cantiere.codex_bin = lambda: "/finto/bin/codex"
+    cantiere.recap.claude_bin = lambda: "/finto/bin/claude"
+    try:
+        _prova_cantiere_argv(prova, cantiere)
+    finally:
+        cantiere.codex_bin, cantiere.recap.claude_bin = vero_codex, vero_claude
+    _prova_cantiere_prompt(prova, cantiere)
+
+
+def _prova_cantiere_argv(prova, cantiere):
     argv = cantiere._comando("claude", True, "/tmp/prova", sessione="sid-riprendi")
     prova("_comando(claude, sessione=...) porta --resume e --fork-session",
           "--resume" in argv and "--fork-session" in argv and "sid-riprendi" in argv, str(argv))
@@ -473,6 +488,9 @@ def _prova_cantiere(prova):
           "--permission-mode" in argv_esegui and
           all(t in argv_esegui for t in cantiere.TOOL_SCRITTURA), str(argv_esegui))
 
+
+
+def _prova_cantiere_prompt(prova, cantiere):
     # componi_prompt si accorcia quando c'è una sessione
     import sqlite3
     from plancia import store
@@ -692,19 +710,21 @@ def _prova_sessione_cwd_vera(prova):
 # --------------------------------------------------------------------------
 
 def esegui(prova) -> None:
-    _prova_stato_claude(prova)
-    _prova_stato_row_senza_colonna(prova)
-    _prova_stato_codex(prova)
-    _prova_claude_vivo_fonti(prova)
-    _prova_viva_niente_comando(prova)
-    _prova_persa_comando(prova)
-    _prova_apri(prova)
-    _prova_apri_stdout_pulito(prova)
-    _prova_cantiere(prova)
-    _prova_backfill(prova)
-    _prova_lavagna(prova)
-    _prova_lavagna_sync_porta_sessione(prova)
-    _prova_sessione_cwd_vera(prova)
+    # Un gruppo che cade su un'eccezione e' un rosso col suo nome e non si porta
+    # via i gruppi dopo di lui (il conteggio delle prove nel README dipende da
+    # quante ne girano tutte).
+    for gruppo in (_prova_stato_claude, _prova_stato_row_senza_colonna,
+                   _prova_stato_codex, _prova_claude_vivo_fonti,
+                   _prova_viva_niente_comando, _prova_persa_comando,
+                   _prova_apri, _prova_apri_stdout_pulito, _prova_cantiere,
+                   _prova_backfill, _prova_lavagna,
+                   _prova_lavagna_sync_porta_sessione,
+                   _prova_sessione_cwd_vera):
+        try:
+            gruppo(prova)
+        except Exception as errore:  # noqa: BLE001
+            prova("riprendi: %s gira fino in fondo" % gruppo.__name__.lstrip("_"),
+                  False, "%s: %s" % (type(errore).__name__, errore))
 
 
 if __name__ == "__main__":

@@ -13,13 +13,12 @@ import re
 import threading
 import urllib.error
 import urllib.request
-from http.server import ThreadingHTTPServer
 
 
 def _prova_mime_e_sottocartelle(prova):
     from plancia import api
 
-    httpd = ThreadingHTTPServer(("127.0.0.1", 0), api.Handler)
+    httpd = api._Server(("127.0.0.1", 0), api.Handler)
     porta = httpd.server_address[1]
     filo = threading.Thread(target=httpd.serve_forever, daemon=True)
     filo.start()

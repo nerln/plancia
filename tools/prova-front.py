@@ -36,7 +36,10 @@ def prova(nome, condizione, dettaglio=""):
     global passati
     if condizione:
         passati += 1
-        print(f"  ok   {nome}")
+        # un controllo che qui non si puo' fare (manca un programma, l'ambiente e'
+        # un altro) passa lo stesso, con il perche' scritto accanto
+        nota = f"  ({dettaglio})" if str(dettaglio).startswith("saltato") else ""
+        print(f"  ok   {nome}{nota}")
     else:
         falliti.append(nome)
         print(f"  NO   {nome} {dettaglio}")

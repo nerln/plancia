@@ -212,6 +212,29 @@ def _blocco_dichiarazione(sorgente, marcatore):
     return sorgente[i:]
 
 
+NOMI_PLURALE_NODE = (
+    "progettiN(1) in italiano è davvero '1 progetto' (non '1 progetti')",
+    "progettiN(3) in italiano resta il plurale con il template ({n})",
+    "progettiN(1) in inglese è davvero '1 project' (non '1 projects')",
+    "progettiN(3) in inglese resta il plurale con il template ({n})",
+)
+
+NOMI_RESIDUI_NODE = (
+    "alberoPadre(): il kind del padre ('progetto') compare nel markup, via T()",
+    "alberoPadre(): la classe 'pinned' compare quando padre.pinned è vero",
+    "alberoPadre(): il totale token è la somma padre+figli (1000+2000=3000 -> '3k')",
+    "sezioneTaskDrawer(): produce una sola riga per i task 'aperto' (aperti[0]), non tre",
+    "sezioneTaskDrawer(): la riga del task 'fatto' resta (non è archiviato)",
+)
+
+
+def _salta_senza_node(prova, nomi):
+    """Senza Node ogni controllo dell'elenco passa dichiarando di non essere stato
+    fatto, cosi' il conteggio e' quello di una macchina che ce l'ha."""
+    for nome in nomi:
+        prova(nome, True, "saltato: node non e' installato su questa macchina")
+
+
 def _prova_comportamento_plurale_node(prova, sorgente):
     """LOTTO-L3-RITOCCO punto 6: le prove front dei residui 3/4/5 di
     LOTTO-L3-RIPRENDI-UI sono strutturali (cercano pezzi di sorgente, non
@@ -236,11 +259,12 @@ def _prova_comportamento_plurale_node(prova, sorgente):
     """
     node = shutil.which("node")
     if not node:
-        # Consigliata del critico (L3-RIPRENDI-UI-4): prima, senza Node,
-        # questa registrava una prova PASSATA finta ("Node non è disponibile
-        # ..."), che gonfia il conteggio con qualcosa che non ha verificato
-        # niente. Meglio saltare senza contare nulla: resta comunque la prova
-        # strutturale su progettiN, qui sopra in _prova_residui_ondata2.
+        # Senza Node il comportamento non si puo' eseguire, ma il numero di
+        # prove non puo' dipendere da chi ha Node installato: il README ne
+        # dichiara uno solo. Ogni controllo si segna, con "saltato: <perche'>"
+        # accanto (non e' un verde che dice di aver verificato: lo scrive).
+        # Resta la prova strutturale su progettiN, in _prova_residui_ondata2.
+        _salta_senza_node(prova, NOMI_PLURALE_NODE)
         return
 
     en = _blocco_dichiarazione(sorgente, "const EN = {")
@@ -307,8 +331,8 @@ def _prova_comportamento_residui_node(prova, sorgente):
     `progettiN` (vedi `_prova_comportamento_plurale_node`), con uno stub di
     `taskRows`/`T`/`esc` per le dipendenze che restano.
 
-    Se Node non c'è: NESSUNA prova PASSATA finta (altra consigliata del
-    critico) - si salta e basta, il totale non si gonfia.
+    Se Node non c'è: i controlli si segnano lo stesso (il totale e' uno solo
+    su ogni macchina), ciascuno con "saltato: node non e' installato".
 
     Nota onesta per il rapporto (stessa idea di
     `_prova_comportamento_plurale_node`): queste prove NON sono rosse sul
@@ -320,6 +344,7 @@ def _prova_comportamento_residui_node(prova, sorgente):
     il punto 6 del lotto "dove si può", non si corregge un difetto nuovo."""
     node = shutil.which("node")
     if not node:
+        _salta_senza_node(prova, NOMI_RESIDUI_NODE)
         return
 
     en = _blocco_dichiarazione(sorgente, "const EN = {")

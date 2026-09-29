@@ -21,7 +21,6 @@ usa).
 import json
 import threading
 import urllib.request
-from http.server import ThreadingHTTPServer
 
 
 def _progetto(conn, key, **campi):
@@ -90,7 +89,7 @@ def esegui(prova) -> None:
         )
     conn.commit()
 
-    httpd = ThreadingHTTPServer(("127.0.0.1", 0), api.Handler)
+    httpd = api._Server(("127.0.0.1", 0), api.Handler)
     porta = httpd.server_address[1]
     filo = threading.Thread(target=httpd.serve_forever, daemon=True)
     filo.start()
