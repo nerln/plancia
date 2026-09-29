@@ -21,6 +21,14 @@ chiamata, la rotazione del registro, il sottocomando `plancia guardiano` e
 la compatibilita' con Python 3.9. Le prove 4 e 5 (briefing/richiamo e boa)
 sono di altri lotti.
 
+Il terzo giro aggiunge: lo specchio delle cartelle dei nominati sotto
+`~/.claude/projects` (trascrizioni e memoria: `_prove_specchio`), l'autoprotezione
+contro la CLI di Plancia e le altre vie di scrittura dei file del guardiano
+(`_prove_autoprotezione_cli`), il controllo del valore di `plancia config
+guardiano` (`_prove_cli_config`), i falsi positivi di Bash per un nominato e il
+motivo del diniego per `/tmp` (`_prove_falsi_positivi_bash`) e la ricerca nelle
+trascrizioni di tutte le sessioni (`_prove_ricerca_trascrizioni`).
+
 Gli strumenti di sessione si provano con gli id che l'app manda davvero
 (`local_<uuid>`, nomi, `self`, `main`), risolti da un registro dell'app finto
 nella HOME temporanea (`claude-code-sessions/*/*/local_<uuid>.json`), con l'id
@@ -205,16 +213,17 @@ class Ambiente:
              "PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "LANG": "C.UTF-8"}
         return e
 
-    def esegui_testo(self, testo, interprete=None):
+    def esegui_testo(self, testo, interprete=None, env=None):
         t0 = time.time()
         p = subprocess.run([interprete or PYTHON, str(GUARDIANO)],
-                           input=testo, capture_output=True, env=self.env(),
+                           input=testo, capture_output=True,
+                           env=env if env is not None else self.env(),
                            timeout=60)
         return Esito(p.returncode, p.stdout.decode("utf-8", "replace"),
                      p.stderr.decode("utf-8", "replace"), time.time() - t0)
 
-    def chiama(self, payload):
-        return self.esegui_testo(json.dumps(payload).encode("utf-8"))
+    def chiama(self, payload, env=None):
+        return self.esegui_testo(json.dumps(payload).encode("utf-8"), env=env)
 
     def trascrizione(self, aperta_in, sid, madre=None, agente="a1", workflows=False):
         base = self.claude / "projects" / _codifica(aperta_in)
@@ -340,8 +349,11 @@ def _prove_nominato(prova, a: Ambiente):
 
     r = alfa("Read", {"file_path": fuori})
     prova("1: alfa, Read fuori dalle sue cartelle: negato", r.negato, repr(r))
-    prova("1: il motivo dice il compartimento e a chi appartiene il percorso",
-          "alfa" in r.motivo and fuori in r.motivo and "predefinito" in r.motivo, r.motivo)
+    prova("1: il motivo dice il compartimento e il percorso negato",
+          "alfa" in r.motivo and fuori in r.motivo, r.motivo)
+    r = alfa("Read", {"file_path": "/opt/altro/dato.txt"})
+    prova("1: ...e per un percorso che non e' di un nominato ne' temporaneo dice che appartiene "
+          "al predefinito", r.negato and "appartiene a predefinito" in r.motivo, r.motivo)
     r = alfa("Read", {"file_path": dentro})
     prova("1: alfa, Read dentro la sua cartella: ammesso", r.ammesso, repr(r))
     prova("1: alfa, Read nella seconda cartella di alfa: ammesso",
@@ -835,8 +847,10 @@ def _prove_sessioni_app(prova, a: Ambiente):
 
 
 def _prove_misura(prova, a: Ambiente):
-    """Le chiamate senza bersaglio che il predefinito puo' fare: non si negano,
-    ma in solo-registro lasciano una riga."""
+    """Le chiamate senza bersaglio che il predefinito puo' fare (`list_sessions`,
+    `ListAgents`) non si negano, ma in solo-registro lasciano una riga.
+    `search_session_transcripts` invece cerca nel CONTENUTO di tutte le sessioni:
+    si nega (vedi `_prove_ricerca_trascrizioni`); qui se ne controlla solo la riga."""
     ss = "mcp__ccd_session_mgmt__"
     chiamate = [(ss + "list_sessions", {}), (ss + "search_session_transcripts", {"query": "x"}),
                 ("ListAgents", {})]
@@ -854,8 +868,11 @@ def _prove_misura(prova, a: Ambiente):
     a.togli_config()
     a.scrivi_config(a.config("bloccante"))
     esiti = [a.chiama(a.pl(t, ti, sid=S_COMUNE)) for t, ti in chiamate]
-    prova("misura: in bloccante non si nega (limite dichiarato) e non si scrive niente",
-          all(e.ammesso for e in esiti) and a.registro() == [], repr(esiti))
+    righe = a.registro()
+    prova("misura: in bloccante list_sessions e ListAgents non si negano (limite dichiarato) e non "
+          "scrivono niente; search_session_transcripts si nega e lascia la sua riga `negato`",
+          esiti[0].ammesso and esiti[2].ammesso and esiti[1].negato
+          and len(righe) == 1 and righe[0]["esito"] == "negato", repr(esiti) + str(righe))
     a.togli_config()
     cfg = a.config("solo-registro")
     cfg["compartimenti"] = {"predefinito": cfg["compartimenti"]["predefinito"]}
@@ -1395,6 +1412,401 @@ def _prove_cli(prova, a: Ambiente):
           f"{codici}")
 
 
+def _prove_specchio(prova, a: Ambiente):
+    """Le trascrizioni e la memoria di un compartimento stanno sotto
+    `<CLAUDE_CONFIG_DIR o ~/.claude>/projects/<cartella codificata>`: sono suo
+    lavoro come le sue cartelle. Il predefinito non le legge, ne' le cerca."""
+    a.togli_config()
+    a.scrivi_config(a.config("bloccante"))
+    proj = a.claude / "projects"
+    enc_alfa, enc_beta, enc_com = _codifica(a.alfa1), _codifica(a.beta1), _codifica(a.comune)
+    mem_alfa = proj / enc_alfa / "memory" / "MEMORY.md"
+    trascr_alfa = proj / enc_alfa / f"{S_ALFA_LIBERA}.jsonl"
+    sub_alfa = proj / enc_alfa / S_ALFA_LIBERA / "subagents" / "agent-q.jsonl"
+    disc_alfa = proj / (enc_alfa + "-sotto") / "d.jsonl"       # aperta in alfa/sotto
+    sorella = proj / (enc_alfa + "altro") / "s.jsonl"          # alfa-unoaltro: non e' di alfa
+    mem_beta = proj / enc_beta / "memory" / "MEMORY.md"
+    propria = proj / enc_com / "c.jsonl"
+    mem_com = proj / enc_com / "memory" / "MEMORY.md"
+    for f in (mem_alfa, trascr_alfa, sub_alfa, disc_alfa, sorella, mem_beta, propria, mem_com):
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text("segreto-di-" + f.parent.name[-12:], "utf-8")
+
+    def pred(tool, ti, **kw):
+        kw.setdefault("aperta_in", a.comune)
+        return a.chiama(a.pl(tool, ti, sid=S_COMUNE, **kw))
+
+    for etichetta, f in (("la memoria di alfa", mem_alfa), ("una trascrizione di alfa", trascr_alfa),
+                         ("un file di un subagente di alfa", sub_alfa),
+                         ("la cartella di una discendente di alfa (alfa/sotto)", disc_alfa),
+                         ("la memoria di beta", mem_beta)):
+        r = pred("Read", {"file_path": str(f)})
+        prova(f"specchio: predefinito, Read di {etichetta} sotto ~/.claude/projects: negato",
+              r.negato and "appartiene a" in r.motivo, repr(r))
+    r = pred("Read", {"file_path": str(mem_alfa)})
+    prova("specchio: ...il motivo dice a quale compartimento appartiene", "alfa" in r.motivo, r.motivo)
+    prova("specchio: predefinito, Read di una cartella sorella con lo stesso inizio ma senza il "
+          "trattino di confine (alfa-unoaltro): ammesso",
+          pred("Read", {"file_path": str(sorella)}).ammesso)
+    prova("specchio: predefinito, Read della propria trascrizione e della propria memoria: ammesso",
+          pred("Read", {"file_path": str(propria)}).ammesso
+          and pred("Read", {"file_path": str(mem_com)}).ammesso)
+    prova("specchio: predefinito, Write nella memoria di alfa: negato",
+          pred("Write", {"file_path": str(mem_alfa), "content": "x"}).negato)
+    prova("specchio: predefinito, Edit di una trascrizione di beta: negato",
+          pred("Edit", {"file_path": str(mem_beta), "old_string": "a", "new_string": "b"}).negato)
+    # ricerche
+    r = pred("Grep", {"pattern": "segreto", "path": str(proj)})
+    prova("specchio: predefinito, Grep che parte da ~/.claude/projects: negato (include lo "
+          "specchio di alfa), con l'invito a restringere", r.negato and "restringi" in r.motivo, repr(r))
+    prova("specchio: predefinito, Grep da ~/.claude (antenato): negato",
+          pred("Grep", {"pattern": "segreto", "path": str(a.claude)}).negato)
+    prova("specchio: predefinito, Grep nella propria cartella di progetto: ammesso",
+          pred("Grep", {"pattern": "segreto", "path": str(proj / enc_com)}).ammesso)
+    prova("specchio: predefinito, Grep nella cartella di progetto di alfa: negato",
+          pred("Grep", {"pattern": "segreto", "path": str(proj / enc_alfa)}).negato)
+    prova("specchio: predefinito, Glob assoluto ~/.claude/projects/*/*.jsonl: negato",
+          pred("Glob", {"pattern": f"{proj}/*/*.jsonl"}).negato)
+    prova("specchio: predefinito, Glob con path=~/.claude/projects: negato",
+          pred("Glob", {"pattern": "**/*.jsonl", "path": str(proj)}).negato)
+    for cmd in (f"grep -r segreto {proj}", f"cat {mem_alfa}", f"cat {proj}/*/memory/MEMORY.md",
+                f"find {a.claude} -name '*.jsonl'", f"rg segreto {proj}", f"ls -R {proj}",
+                f"cd {proj} && grep -rn segreto ."):
+        r = pred("Bash", {"command": cmd})
+        prova(f"specchio: predefinito, Bash `{cmd[:52]}`: negato", r.negato, repr(r))
+    for cmd in (f"cat {propria}", f"grep -r segreto {proj / enc_com}", f"ls {proj}"):
+        r = pred("Bash", {"command": cmd})
+        prova(f"specchio: predefinito, Bash `{cmd[:52]}`: ammesso (la propria cartella; `ls` non "
+              "e' ricorsivo, limite dichiarato)", r.ammesso, repr(r))
+    # un nominato legge solo le sue
+    def alfa(tool, ti):
+        return a.chiama(a.pl(tool, ti, sid=S_ALFA_LIBERA, aperta_in=a.alfa1))
+    prova("specchio: alfa (aperta nella sua cartella), Read della propria memoria: ammesso",
+          alfa("Read", {"file_path": str(mem_alfa)}).ammesso)
+    prova("specchio: alfa, Read della memoria di beta: negato",
+          alfa("Read", {"file_path": str(mem_beta)}).negato)
+    prova("specchio: alfa, Grep che parte da ~/.claude/projects: negato",
+          alfa("Grep", {"pattern": "x", "path": str(proj)}).negato)
+    prova("specchio: alfa, Bash `grep -r x ~/.claude/projects`: negato",
+          alfa("Bash", {"command": f"grep -r x {proj}"}).negato)
+    # senza CLAUDE_CONFIG_DIR vale ~/.claude
+    env = dict(a.env())
+    env.pop("CLAUDE_CONFIG_DIR", None)
+    home_proj = a.home / ".claude" / "projects" / enc_alfa
+    home_proj.mkdir(parents=True, exist_ok=True)
+    (home_proj / "memory").mkdir(exist_ok=True)
+    (home_proj / "memory" / "MEMORY.md").write_text("x", "utf-8")
+    r = a.chiama(a.pl("Read", {"file_path": str(home_proj / "memory" / "MEMORY.md")},
+                      sid=S_COMUNE, aperta_in=a.comune), env=env)
+    prova("specchio: senza CLAUDE_CONFIG_DIR la cartella e' ~/.claude: Read della memoria di alfa "
+          "negata", r.negato, repr(r))
+    r = a.chiama(a.pl("Read", {"file_path": str(mem_alfa)}, sid=S_COMUNE, aperta_in=a.comune), env=env)
+    prova("specchio: ...e in quel caso una CLAUDE_CONFIG_DIR diversa non e' quella in uso (ammesso)",
+          r.ammesso, repr(r))
+    # la funzione che E1 riusera'
+    try:
+        sys.path.insert(0, str(RADICE))
+        cm = importlib.import_module("plancia.compartimenti")
+        importlib.reload(cm)
+        cfg = cm.valida_compartimenti(a.config()["compartimenti"])
+        amb = cm.Ambito(cfg, home=str(a.home), data_dir=str(a.dati), claude_dir=str(a.claude))
+        p1 = cm.proprietario_specchio(os.path.realpath(str(mem_alfa)), amb)
+        p2 = cm.proprietario_specchio(os.path.realpath(str(propria)), amb)
+        p3 = cm.proprietario_specchio(os.path.realpath(str(sorella)), amb)
+        ok = (p1 == "alfa" and p2 is None and p3 is None)
+    except Exception as exc:  # noqa: BLE001
+        ok, p1, p2, p3 = False, exc, None, None
+    finally:
+        try:
+            sys.path.remove(str(RADICE))
+        except ValueError:
+            pass
+    prova("specchio: `compartimenti.proprietario_specchio` (per E1) dice a chi appartiene "
+          "un percorso sotto projects: alfa, nessuno, nessuno", ok, f"{p1!r} {p2!r} {p3!r}")
+    a.togli_config()
+
+
+def _prove_autoprotezione_cli(prova, a: Ambiente):
+    """Il guardiano non si spegne con la CLI di Plancia ne' con un comando che
+    scrive i suoi file per altre vie. Negato a TUTTE le sessioni. Euristico e
+    dichiarato: chi vuole aggirarlo ci riesce, il caso ordinario si chiude."""
+    a.togli_config()
+    a.scrivi_config(a.config("bloccante"))
+    a.chiama(a.pl("Read", {"file_path": str(a.comune / "nota.txt")}, sid=S_COMUNE))  # scrive la copia
+    config, copia = a.dati / "config.json", a.dati / "compartimenti.ultima-valida.json"
+    log = a.dati / "guardiano.log"
+    log.write_text("", "utf-8")
+    prova("autoprotezione-cli: la copia esiste (il bloccante l'ha scritta)", copia.exists())
+
+    def pred(cmd):
+        return a.chiama(a.pl("Bash", {"command": cmd}, sid=S_COMUNE, aperta_in=a.progetto))
+
+    def alfa(cmd):
+        return a.chiama(a.pl("Bash", {"command": cmd}, sid=S_ALFA_LIBERA, aperta_in=a.alfa1))
+
+    spegne = [
+        "plancia config guardiano spento",
+        "./bin/plancia config guardiano spento",
+        f"{RADICE}/bin/plancia config guardiano solo-registro",
+        "python3 -m plancia.cli config guardiano spento",
+        "python3 bin/plancia config guardiano spento",
+        "python3 plancia/cli.py config guardiano spento",
+        "PLANCIA_HOME=/x plancia config guardiano spento",
+        "env PLANCIA_HOME=/x plancia config guardiano spento",
+        "cd /x && plancia config guardiano spento",
+        "plancia config guardiano spento && plancia guardiano --stato",
+        "plancia config compartimenti '{}'",
+        "plancia config strumenti_drive '[]'",
+        "plancia config \"guardiano\" \"spento\"",
+        "python3 -c \"from plancia import config; c = config.load_config(); c['guardiano'] = 'spento'; config.save_config(c)\"",
+        "python3 - <<'EOF'\nfrom plancia import config\nc = config.load_config()\nc['guardiano'] = 'spento'\nconfig.save_config(c)\nEOF",
+        f"python3 -c \"open('{config}', 'w').write('{{}}')\"",
+        f"python3 -c \"import json; json.dump({{}}, open('{config}', 'w'))\"",
+        f"python3 -c \"import os; os.remove('{copia}')\"",
+        f"python3 -c \"from pathlib import Path; Path('{config}').write_text('{{}}')\"",
+        f"sed -i '' s/bloccante/spento/ {config}",
+        f"echo '{{}}' > {config}",
+        f"echo '{{}}' >| {config}",
+        f": > {log}",
+        f"cat /dev/null > {log}",
+        f"printf x >> {log}",
+        f"echo x | tee {config}",
+        f"echo x | tee -a {log}",
+        f"truncate -s 0 {log}",
+        f"cp /dev/null {config}",
+        f"cp x.json {a.dati}/",
+        f"cp {a.manifesto} {config}",
+        f"install -m 600 x.json {config}",
+        f"rsync x.json {config}",
+        f"perl -pi -e 's/a/b/' {config}",
+        f"dd if=/dev/null of={config}",
+        f"rm {log}",
+        f"rm -rf {a.dati}",
+        f"mv {config} {config}.old",
+        f"mv x.json {a.dati}/",
+        f"ln -sf /dev/null {config}",
+        f"chmod 000 {config}",
+    ]
+    # `cp x.json <dati>/` non tocca config.json (nome diverso): si prova sotto;
+    # qui il file ha il nome di uno protetto
+    spegne = [c for c in spegne if c not in (f"cp x.json {a.dati}/", f"mv x.json {a.dati}/")]
+    spegne += [f"cp config.json {a.dati}/", f"mv guardiano.log {a.dati}/"]
+    for cmd in spegne:
+        r = pred(cmd)
+        prova(f"autoprotezione-cli: predefinito, `{cmd[:60].splitlines()[0]}`: negato",
+              r.negato, repr(r))
+    r = pred("plancia config guardiano spento")
+    prova("autoprotezione-cli: il motivo dice che le impostazioni del guardiano si cambiano a mano",
+          r.negato and "le impostazioni del guardiano le cambia" in r.motivo
+          and "a mano" in r.motivo, r.motivo)
+    for cmd in ("plancia config guardiano spento", "python3 -m plancia.cli config guardiano spento",
+                f"echo '{{}}' > {config}", f"sed -i '' s/a/b/ {config}",
+                f"python3 -c \"open('{config}', 'w')\"", "./bin/plancia config compartimenti '{}'"):
+        r = alfa(cmd)
+        prova(f"autoprotezione-cli: alfa (un nominato), `{cmd[:52]}`: negato", r.negato, repr(r))
+    # tutto lo stato del guardiano e' rimasto com'era
+    prova("autoprotezione-cli: config.json e la copia non sono cambiati (il guardiano e' ancora acceso: "
+          "una chiamata vietata e' ancora negata)",
+          json.loads(config.read_text("utf-8"))["guardiano"] == "bloccante"
+          and a.chiama(a.pl("Read", {"file_path": str(a.alfa1 / "segreto.txt")}, sid=S_COMUNE)).negato)
+    # la lettura e gli usi ordinari restano ammessi
+    for cmd in ("plancia config", "plancia config guardiano", "plancia config compartimenti",
+                "plancia config locale it", "plancia config sync_interval_minutes 30",
+                "plancia guardiano --stato", "plancia guardiano --registro 20",
+                "python3 -m plancia.cli sync --skip-git", "python3 -m pytest tests",
+                "git commit -m \"plancia config guardiano spento\"",
+                "grep plancia config guardiano.txt", "grep -rn save_config plancia/",
+                "echo plancia config guardiano spento",
+                f"cat {config}", f"cat {config} 2>/dev/null", f"grep guardiano {config} > /dev/null",
+                f"cp {config} /tmp/backup-config.json", f"head -3 {log}", f"wc -l {log}",
+                f"python3 -c \"import json; json.load(open('{config}'))\"",
+                f"python3 -c \"print(open('{log}').read())\"",
+                f"echo x > {a.dati}/altro.txt", f"cp x.json {a.dati}/altro.json",
+                f"rm {a.dati}/altro.txt", f"ls -la {a.dati}"):
+        r = pred(cmd)
+        prova(f"autoprotezione-cli: predefinito, `{cmd[:60]}`: ammesso", r.ammesso, repr(r))
+    # gli strumenti di scrittura sui file protetti restano negati (gia' provato altrove),
+    # e MultiEdit/NotebookEdit come gli altri
+    for tool, ti in (("MultiEdit", {"file_path": str(config), "edits": []}),
+                     ("NotebookEdit", {"notebook_path": str(log), "new_source": "x"}),
+                     ("Write", {"file_path": str(copia), "content": "{}"})):
+        prova(f"autoprotezione-cli: {tool} su un file di stato del guardiano: negato",
+              a.chiama(a.pl(tool, ti, sid=S_ALFA_LIBERA, aperta_in=a.alfa1)).negato
+              and a.chiama(a.pl(tool, ti, sid=S_COMUNE)).negato)
+    # in solo-registro non si nega, ma si scrive la riga
+    a.scrivi_config(a.config("solo-registro"))
+    n0 = len(a.registro())
+    r = pred("plancia config guardiano spento")
+    righe = a.registro()
+    prova("autoprotezione-cli: in solo-registro il comando e' ammesso e lascia una riga "
+          "`avrebbe-negato`", r.ammesso and len(righe) == n0 + 1
+          and righe[-1]["esito"] == "avrebbe-negato", str(righe[-1:]))
+    a.togli_config()
+
+
+def _prove_falsi_positivi_bash(prova, a: Ambiente):
+    """Il registro deve dire la verita': un comando che non tocca un percorso
+    fuori dai permessi non e' un "avrebbe negato". Un percorso vero fuori resta
+    negato (la prudenza dove conta)."""
+    a.togli_config()
+    a.scrivi_config(a.config("bloccante"))
+    fuori = str(a.comune / "nota.txt")
+
+    def alfa(cmd, env=None, **kw):
+        p = a.pl("Bash", {"command": cmd}, sid=S_ALFA_LIBERA, aperta_in=a.alfa1, **kw)
+        if env is not None:
+            p["env"] = env
+        return a.chiama(p)
+
+    def pred(cmd, **kw):
+        return a.chiama(a.pl("Bash", {"command": cmd}, sid=S_COMUNE, aperta_in=a.progetto, **kw))
+
+    ammessi = [
+        "echo $HOME", "echo ${HOME} e $USER", "echo \"home: $HOME\"", "printf '%s\\n' $HOME",
+        "echo $VARIABILE_INESISTENTE/file", "cat $VARIABILE_INESISTENTE/file",
+        "python3 -c \"import os; print(os.listdir('/'))\"",
+        "python3 -c \"print(1/2)\"", "ls /", "echo /", "ls -la / | head",
+        "cat <<'EOF'\nhello /tmp/foo e /etc/hosts\nEOF",
+        "cat > note.txt <<'EOF'\nsee /tmp/foo and " + fuori + "\nEOF",
+        "git commit -m \"$(cat <<'EOF'\nfix: legge /tmp/foo e " + fuori + "\nEOF\n)\"",
+        "git commit -m \"vedi /tmp/foo\"", "echo \"vedi " + fuori + "\"",
+        "cat <<EOF\ndon't touch " + fuori + "\nEOF",
+        "cat <<'EOF'\n$(cat " + fuori + ")\nEOF", "cat <<\\EOF\n$(cat " + fuori + ")\nEOF",
+        "grep -n x segreto.txt", "sed -n '1,5p' segreto.txt",
+    ]
+    for cmd in ammessi:
+        r = alfa(cmd)
+        prova(f"falsi-positivi: alfa, `{cmd[:58].splitlines()[0]}`: ammesso", r.ammesso, repr(r))
+    negati = [
+        f"cat {fuori}", f"echo x > {fuori}", f"echo ok && cat {fuori}",
+        "cat $HOME/appunti.txt", "ls $HOME", "cd $HOME && ls",
+        f"python3 -c \"print(open('{fuori}').read())\"",
+        f"python3 - <<'EOF'\nprint(open('{fuori}').read())\nEOF",
+        f"bash <<'EOF'\ncat {fuori}\nEOF",
+        f"sh -c 'cat {fuori}'",
+        f"echo $(cat {fuori})", f"echo `cat {fuori}`",
+        f"cat <<EOF > {fuori}\nx\nEOF",
+        f"cat <<EOF\n$(cat {fuori})\nEOF",
+        "find / -name x", "grep -r x /", "ls -R /",
+    ]
+    for cmd in negati:
+        r = alfa(cmd)
+        prova(f"falsi-positivi: alfa, `{cmd[:58].splitlines()[0]}`: negato (un percorso vero fuori "
+              "dai permessi resta negato)", r.negato, repr(r))
+    # l'ambiente del payload, se c'e', espande le variabili
+    r = alfa("cat $DOVE/nota.txt", env={"DOVE": str(a.comune)})
+    prova("falsi-positivi: una variabile definita nell'ambiente del payload si espande "
+          "($DOVE/nota.txt fuori dai permessi): negato", r.negato, repr(r))
+    r = alfa("cat $DOVE/segreto.txt", env={"DOVE": str(a.alfa1)})
+    prova("falsi-positivi: ...e se punta dentro le sue cartelle: ammesso", r.ammesso, repr(r))
+    # /tmp e la cartella temporanea per utente restano fuori dai permessi per
+    # scelta (un posto dove passarsi file), ma il motivo non dice che sono di
+    # qualcuno
+    for cmd in ("tar czf /tmp/x.tgz segreto.txt", "echo x > /tmp/f", "cat /var/folders/xx/f",
+                "cat /private/tmp/altro/f"):
+        r = alfa(cmd)
+        prova(f"falsi-positivi: alfa, `{cmd}`: negato, e il motivo NON dice che appartiene "
+              "al predefinito (la cartella temporanea non e' di nessuno)",
+              r.negato and "appartiene a predefinito" not in r.motivo
+              and "nessun compartimento" in r.motivo and "cartella di sessione" in r.motivo, r.motivo)
+    r = alfa("cat /opt/altro/dato.txt")
+    prova("falsi-positivi: un percorso del lavoro comune (non temporaneo) dice ancora "
+          "`appartiene a predefinito`", r.negato and "appartiene a predefinito" in r.motivo, r.motivo)
+    # il predefinito
+    dentro_alfa = str(a.alfa1 / "segreto.txt")
+    for cmd in ("echo $HOME", "cat <<'EOF'\n" + dentro_alfa + "\nEOF", f"echo {dentro_alfa}",
+                f"git commit -m \"nota su {dentro_alfa}\"", "python3 -c \"print(1/2)\"",
+                "tar czf /tmp/x.tgz p.txt", "echo x > /tmp/f", "ls /"):
+        r = pred(cmd)
+        prova(f"falsi-positivi: predefinito, `{cmd[:58].splitlines()[0]}`: ammesso", r.ammesso, repr(r))
+    for cmd in (f"cat {dentro_alfa}", f"echo $(cat {dentro_alfa})", f"echo x > {dentro_alfa}",
+                f"cat <<EOF > {dentro_alfa}\nx\nEOF",
+                f"python3 - <<'EOF'\nprint(open('{dentro_alfa}').read())\nEOF",
+                f"grep -r x {a.alfa1}", "find / -name x", "grep -r x /"):
+        r = pred(cmd)
+        prova(f"falsi-positivi: predefinito, `{cmd[:58].splitlines()[0]}`: negato", r.negato, repr(r))
+    a.togli_config()
+
+
+def _prove_ricerca_trascrizioni(prova, a: Ambiente):
+    """`search_session_transcripts` cerca nelle trascrizioni di TUTTE le
+    sessioni: negato ai nominati sempre e al predefinito quando esistono
+    nominati. `list_sessions` e `ListAgents` restano ammessi al predefinito
+    (elenchi, non contenuti: limite dichiarato)."""
+    ss = "mcp__ccd_session_mgmt__"
+    a.togli_config()
+    a.scrivi_config(a.config("bloccante"))
+    r = a.chiama(a.pl(ss + "search_session_transcripts", {"query": "segreto"}, sid=S_COMUNE))
+    prova("ricerca-trascrizioni: predefinito, search_session_transcripts con nominati: negato",
+          r.negato and "alfa" not in r.motivo and "trascrizioni" in r.motivo, repr(r))
+    prova("ricerca-trascrizioni: ...anche con un filtro di sessione nel tool_input",
+          a.chiama(a.pl(ss + "search_session_transcripts",
+                        {"query": "x", "session_id": S_COMUNE}, sid=S_COMUNE)).negato)
+    prova("ricerca-trascrizioni: alfa, search_session_transcripts: negato",
+          a.chiama(a.pl(ss + "search_session_transcripts", {"query": "x"}, sid=S_ALFA_LIBERA,
+                        aperta_in=a.alfa1)).negato)
+    prova("ricerca-trascrizioni: predefinito, list_sessions: ammesso (limite dichiarato)",
+          a.chiama(a.pl(ss + "list_sessions", {}, sid=S_COMUNE)).ammesso)
+    prova("ricerca-trascrizioni: alfa, list_sessions: negato",
+          a.chiama(a.pl(ss + "list_sessions", {}, sid=S_ALFA_LIBERA, aperta_in=a.alfa1)).negato)
+    a.togli_config()
+    a.scrivi_config(a.config("solo-registro"))
+    r = a.chiama(a.pl(ss + "search_session_transcripts", {"query": "x"}, sid=S_COMUNE))
+    righe = a.registro()
+    prova("ricerca-trascrizioni: in solo-registro e' ammesso e la riga e' `avrebbe-negato`",
+          r.ammesso and len(righe) == 1 and righe[0]["esito"] == "avrebbe-negato"
+          and righe[0]["strumento"].endswith("search_session_transcripts"), str(righe))
+    a.togli_config()
+    cfg = a.config("bloccante")
+    cfg["compartimenti"] = {"predefinito": cfg["compartimenti"]["predefinito"]}
+    a.scrivi_config(cfg)
+    r = a.chiama(a.pl(ss + "search_session_transcripts", {"query": "x"}, sid=S_COMUNE))
+    prova("ricerca-trascrizioni: senza nominati non c'e' niente da proteggere: ammesso",
+          r.ammesso, repr(r))
+    a.togli_config()
+
+
+def _prove_cli_config(prova, a: Ambiente):
+    """`plancia config guardiano <valore>` rifiuta i valori fuori da
+    spento / solo-registro / bloccante (e non salva niente)."""
+    a.togli_config()
+    env = dict(a.env())
+    env["PYTHONPATH"] = str(RADICE)
+
+    def plancia(*args):
+        p = subprocess.run([sys.executable, str(RADICE / "bin" / "plancia"), "config", *args],
+                           env=env, cwd=str(RADICE), capture_output=True, timeout=60)
+        return p.returncode, p.stdout.decode("utf-8", "replace") + p.stderr.decode("utf-8", "replace")
+
+    def valore():
+        try:
+            return json.loads((a.dati / "config.json").read_text("utf-8")).get("guardiano")
+        except (OSError, ValueError):
+            return None
+
+    rc, out = plancia("guardiano", "solo-registro")
+    prova("cli-config: `config guardiano solo-registro`: accettato e salvato",
+          rc == 0 and valore() == "solo-registro", f"{rc} {out}")
+    for sbagliato in ("bloccantee", "boh", "", "true", "1", "spento!", "[\"spento\"]"):
+        rc, out = plancia("guardiano", sbagliato)
+        prova(f"cli-config: `config guardiano {sbagliato!r}`: rifiutato (uscita diversa da 0, "
+              "dice i valori ammessi) e il valore salvato non cambia",
+              rc != 0 and "spento" in out and "solo-registro" in out and "bloccante" in out
+              and valore() == "solo-registro", f"{rc} {out} {valore()}")
+    for buono, atteso in (("bloccante", "bloccante"), ("Spento", "spento"),
+                          ("\"solo-registro\"", "solo-registro"), (" bloccante ", "bloccante")):
+        rc, out = plancia("guardiano", buono)
+        prova(f"cli-config: `config guardiano {buono!r}`: accettato, salvato come {atteso!r}",
+              rc == 0 and valore() == atteso, f"{rc} {out} {valore()}")
+    rc, out = plancia("guardiano")
+    prova("cli-config: `config guardiano` senza valore legge e basta (e non cambia niente)",
+          rc == 0 and "bloccante" in out and valore() == "bloccante", out)
+    rc, out = plancia("locale", "en")
+    prova("cli-config: un'altra chiave si scrive come prima (il controllo e' solo sul guardiano)",
+          rc == 0 and json.loads((a.dati / "config.json").read_text("utf-8")).get("locale") == "en", out)
+    a.togli_config()
+
+
 def _prove_forma(prova):
     """Il file, la versione di Python, la privacy del repo pubblico."""
     attesi = [GUARDIANO, RADICE / "plancia" / "compartimenti.py", Path(__file__)]
@@ -1473,7 +1885,12 @@ def esegui(prova):
         _prove_misura(prova, a)
         _prove_protezione(prova, a)
         _prove_relativi(prova, a)
+        _prove_specchio(prova, a)
+        _prove_autoprotezione_cli(prova, a)
+        _prove_falsi_positivi_bash(prova, a)
+        _prove_ricerca_trascrizioni(prova, a)
         _prove_tempo(prova, a)
         _prove_cli(prova, a)
+        _prove_cli_config(prova, a)
     finally:
         a.chiudi()

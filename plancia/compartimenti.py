@@ -42,12 +42,15 @@ Limiti da dire chiari (non sono difetti da correggere qui):
 - Il confronto dei percorsi e' senza distinzione di maiuscole (APFS non le
   distingue): su un volume che le distingue puo' negare di piu', mai di meno.
 - Gli strumenti che elencano o cercano senza un bersaglio esplicito
-  (`search_files`, `search_session_transcripts`, `list_sessions`,
-  `ListAgents`, ...) non si possono valutare per il predefinito: passano, anche
-  in `bloccante`. Per un nominato sono negati. Per `list_sessions`,
-  `search_session_transcripts` e `ListAgents`, quando esistono nominati, in
+  (`search_files`, `list_sessions`, `ListAgents`, ...) non si possono valutare
+  per il predefinito: passano, anche in `bloccante`. Per un nominato sono
+  negati. Per `list_sessions` e `ListAgents`, quando esistono nominati, in
   `solo-registro` resta una riga `avrebbe-negato` (vedi `_misura`), per sapere
-  quanto si usano: chi accende E1 deve saperlo, perche' e' un canale aperto.
+  quanto si usano: sono elenchi (titoli, cartelle di lavoro), non contenuti, ma
+  chi accende E1 deve saperlo, perche' e' un canale aperto. Fa eccezione
+  `search_session_transcripts`, che cerca nel CONTENUTO delle trascrizioni di
+  tutte le sessioni: negato ai nominati sempre e al predefinito quando esistono
+  nominati (`SESSIONI_RICERCA`).
 - Gli strumenti di sessione ricevono l'id dell'app (`local_<uuid>`) o un nome
   (il titolo), non il `session_id` dell'hook: si risolvono leggendo il registro
   dell'app (`_voci_app`). Un id o un titolo che il registro e la tabella di
@@ -56,9 +59,47 @@ Limiti da dire chiari (non sono difetti da correggere qui):
   (i sorgenti locali) e su `root`; un altro strumento MCP che legge un file
   con un nome di parametro nuovo no, finche' il nome non e' in `CHIAVI_PERCORSO`.
 - I file del guardiano (config, copia, registro, manifesto, hook, questo
-  modulo) non si modificano da nessuna sessione: `_valuta_protetti`. Da Bash e'
-  euristico. Vale solo in `bloccante`, come ogni diniego: chi vuole cambiare la
-  config con l'aiuto di una sessione deve prima passare a `solo-registro`.
+  modulo) non si modificano da nessuna sessione, e nemmeno le sue chiavi di
+  config (`guardiano`, `compartimenti`, `strumenti_drive`) con la CLI di
+  Plancia (`plancia config guardiano ...`, `python3 -m plancia.cli config ...`,
+  `config.save_config` da un interprete): `_valuta_protetti`. Da Bash e'
+  euristico (redirezioni, `tee`, `sed -i`, `cp`/`mv`/`install`/`rsync` verso il
+  file, `rm`/`mv` del file o della cartella che lo contiene, codice di un
+  interprete che nomina il file e scrive): un percorso costruito a pezzi dentro
+  uno script non si vede. Vale solo in `bloccante`, come ogni diniego: chi vuole
+  cambiare la config con l'aiuto di una sessione deve prima passare a
+  `solo-registro`. NON protegge il `settings.json` che installa l'hook: togliere
+  l'hook da li' spegne il guardiano (fuori dallo scopo di questo lotto).
+- Trascrizioni e memoria di un compartimento nominato stanno sotto
+  `<CLAUDE_CONFIG_DIR o ~/.claude>/projects/<cartella codificata>`: sono suo
+  lavoro come le sue cartelle (`Ambito.proprietario_specchio`; E1 usa la stessa
+  regola). Il predefinito non le legge, ne' cerca da `projects` o da un antenato
+  (Grep, Glob, Bash ricorsivo). Il confine e' il trattino della codifica
+  (`<enc>` e `<enc>-...`, non `<enc>altro`), ma la codifica perde la differenza
+  fra `/` e `-`: una cartella sorella `alfa-2` di `alfa` risulta di alfa, e si
+  nega per prudenza. Un `ls ~/.claude/projects` (non ricorsivo) mostra i nomi
+  codificati delle cartelle, e un `ls` della cartella padre di un percorso
+  vietato mostra i nomi dei suoi file: i contenuti no.
+- Un percorso in `/tmp`, `/private/tmp`, `/var/folders` e simili non e' di
+  nessun compartimento, ma un nominato non lo usa (e' un posto dove passarsi
+  file: vedi il commento di `NEUTRI_FISSI`), e il motivo del diniego lo dice.
+  `mktemp -d` da solo passa (nessun percorso nel testo) e cio' che si scrive
+  li' non si vede: la separazione di `/tmp` e' di facciata contro un agente che
+  la cerca. Un comando come `tar czf /tmp/x.tgz src` da un nominato e' negato per
+  scelta: se si vuole ammettere `/tmp`, e' una riga in `NEUTRI_FISSI`.
+- Le variabili di un comando (`cat $DIR/x`) si espandono con l'ambiente del
+  payload, se ce n'e' uno (nessun hook di Claude Code lo manda, per quanto si e'
+  visto), e poi con quello dell'hook; una variabile non definita si ignora (un
+  percorso che non si sa ricostruire non si risolve sulla cwd). `echo` e `printf`
+  stampano i loro argomenti e non toccano percorsi; il corpo di un heredoc e'
+  testo, non un argomento (salvo che lo riceva una shell o un interprete, o
+  contenga `$(...)` senza virgolette). Una `/` da sola non e' un percorso.
+- La cwd di un nominato aperto fuori dalle sue cartelle (per id) vale per ogni
+  comando Bash (vedi `valuta`); al contrario una sessione del predefinito che
+  entra per errore in una cartella di un nominato (`cd` persistente) diventa
+  quel nominato e perde il proprio lavoro: e' la scelta dichiarata in
+  `chiamante` (la cwd puo' solo aggiungere un'appartenenza).
+- Un here-string dato a `xargs` (`xargs cat <<< percorso`) non si vede.
 - L'appartenenza dell'id Drive e' per id esatto, senza risalire agli antenati
   (la verifica degli antenati non e' affidabile da qui).
 
@@ -150,7 +191,11 @@ MAX_ESPANSIONE_GLOB = 200
 # le sessioni, senza un bersaglio. Per il predefinito non si possono negare
 # (limite dichiarato), ma in `solo-registro` se ne scrive una riga, per sapere
 # quanto si usano prima di decidere cosa farne.
-SESSIONI_DA_MISURARE = ("list_sessions", "search_session_transcripts")
+SESSIONI_DA_MISURARE = ("list_sessions",)
+# Strumenti che cercano nel CONTENUTO delle trascrizioni di tutte le sessioni:
+# negati ai nominati sempre e al predefinito quando esistono nominati (non c'e'
+# un id che li renda ammissibili: cercano dappertutto).
+SESSIONI_RICERCA = ("search_session_transcripts",)
 
 # Strumenti che scrivono un file con `file_path`/`notebook_path`.
 STRUMENTI_SCRITTURA = ("Write", "Edit", "MultiEdit", "NotebookEdit")
@@ -571,10 +616,14 @@ class Ambito:
     """I compartimenti di una config, con i percorsi gia' risolti."""
 
     def __init__(self, comp: dict, strumenti_drive=None, home=None, uid=None,
-                 data_dir=None):
+                 data_dir=None, claude_dir=None):
         self.home = home or os.path.expanduser("~")
         self.uid = os.getuid() if uid is None else uid
         self.data_dir = data_dir or ""
+        # `<CLAUDE_CONFIG_DIR o ~/.claude>/projects`: dove Claude Code tiene
+        # trascrizioni e memoria di ogni cartella (vedi `proprietario_specchio`).
+        self.claude_dir = claude_dir or cartella_claude(home=self.home)
+        self.progetti = _norm(os.path.join(self.claude_dir, "projects"))
         self.strumenti_drive = set(STRUMENTI_DRIVE) | set(strumenti_drive or [])
         self.nominati = {}
         for nome, c in comp.items():
@@ -666,6 +715,55 @@ class Ambito:
             if any(_dentro(p, f) for f in c["cartelle"]):
                 return nome
         return None
+
+    def proprietario_specchio(self, p: str):
+        """Il nome del nominato a cui appartiene `p` come SPECCHIO di una sua
+        cartella sotto `<claude>/projects`: le trascrizioni, la memoria, le
+        cartelle di sessione e dei subagenti di una cartella di X e delle sue
+        discendenti sono lavoro di X. None se `p` non e' li' sotto o non e' di
+        nessun nominato. Il confine e' il trattino: `<enc>` e `<enc>-...`
+        (una discendente), non `<enc>altro` (una sorella con lo stesso inizio).
+        Ma la codifica perde la differenza fra `/` e `-`, quindi una sorella
+        `alfa-2` di `alfa` risulta di alfa: in dubbio si nega (vedi
+        `_codifica_di_x`)."""
+        if not p or not self.progetti or not _dentro(p, self.progetti):
+            return None
+        resto = p[len(self.progetti):].strip("/")
+        if not resto:
+            return None
+        primo = resto.split("/")[0].lower()
+        for nome, c in self.nominati.items():
+            if any(primo == e or primo.startswith(e + "-") for e in c["codifiche"]):
+                return nome
+        return None
+
+    def specchio_incluso(self, p: str):
+        """Il nome di un nominato (con almeno una cartella) il cui specchio in
+        `<claude>/projects` sta dentro `p` o e' `p` stessa: una ricerca ricorsiva
+        che parte da `p` (`projects`, `~/.claude`, `~`) lo leggerebbe. None se
+        non ce n'e'."""
+        if not p or not self.progetti or not _dentro(self.progetti, p):
+            return None
+        for nome, c in self.nominati.items():
+            if c["codifiche"]:
+                return nome
+        return None
+
+
+def cartella_claude(env=None, home=None) -> str:
+    """La cartella di configurazione di Claude Code: `CLAUDE_CONFIG_DIR`, se
+    c'e', altrimenti `~/.claude`."""
+    env = os.environ if env is None else env
+    return env.get("CLAUDE_CONFIG_DIR") or os.path.join(
+        home or os.path.expanduser("~"), ".claude")
+
+
+def proprietario_specchio(p: str, ambito: "Ambito"):
+    """Il nominato a cui appartiene `p` come trascrizione, memoria o cartella
+    di sessione sotto `<claude>/projects` (o None). `p` deve essere gia'
+    risolto con `_norm`. E' la regola che il richiamo di Plancia (E1) usa per
+    non leggere il lavoro di un compartimento nominato nelle trascrizioni."""
+    return ambito.proprietario_specchio(p)
 
 
 def _prefisso_letterale(pattern: str) -> str:
@@ -841,11 +939,38 @@ def _progetto_ok(p: str, chi: dict, dalla_cartella: bool) -> bool:
 # --------------------------------------------------------------------------
 
 _RX_URL = re.compile(r"\b[A-Za-z][A-Za-z0-9+.-]*://\S+")
-# Un percorso assoluto dentro un testo qualsiasi: preceduto da inizio riga,
-# spazio, virgolette, `=`, `(`, `,`, ... ma non da una lettera, un punto, `$`,
-# `}`, `:` o `/` (cosi' `s/a/b/` di sed e `https://x/y` non si scambiano per
-# percorsi).
-_RX_ASSOLUTO = re.compile(r"""(?<![\w.$}:/])((?:~|)/[^\s'"`;|&<>()\\]*)""")
+# Un percorso assoluto dentro un testo qualsiasi (codice passato a un
+# interprete): preceduto da inizio riga, spazio, virgolette, `=`, `(`, `,`, ...
+# ma non da una lettera, un punto, `$`, `}`, `:` o `/` (cosi' `s/a/b/` di sed e
+# `https://x/y` non si scambiano per percorsi). Almeno un carattere dopo la
+# barra: una `/` da sola (`os.listdir('/')`, una divisione) non e' un percorso.
+_RX_ASSOLUTO = re.compile(r"""(?<![\w.$}:/])((?:~|)/[^\s'"`;|&<>()\\]+)""")
+_RX_VAR = re.compile(r"\$(?:\{([A-Za-z_]\w*)\}|([A-Za-z_]\w*))")
+
+# Comandi che eseguono CODICE dato come testo (`python3 -c "..."`, un heredoc
+# passato a `python3 -`): dentro le stringhe ci sono percorsi che il comando
+# aprira' davvero, quindi si cercano con l'espressione regolare. Gli altri
+# comandi non interpretano i loro argomenti come codice.
+_RX_INTERPRETE = re.compile(
+    r"^(?:python[\d.]*|node|nodejs|deno|bun|ruby|perl|php|osascript|lua|rscript"
+    r"|swift)$", re.I)
+# Le shell: il testo di `sh -c '...'` e il corpo di un heredoc dato a `bash` SONO
+# comandi, e si analizzano come tali.
+_SHELL = ("sh", "bash", "zsh", "dash", "ksh", "fish")
+# Comandi che stampano i loro argomenti: `echo $HOME` non tocca nessun percorso.
+# Restano le redirezioni (`echo x > file` scrive un file) e le sostituzioni di
+# comando dentro gli argomenti (`echo $(cat file)`, che si analizzano a parte).
+_MUTI = ("echo", "printf")
+_PUNTEGGIATURA = frozenset("();<>|&")
+
+
+def _e_interprete(nome: str) -> bool:
+    return bool(_RX_INTERPRETE.match(nome or ""))
+
+
+def _punt(t: str) -> bool:
+    """Un token di punteggiatura della shell (`>`, `>>`, `<<`, `2>&1` a pezzi)."""
+    return bool(t) and all(c in _PUNTEGGIATURA for c in t)
 
 
 def _prefisso_glob_dir(pattern: str) -> str:
@@ -856,7 +981,303 @@ def _prefisso_glob_dir(pattern: str) -> str:
     return tagliato.rsplit("/", 1)[0] if "/" in tagliato else ""
 
 
-def _varianti_token(t: str):
+# --- il comando Bash, a pezzi ----------------------------------------------
+#
+# EURISTICO, dichiarato: ferma gli incidenti, non chi vuole aggirarlo. Il
+# comando si scompone cosi': (1) via i corpi degli heredoc (sono dati, non
+# argomenti: restano solo se il comando che li riceve li interpreta, cioe' una
+# shell o un interprete di codice); (2) segmenti separati da `;`, `&&`, `||`,
+# `|`, a capo, parentesi (con le virgolette rispettate); (3) ogni segmento in
+# token con `shlex`; (4) le sostituzioni `$(...)` e `` `...` `` e il testo di
+# `sh -c` si analizzano di nuovo, a parte. Se le virgolette non tornano si
+# ripiega su uno split per spazi.
+
+_RX_HEREDOC = re.compile(
+    r"<<(-?)[ \t]*(?:'([^'\n]*)'|\"([^\"\n]*)\"|\\?([A-Za-z_][A-Za-z_0-9.-]*))")
+_CACHE_ANALISI = {}
+
+
+def _token(seg: str) -> list:
+    import shlex
+    try:
+        lex = shlex.shlex(seg, posix=True, punctuation_chars=True)
+        lex.whitespace_split = True
+        lex.commenters = ""
+        return list(lex)
+    except ValueError:
+        return [t.strip("'\"") for t in seg.split()]
+
+
+_PREFISSI_COMANDO = ("sudo", "time", "nice", "env", "command", "xargs", "exec",
+                     "nohup")
+
+
+def _nome_e_args(tok) -> tuple:
+    """Il nome del comando (senza cartella) e i suoi argomenti, dopo i
+    prefissi (`sudo`, `env`, `VAR=x`, opzioni dei prefissi...)."""
+    t = list(tok)
+    while t and (t[0] in _PREFISSI_COMANDO or re.match(r"^\w+=", t[0])
+                 or (t[0].startswith("-") and len(t) > 1)
+                 or _punt(t[0])):
+        t = t[1:]
+    if not t:
+        return "", []
+    return os.path.basename(t[0]), t[1:]
+
+
+def _tipo_ricevente(fatto: str) -> str:
+    """Chi riceve un heredoc, dal testo del comando scritto fin qui: `shell`
+    (il corpo e' una serie di comandi), `codice` (un interprete: il corpo e'
+    codice con percorsi veri) o `dati` (`cat`, `tee`, `git`: il corpo e' testo)."""
+    coda = re.split(r"[;&|\n()]", fatto)[-1]
+    nome, _ = _nome_e_args(_token(coda))
+    if nome in _SHELL:
+        return "shell"
+    if _e_interprete(nome):
+        return "codice"
+    return "dati"
+
+
+def _togli_heredoc(cmd: str):
+    """`(testo senza i corpi da scartare, [corpi di codice])`. Il corpo di un
+    heredoc dato a una shell resta nel testo (sono comandi), quello dato a un
+    interprete va nell'elenco dei corpi di codice, tutti gli altri si scartano:
+    `cat <<'EOF'`, `git commit -m "$(cat <<'EOF' ... EOF)"` non hanno percorsi
+    da negare nel loro testo."""
+    if "<<" not in cmd:
+        return cmd, []
+    out, corpi, attesa = [], [], []
+    q, i, n = None, 0, len(cmd)
+    while i < n:
+        c = cmd[i]
+        if q:
+            out.append(c)
+            if q == '"' and c == "\\" and i + 1 < n:
+                out.append(cmd[i + 1])
+                i += 2
+                continue
+            if c == q:
+                q = None
+            i += 1
+            continue
+        if c == "\\" and i + 1 < n:
+            out.append(c + cmd[i + 1])
+            i += 2
+            continue
+        if c in "'\"":
+            q = c
+            out.append(c)
+            i += 1
+            continue
+        if c == "\n" and attesa:
+            out.append("\n")
+            i += 1
+            for delim, tipo, quotato in attesa:
+                righe = []
+                while i < n:
+                    j = cmd.find("\n", i)
+                    j = n if j == -1 else j
+                    riga = cmd[i:j]
+                    i = j + 1
+                    if riga.strip() == delim:
+                        break
+                    righe.append(riga)
+                corpo = "\n".join(righe)
+                if tipo == "shell":
+                    out.append(corpo + "\n")
+                elif tipo == "codice":
+                    corpi.append(corpo)
+                elif not quotato:
+                    # Un heredoc senza virgolette espande `$(...)` e gli apici
+                    # inversi del suo corpo: quei comandi girano davvero.
+                    for interno in _sostituzioni(corpo):
+                        out.append(interno + "\n")
+            attesa = []
+            continue
+        if c == "<" and cmd.startswith("<<", i) and not cmd.startswith("<<<", i):
+            m = _RX_HEREDOC.match(cmd, i)
+            if m:
+                delim = next((g for g in m.group(2, 3, 4) if g is not None), "")
+                quotato = m.group(2) is not None or m.group(3) is not None or (
+                    "\\" in m.group(0))
+                attesa.append((delim, _tipo_ricevente("".join(out)), quotato))
+                out.append(m.group(0))
+                i = m.end()
+                continue
+        out.append(c)
+        i += 1
+    return "".join(out), corpi
+
+
+def _dividi_segmenti(t: str) -> list:
+    """Il testo diviso ai `;`, `&&`, `||`, `|`, a capo e alle parentesi che non
+    sono dentro virgolette, `$(...)` o apici inversi. `>&`, `&>` e `>|` non
+    dividono."""
+    out, cur = [], []
+    q, sub, bt, i, n = None, 0, False, 0, len(t)
+    while i < n:
+        c = t[i]
+        if q:
+            cur.append(c)
+            if q == '"' and c == "\\" and i + 1 < n:
+                cur.append(t[i + 1])
+                i += 2
+                continue
+            if c == q:
+                q = None
+            i += 1
+            continue
+        if c == "\\" and i + 1 < n:
+            cur.append(c + t[i + 1])
+            i += 2
+            continue
+        if c in "'\"":
+            q = c
+            cur.append(c)
+            i += 1
+            continue
+        if c == "`":
+            bt = not bt
+            cur.append(c)
+            i += 1
+            continue
+        if bt:
+            cur.append(c)
+            i += 1
+            continue
+        if c == "$" and t[i + 1:i + 2] == "(":
+            sub += 1
+            cur.append("$(")
+            i += 2
+            continue
+        if sub:
+            sub += 1 if c == "(" else -1 if c == ")" else 0
+            cur.append(c)
+            i += 1
+            continue
+        prec = t[i - 1] if i else ""
+        succ = t[i + 1] if i + 1 < n else ""
+        sep = c in ";\n()" or (c == "|" and prec != ">") or (
+            c == "&" and prec not in "<>" and succ != ">")
+        if sep:
+            out.append("".join(cur))
+            cur = []
+        else:
+            cur.append(c)
+        i += 1
+    out.append("".join(cur))
+    return [s.strip() for s in out if s.strip()]
+
+
+def _sostituzioni(t: str) -> list:
+    """I testi dentro `$(...)`, `` `...` `` e `<(...)` (non quelli fra apici
+    singoli): sono comandi da analizzare a parte."""
+    out, sq, dq, i, n = [], False, False, 0, len(t)
+    while i < n:
+        c = t[i]
+        if c == "\\":
+            i += 2
+            continue
+        if c == '"' and not sq:
+            dq = not dq
+        elif c == "'" and not dq:
+            sq = not sq
+        elif not sq:
+            if c in "$<>" and t[i + 1:i + 2] == "(" and (c == "$" or not dq):
+                j, prof = i + 2, 1
+                while j < n and prof:
+                    prof += 1 if t[j] == "(" else -1 if t[j] == ")" else 0
+                    j += 1
+                out.append(t[i + 2:j - 1 if prof == 0 else j])
+                i += 2
+                continue
+            if c == "`":
+                k = t.find("`", i + 1)
+                if k != -1:
+                    out.append(t[i + 1:k])
+                    i = k + 1
+                    continue
+        i += 1
+    return out
+
+
+def _analizza(cmd: str, prof: int = 0) -> dict:
+    """`{"segmenti": [{"nome", "args", "token", "testo"}, ...], "corpi": [...]}`
+    del comando e di tutto quello che contiene (sostituzioni, `sh -c`)."""
+    if prof == 0 and cmd in _CACHE_ANALISI:
+        return _CACHE_ANALISI[cmd]
+    ris = {"segmenti": [], "corpi": []}
+    if cmd and prof <= 3:
+        testo, corpi = _togli_heredoc(cmd)
+        ris["corpi"].extend(corpi)
+        for seg in _dividi_segmenti(testo):
+            tok = _token(seg)
+            nome, args = _nome_e_args(tok)
+            ris["segmenti"].append({"nome": nome, "args": args, "token": tok,
+                                    "testo": seg})
+            interni = list(_sostituzioni(seg))
+            if nome in _SHELL:
+                for k, a in enumerate(args):
+                    if re.match(r"^-[A-Za-z]*c[A-Za-z]*$", a) and k + 1 < len(args):
+                        interni.append(args[k + 1])
+                        break
+            elif nome == "eval":
+                interni.append(" ".join(args))
+            for interno in interni:
+                r = _analizza(interno, prof + 1)
+                ris["segmenti"].extend(r["segmenti"])
+                ris["corpi"].extend(r["corpi"])
+    if prof == 0:
+        if len(_CACHE_ANALISI) > 64:
+            _CACHE_ANALISI.clear()
+        _CACHE_ANALISI[cmd] = ris
+    return ris
+
+
+def _parole_segmento(s: dict) -> list:
+    """I token di un segmento che possono essere percorsi o nomi: senza la
+    punteggiatura, senza la parola che segue un heredoc o una here-string (e'
+    un delimitatore o un testo), e per `echo`/`printf` solo i bersagli delle
+    redirezioni (gli altri argomenti si stampano e basta)."""
+    muto = s["nome"] in _MUTI
+    out, prec = [], ""
+    for t in s["token"]:
+        if _punt(t):
+            prec = t
+            continue
+        heredoc = "<<" in prec
+        redirezione = (">" in prec or "<" in prec) and not heredoc
+        prec = ""
+        if heredoc or (muto and not redirezione):
+            continue
+        out.append(t)
+    return out
+
+
+def _espandi_var(c: str, env=None):
+    """`c` con le variabili `$VAR` e `${VAR}` espanse con l'ambiente del payload
+    (se c'e') e poi con quello dell'hook. `None` se ne resta una non definita
+    (o un `$` di altro genere: `$1`, `$?`): un percorso che non si sa
+    ricostruire si ignora, invece di risolverlo sulla cwd come se `$X` fosse un
+    nome di cartella."""
+    if "$" not in c:
+        return c
+    mancante = []
+
+    def sost(m):
+        nome = m.group(1) or m.group(2)
+        v = (env or {}).get(nome)
+        if not isinstance(v, str):
+            v = os.environ.get(nome)
+        if v is None:
+            mancante.append(nome)
+            return ""
+        return v
+    r = _RX_VAR.sub(sost, c)
+    return None if mancante or "$" in r else r
+
+
+def _varianti_token(t: str, env=None):
     """Da un token di shell: se stesso e la parte dopo il primo `=`
     (`--dir=/x`). Torna `(percorsi, nomi_semplici)`: i primi sembrano un
     percorso (iniziano con `/`, `~`, `./`, `../` o contengono `/`), i secondi
@@ -874,7 +1295,9 @@ def _varianti_token(t: str):
             continue
         if _RX_URL.match(c):
             continue
-        c = os.path.expandvars(c)
+        c = _espandi_var(c, env)
+        if not c:
+            continue
         if c == ".." or c.startswith(("/", "~", "./", "../")) or "/" in c:
             perc.append(c)
         elif not c.startswith("-") and len(c) <= 255 and not any(x.isspace() for x in c):
@@ -882,33 +1305,33 @@ def _varianti_token(t: str):
     return perc, nomi
 
 
-def _candidati_comando(cmd: str):
-    """Sottostringhe di un comando Bash che potrebbero essere percorsi.
-
-    EURISTICO, dichiarato: ferma gli incidenti, non chi vuole aggirarlo.
-    Prima si prova `shlex` (con la punteggiatura della shell separata: `;`,
-    `&&`, `|`, `>`); se le virgolette non tornano (un heredoc con un
-    apostrofo) si ripiega su uno split per spazi. Poi si aggiunge una
-    scansione con espressione regolare del testo intero, che vede anche i
-    percorsi dentro `python3 -c "open('/x')"` o `$(cat /x)`."""
-    import shlex
-    try:
-        lex = shlex.shlex(cmd, posix=True, punctuation_chars=True)
-        lex.whitespace_split = True
-        lex.commenters = ""
-        token = list(lex)
-    except ValueError:
-        token = [t.strip("'\"") for t in cmd.split()]
-    trovati, nomi = [], []
-    for t in token:
-        perc, semplici = _varianti_token(t)
-        trovati.extend(perc)
-        nomi.extend(semplici)
-    for m in _RX_ASSOLUTO.finditer(_RX_URL.sub(" ", cmd)):
+def _trova_percorsi_in_testo(testo: str) -> list:
+    out = []
+    for m in _RX_ASSOLUTO.finditer(_RX_URL.sub(" ", testo)):
         c = m.group(1)
-        trovati.append(c)
+        out.append(c)
         if c.rstrip(".,:") != c:
-            trovati.append(c.rstrip(".,:"))
+            out.append(c.rstrip(".,:"))
+    return out
+
+
+def _candidati_comando(cmd: str, env=None):
+    """Percorsi e nomi che un comando Bash potrebbe toccare: i token dei suoi
+    segmenti (vedi sopra) e, per i comandi che eseguono codice (`python3 -c`,
+    un heredoc dato a `python3 -`), i percorsi assoluti cercati dentro il testo
+    del codice."""
+    an = _analizza(cmd)
+    trovati, nomi = [], []
+    for s in an["segmenti"]:
+        for t in _parole_segmento(s):
+            perc, semplici = _varianti_token(t, env)
+            trovati.extend(perc)
+            nomi.extend(semplici)
+        if _e_interprete(s["nome"]):
+            for t in s["args"]:
+                trovati.extend(_trova_percorsi_in_testo(t))
+    for corpo in an["corpi"]:
+        trovati.extend(_trova_percorsi_in_testo(corpo))
     visti, out = set(), []
     for c in trovati:
         if c and c not in visti:
@@ -933,7 +1356,7 @@ def _espandi_glob(c: str, cwd) -> list:
         return []
 
 
-def _percorsi_da_comando(cmd: str, cwd, nomi_semplici=False):
+def _percorsi_da_comando(cmd: str, cwd, nomi_semplici=False, env=None):
     """I percorsi di un comando Bash, risolti. Con `nomi_semplici` anche i
     token senza barre (`cd cartella`) risolti sulla cwd: solo per il
     predefinito, dove servono a vedere `cd cartella-di-un-nominato` da una
@@ -942,7 +1365,7 @@ def _percorsi_da_comando(cmd: str, cwd, nomi_semplici=False):
     nominato la cwd stessa e' un percorso toccato da ogni comando). I token con
     un glob si espandono sul disco (`cat cartella/*`)."""
     out, visti = [], set()
-    perc, nomi = _candidati_comando(cmd)
+    perc, nomi = _candidati_comando(cmd, env)
 
     def aggiungi(testo, n):
         if n and n not in visti:
@@ -959,31 +1382,20 @@ def _percorsi_da_comando(cmd: str, cwd, nomi_semplici=False):
 
 
 # I comandi che camminano un albero intero. Riconosciuti dal NOME del comando
-# (primo token di ogni segmento della riga, dopo i prefissi `sudo`, `xargs`,
+# (il primo token di ogni segmento, dopo i prefissi `sudo`, `xargs`,
 # `VAR=x`...), non da una parola qualsiasi nel testo: `echo find` non e' una
 # ricerca.
 _RICORSIVI_SEMPRE = ("rg", "ag", "ack", "fd", "find", "tree", "tar", "zip",
                      "rsync")
-_PREFISSI_COMANDO = ("sudo", "time", "nice", "env", "command", "xargs", "exec",
-                     "nohup")
-_RX_SEGMENTI = re.compile(r"[;&|\n`()]+")
 
 
 def _comando_ricorsivo(cmd: str) -> bool:
     """Vero se la riga contiene un comando che cerca o copia ricorsivamente
     (grep -r, rg, find, ls -R, tree, tar, zip, cp -r, rsync, git grep)."""
-    import shlex
-    for seg in _RX_SEGMENTI.split(cmd):
-        try:
-            t = shlex.split(seg)
-        except ValueError:
-            t = seg.split()
-        while t and (t[0] in _PREFISSI_COMANDO or re.match(r"^\w+=", t[0])
-                     or (t[0].startswith("-") and len(t) > 1)):
-            t = t[1:]
-        if not t:
+    for s in _analizza(cmd)["segmenti"]:
+        nome, args = s["nome"], s["args"]
+        if not nome:
             continue
-        nome, args = os.path.basename(t[0]), t[1:]
         if nome in _RICORSIVI_SEMPRE:
             return True
         if nome in ("grep", "egrep", "fgrep"):
@@ -1015,12 +1427,13 @@ def _comando_ricorsivo(cmd: str) -> bool:
     return False
 
 
-def percorsi_richiesti(nome: str, ti: dict, cwd, nomi_semplici=False):
+def percorsi_richiesti(nome: str, ti: dict, cwd, nomi_semplici=False, env=None):
     """Tutti i percorsi che una chiamata di strumento vuole toccare, come
     `(testo, percorso_risolto, ricorsivo)`. `ricorsivo` e' vero per Grep e
     Glob: una ricerca che parte da una cartella entra in tutto quello che ci
     sta sotto, compresa una cartella vietata. Grep senza `path` cerca nella
-    cwd."""
+    cwd. `env` e' l'ambiente del payload (se c'e'), per le variabili dei
+    comandi Bash."""
     out = []
     corto = _nome_corto(nome)
     ricerca = corto in ("Grep", "Glob")
@@ -1077,8 +1490,12 @@ def percorsi_richiesti(nome: str, ti: dict, cwd, nomi_semplici=False):
     cmd = ti.get("command")
     if isinstance(cmd, str) and cmd:
         ric = _comando_ricorsivo(cmd)
-        trovati = _percorsi_da_comando(cmd, cwd, nomi_semplici)
+        trovati = _percorsi_da_comando(cmd, cwd, nomi_semplici, env)
         for testo, n in trovati:
+            # Una `/` da sola non e' un percorso da negare (`ls /`), salvo che
+            # una ricerca ricorsiva parta proprio da li' (`find / -name x`).
+            if n == "/" and not ric:
+                continue
             out.append((testo, n, ric))
         if ric and cwd and not any(os.path.exists(n) for _, n in trovati):
             # Una ricerca senza una cartella o un file operando che esista
@@ -1227,6 +1644,17 @@ def _nome_corto(tool: str) -> str:
     return tool.split("__")[-1] if tool.startswith("mcp__") else tool
 
 
+def _env_payload(payload: dict):
+    """L'ambiente del payload, se l'hook ne riceve uno (un dizionario di
+    stringhe): serve a espandere le variabili di un comando Bash. Nessun hook
+    di Claude Code lo manda, per quanto si e' visto: senza, le variabili si
+    espandono con l'ambiente dell'hook e una non definita si ignora."""
+    e = payload.get("env")
+    if not isinstance(e, dict):
+        return None
+    return {k: v for k, v in e.items() if isinstance(k, str) and isinstance(v, str)}
+
+
 def valuta(payload: dict, ambito: Ambito, chi: dict, data_dir: str):
     """La prima violazione di una chiamata, o None se e' ammessa. Torna
     `{"bersaglio", "motivo", "proprietario"}`."""
@@ -1240,7 +1668,7 @@ def valuta(payload: dict, ambito: Ambito, chi: dict, data_dir: str):
     mio = ",".join(chi["nomi"]) if nominato else PREDEFINITO
 
     # 0) i file del guardiano stesso: nessuna sessione li modifica
-    v = _valuta_protetti(nome, ti, ambito, chi, data_dir, mio)
+    v = _valuta_protetti(nome, ti, ambito, chi, data_dir, mio, _env_payload(payload))
     if v:
         return v
     # 1) sessioni: strumenti dell'app che leggono o scrivono altre sessioni
@@ -1278,7 +1706,8 @@ def valuta(payload: dict, ambito: Ambito, chi: dict, data_dir: str):
                                         ", ".join(cartelle) or "nessuna configurata")}
     # 4) percorsi
     for testo, p, ricorsivo in percorsi_richiesti(nome, ti, chi["cwd"] or None,
-                                                  nomi_semplici=not nominato):
+                                                  nomi_semplici=not nominato,
+                                                  env=_env_payload(payload)):
         if nominato:
             v = _percorso_nominato(p, chi, ambito, mio)
         else:
@@ -1288,10 +1717,21 @@ def valuta(payload: dict, ambito: Ambito, chi: dict, data_dir: str):
     return None
 
 
-_RX_DEVNULL = re.compile(r"\d*&?>>?\s*/dev/null|\d*>&\d+")
-_RX_SCRIVE = re.compile(
-    r"\btee\b|\bsed\b[^;&|]*\s-[A-Za-z]*i|\bmv\b|\brm\b|\btruncate\b"
-    r"|\bdd\b|\bln\b|\bchmod\b")
+# Le chiavi di config.json che tengono acceso o configurano il guardiano.
+CHIAVI_GUARDIANO = ("guardiano", "compartimenti", "strumenti_drive")
+
+# Scritture "per altre vie" dentro il codice di un interprete
+# (`python3 -c "open(f, 'w')"`, `Path(f).write_text`, `os.remove`, `shutil`,
+# `fs.writeFileSync`, `config.save_config`, ...): se il testo nomina un file del
+# guardiano E ha uno di questi segni, e' una scrittura. `json.load(open(f))` no.
+_RX_CODICE_SCRIVE = re.compile(
+    r"write|dump\(|os\.(?:replace|rename|remove|unlink|truncate|link|symlink)"
+    r"|unlink|rmtree|shutil|truncate|save_config|appendFile|File\.open"
+    r"""|open\([^)]*,\s*['"][wax+]|mode\s*=\s*['"][wax+]""", re.I)
+_RX_SED_SUL_POSTO = re.compile(r"^(?:-[A-Za-z]*i|--in-place)")
+
+_MOTIVO_A_MANO = ("le impostazioni del guardiano le cambia il proprietario della "
+                  "macchina a mano, fuori da una sessione")
 
 
 def _protetti(ambito: Ambito, data_dir: str) -> list:
@@ -1309,32 +1749,198 @@ def _protetti(ambito: Ambito, data_dir: str) -> list:
     return [n for n in (_norm(p) for p in elenco) if n]
 
 
-def _valuta_protetti(nome, ti, ambito, chi, data_dir, mio):
-    """Scrivere (o cancellare, o spostare) un file del guardiano e' negato a
-    TUTTE le sessioni. Sono in scrittura: leggerli resta ammesso. Con Bash e'
-    euristico (un percorso del guardiano nel comando piu' una redirezione o un
-    comando che scrive), come il resto dell'estrazione dai comandi. Si modifica
-    a mano, fuori da una sessione."""
+def _operandi(s: dict) -> list:
+    """Gli argomenti di un segmento che non sono opzioni, redirezioni ne' i
+    loro bersagli (i file su cui il comando opera)."""
+    out, prec = [], ""
+    for t in s["token"][1:] if s["token"] and s["token"][0] == s["nome"] else s["args"]:
+        if _punt(t):
+            prec = t
+            continue
+        redir = bool(prec)
+        prec = ""
+        if redir or not t or (t.startswith("-") and len(t) > 1):
+            continue
+        out.append(t)
+    return out
+
+
+def _cli_config_guardiano(s: dict):
+    """La chiave del guardiano che un segmento imposta con la CLI di Plancia
+    (`plancia config guardiano spento`, `python3 -m plancia.cli config ...`,
+    `python3 bin/plancia config ...`), o None. Senza un valore e' una lettura."""
+    nome, args = s["nome"], s["args"]
+    resto = None
+    if nome == "plancia":
+        resto = args
+    elif _e_interprete(nome):
+        for k, a in enumerate(args):
+            if a == "-m" and k + 1 < len(args) and args[k + 1] in (
+                    "plancia.cli", "plancia", "plancia.__main__"):
+                resto = args[k + 2:]
+                break
+            if not a.startswith("-"):
+                base = os.path.basename(a)
+                if base == "plancia" or (base == "cli.py" and os.path.basename(
+                        os.path.dirname(a)) == "plancia"):
+                    resto = args[k + 1:]
+                break
+    if resto is None:
+        return None
+    parole = [a for a in resto if not _punt(a) and not a.startswith("-")]
+    if len(parole) >= 3 and parole[0] == "config" and parole[1] in CHIAVI_GUARDIANO:
+        return parole[1]
+    return None
+
+
+def _scrive_un_protetto(cmd: str, cwd, protetti: set, env=None):
+    """`(bersaglio, come)` se il comando Bash scrive, cancella o sposta un file
+    del guardiano, o imposta una sua chiave con la CLI; altrimenti None.
+
+    EURISTICO, dichiarato: chi vuole aggirarlo ci riesce (un percorso costruito a
+    pezzi dentro uno script). Chiude il caso ordinario: `plancia config guardiano
+    spento`, `sed -i`, `tee`, una redirezione, `cp x config.json`, `python3 -c`
+    che scrive il file, `rm`/`mv` del file o della cartella che lo contiene. La
+    lettura e' ammessa."""
+    an = _analizza(cmd)
+
+    def protetto(x):
+        """Il file protetto a cui punta `x` (anche con un glob di shell), o None."""
+        x = _espandi_var(x, env)
+        if not x:
+            return None
+        for cand in [x] + _espandi_glob(x, cwd):
+            n = _norm(cand, cwd)
+            if n and n.lower() in protetti:
+                return n
+        return None
+
+    def contiene(x):
+        """Un file protetto che sta dentro la cartella `x` (o e' `x`)."""
+        x = _espandi_var(x, env)
+        n = _norm(x, cwd) if x else ""
+        return n if n and any(_dentro(p, n) for p in protetti) else None
+
+    def destinazione(operandi):
+        """Il file protetto che un `cp`/`mv`/`install`/`rsync` scrive: l'ultimo
+        operando, o (se e' una cartella) la cartella piu' il nome di ogni sorgente."""
+        if not operandi:
+            return None
+        ultimo = operandi[-1]
+        v = protetto(ultimo)
+        if v:
+            return v
+        u = _espandi_var(ultimo, env)
+        dest = _norm(u, cwd) if u else ""
+        if len(operandi) >= 2 and dest and (ultimo.endswith("/") or os.path.isdir(dest)):
+            for src in operandi[:-1]:
+                n = _norm(os.path.join(dest, os.path.basename(src.rstrip("/"))))
+                if n and n.lower() in protetti:
+                    return n
+        return None
+
+    codice = False
+    for s in an["segmenti"]:
+        nome = s["nome"]
+        # 1) la CLI di Plancia
+        chiave = _cli_config_guardiano(s)
+        if chiave:
+            return chiave, "cli"
+        if _e_interprete(nome):
+            codice = True
+        # 2) redirezioni: `> file`, `>> file`, `>| file`
+        prec = ""
+        for t in s["token"]:
+            if _punt(t):
+                prec = t
+                continue
+            if ">" in prec and "<" not in prec and not prec.endswith("&"):
+                v = protetto(t)
+                if v:
+                    return v, "scrive"
+            prec = ""
+        op = _operandi(s)
+        n = nome.lower()
+        if n in ("tee", "truncate", "rm", "chmod", "chown", "ed", "ex", "vi", "vim",
+                 "nano", "emacs", "sponge", "unlink", "shred", "mv"):
+            for x in op:
+                v = protetto(x)
+                if v:
+                    return v, "scrive"
+            if n == "mv":
+                v = destinazione(op)
+                if v:
+                    return v, "scrive"
+            if n in ("rm", "mv", "unlink", "shred"):
+                for x in op[:-1] if n == "mv" else op:
+                    v = contiene(x)
+                    if v:
+                        return v, "scrive"
+        elif n in ("sed", "perl") and any(_RX_SED_SUL_POSTO.match(a) for a in s["args"]):
+            for x in op:
+                v = protetto(x)
+                if v:
+                    return v, "scrive"
+        elif n in ("cp", "install", "rsync", "ln"):
+            v = destinazione(op)
+            if v:
+                return v, "scrive"
+        elif n == "dd":
+            for a in s["args"]:
+                if a.startswith("of="):
+                    v = protetto(a[3:])
+                    if v:
+                        return v, "scrive"
+    # 3) codice dato a un interprete: nomina un file del guardiano E scrive
+    if codice:
+        testi = [t for s in an["segmenti"] if _e_interprete(s["nome"]) for t in s["args"]]
+        testi += an["corpi"]
+        if "save_config" in cmd:
+            return "config.save_config", "cli"
+        for t in testi:
+            if _RX_CODICE_SCRIVE.search(t):
+                for c in _trova_percorsi_in_testo(t):
+                    v = protetto(c)
+                    if v:
+                        return v, "scrive"
+    return None
+
+
+def _valuta_protetti(nome, ti, ambito, chi, data_dir, mio, env=None):
+    """Scrivere (o cancellare, o spostare) un file del guardiano, o cambiarne le
+    impostazioni con la CLI di Plancia (`plancia config guardiano ...`), e'
+    negato a TUTTE le sessioni, predefinito compreso. Leggere resta ammesso. Con
+    Bash e' euristico (vedi `_scrive_un_protetto`). Vale solo in `bloccante`,
+    come ogni diniego: chi vuole cambiare la config con l'aiuto di una sessione
+    deve prima passare a `solo-registro`, o cambiarla a mano."""
     corto = _nome_corto(nome)
     cwd = chi["cwd"] or None
     cmd = ti.get("command")
-    candidati = []
-    if corto in STRUMENTI_SCRITTURA:
-        candidati = [_norm(ti.get(k), cwd) for k in ("file_path", "notebook_path", "path")
-                     if isinstance(ti.get(k), str)]
-    elif isinstance(cmd, str) and cmd and (
-            ">" in _RX_DEVNULL.sub(" ", cmd) or _RX_SCRIVE.search(cmd)):
-        candidati = [n for _, n in _percorsi_da_comando(cmd, cwd, True)]
-    if not candidati:
-        return None
+    scrittura = corto in STRUMENTI_SCRITTURA
+    if not scrittura and not (isinstance(cmd, str) and cmd):
+        return None     # nessuno strumento che scrive e nessun comando: niente da guardare
     protetti = {p.lower() for p in _protetti(ambito, data_dir)}
-    for n in candidati:
-        if n and n.lower() in protetti:
-            return {"bersaglio": n, "proprietario": "il guardiano",
-                    "motivo": "compartimento %s: %s e' un file del guardiano dei "
-                              "compartimenti, non si modifica da una sessione: "
-                              "modificalo a mano" % (mio, n)}
-    return None
+    if scrittura:
+        for k in ("file_path", "notebook_path", "path"):
+            if isinstance(ti.get(k), str):
+                n = _norm(ti[k], cwd)
+                if n and n.lower() in protetti:
+                    return {"bersaglio": n, "proprietario": "il guardiano",
+                            "motivo": "compartimento %s: %s e' un file del guardiano "
+                                      "dei compartimenti: %s" % (mio, n, _MOTIVO_A_MANO)}
+        return None
+    r = _scrive_un_protetto(cmd, cwd, protetti, env)
+    if not r:
+        return None
+    bersaglio, come = r
+    if come == "cli":
+        return {"bersaglio": bersaglio, "proprietario": "il guardiano",
+                "motivo": "compartimento %s: il comando imposta la chiave %r di "
+                          "config.json, che governa il guardiano dei compartimenti: %s"
+                          % (mio, bersaglio, _MOTIVO_A_MANO)}
+    return {"bersaglio": bersaglio, "proprietario": "il guardiano",
+            "motivo": "compartimento %s: %s e' un file del guardiano dei "
+                      "compartimenti: %s" % (mio, bersaglio, _MOTIVO_A_MANO)}
 
 
 def _percorso_nominato(p, chi, ambito, mio):
@@ -1350,11 +1956,35 @@ def _percorso_nominato(p, chi, ambito, mio):
             continue
         if _progetto_ok(p, chi, _codifica_di_x(chi["codificata"].lower(), c)):
             continue
-        prop = ambito.proprietario_percorso(p) or PREDEFINITO
+        prop = ambito.proprietario_percorso(p) or ambito.proprietario_specchio(p)
+        if prop is None and _e_temporaneo(p, ambito):
+            return {"bersaglio": p, "proprietario": "nessuno",
+                    "motivo": "compartimento %s: %s e' nella cartella temporanea "
+                              "condivisa, che non e' di nessun compartimento ma che "
+                              "un compartimento nominato non usa (e' un posto dove "
+                              "passarsi file): usa la sua cartella di sessione in "
+                              "/private/tmp/claude-%s/ (fuori dai permessi di %s)"
+                              % (mio, p, ambito.uid, nome)}
+        if prop is None and p == "/":
+            return {"bersaglio": p, "proprietario": "nessuno",
+                    "motivo": "compartimento %s: la radice del disco non e' di nessun "
+                              "compartimento ma e' fuori dai permessi di %s"
+                              % (mio, nome)}
+        prop = prop or PREDEFINITO
         return {"bersaglio": p, "proprietario": prop,
                 "motivo": "compartimento %s: %s appartiene a %s (fuori dai "
                           "permessi di %s)" % (mio, p, prop, nome)}
     return None
+
+
+_TEMPORANEI = ("/tmp", "/private/tmp", "/var/tmp", "/private/var/tmp",
+               "/var/folders", "/private/var/folders")
+
+
+def _e_temporaneo(p: str, ambito: Ambito) -> bool:
+    """`p` sta in una cartella temporanea condivisa (`/tmp` e la TMPDIR per
+    utente di macOS): non e' di nessun compartimento."""
+    return any(_dentro(p, t) or _dentro(p, _norm(t)) for t in _TEMPORANEI)
 
 
 def _divieto(p, mio, extra=""):
@@ -1380,6 +2010,21 @@ def _percorso_predefinito(p, ricorsivo, ambito, mio):
                         "motivo": "compartimento %s: la ricerca in %s include %s, "
                                   "che appartiene a %s: restringi il percorso"
                                   % (mio, p, f, nome)}
+    # Lo specchio delle cartelle dei nominati in `<claude>/projects`:
+    # trascrizioni, memoria, cartelle di sessione e dei subagenti. E' lavoro
+    # loro (i canali 5 e 7 della specifica) come le cartelle stesse.
+    prop = ambito.proprietario_specchio(p)
+    if prop:
+        return {"bersaglio": p, "proprietario": prop,
+                "motivo": "compartimento %s: %s (trascrizioni e memoria) appartiene "
+                          "a %s" % (mio, p, prop)}
+    if ricorsivo:
+        prop = ambito.specchio_incluso(p)
+        if prop:
+            return {"bersaglio": p, "proprietario": prop,
+                    "motivo": "compartimento %s: la ricerca in %s include le "
+                              "trascrizioni e la memoria di %s sotto %s: restringi "
+                              "il percorso" % (mio, p, prop, ambito.progetti)}
     for letterale, glob in ambito.divieti():
         if glob is None and "/" not in letterale:
             # un nome semplice (senza barre): vale come modello di nome
@@ -1422,11 +2067,17 @@ def _valuta_sessioni(nome, ti, ambito, chi, data_dir, mio):
             proprio=_e_proprio(a, chi, ambito) or _agente_proprio(a, chi))
     if not nome.startswith(PREFISSO_SESSIONI):
         return None
+    corto = _nome_corto(nome)
+    if corto in SESSIONI_RICERCA and ambito.nominati:
+        # Anche con un filtro di sessione nel tool_input: la ricerca e' nel
+        # contenuto delle trascrizioni, che sono lavoro dei compartimenti.
+        return {"bersaglio": corto, "proprietario": "altri compartimenti",
+                "motivo": "compartimento %s: %s cerca nelle trascrizioni di tutte "
+                          "le sessioni, anche di un compartimento nominato" % (mio, corto)}
     ids = _stringhe(ti, CHIAVI_ID_SESSIONE)
     for k in CHIAVI_LISTA_SESSIONI:
         if isinstance(ti.get(k), list):
             ids += [x for x in ti[k] if isinstance(x, str) and x]
-    corto = _nome_corto(nome)
     if not ids:
         if nominato and corto not in SESSIONI_SENZA_BERSAGLIO_OK:
             return {"bersaglio": corto, "proprietario": "altri compartimenti",

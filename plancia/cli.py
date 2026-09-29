@@ -706,6 +706,16 @@ def cmd_config(args):
                 value = json.loads(value)
             except Exception:
                 pass
+            if args.chiave == "guardiano":
+                # Un valore fuori dai tre modi si degrada in silenzio (il
+                # guardiano lo tratta come config rotta): meglio rifiutarlo qui.
+                from .compartimenti import MODI
+                modo = value.strip().lower() if isinstance(value, str) else None
+                if modo not in MODI:
+                    print("guardiano: valore non valido %r: i modi sono %s"
+                          % (args.valore, ", ".join(MODI)), file=sys.stderr)
+                    return 2
+                value = modo
             cfg[args.chiave] = value
             config.save_config(cfg)
         print(f"{args.chiave} = {cfg.get(args.chiave)}")
