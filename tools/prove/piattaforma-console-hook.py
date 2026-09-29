@@ -1064,8 +1064,15 @@ def _prove_app_js(prova):
     # il comportamento, eseguendo i due pezzi di app.js in node con un DOM finto
     m_suona = re.search(r"function suona\(url[^)]*\) \{.*?\n\}\n", js, re.S)
     m_hint = re.search(r"\(function suggerimentoScorciatoia\(\) \{.*?\n\}\)\(\);", js, re.S)
+    nome_ascolta = ("app.js: 'Ascolta' senza audio e con una nota_voce mostra QUELLA (rossa, piu' a lungo); "
+                    "senza nota il vecchio 'audio non pronto'")
+    nome_hint = ("app.js: il suggerimento di ricerca e' Ctrl+K su Windows e Linux (anche da userAgentData), "
+                 "Cmd+K su Mac e iPhone")
     if not shutil_which("node"):
-        prova("app.js in node: (salto, node non c'e')", True)
+        # gli stessi due controlli di chi ha node, dichiarati saltati: il conteggio
+        # non cambia da una macchina all'altra
+        for nome in (nome_ascolta, nome_hint):
+            prova(nome, True, "saltato: node non e' installato su questa macchina")
         return
     copione = """
 const vm = require('vm');
@@ -1111,12 +1118,11 @@ console.log(JSON.stringify(fuori));
         prova("app.js in node: gira", False, (r.stdout + r.stderr)[-800:])
         return
     t = v["toasts"]
-    prova("app.js: 'Ascolta' senza audio e con una nota_voce mostra QUELLA (rossa, piu' a lungo); "
-          "senza nota il vecchio 'audio non pronto'",
+    prova(nome_ascolta,
           len(t) == 2 and "espeak-ng" in t[0][0] and t[0][1] is True and (t[0][2] or 0) > 2600
           and t[1][0] == "audio non pronto" and t[1][1] is True, str(t))
     h = v["hint"]
-    prova("app.js: il suggerimento di ricerca e' Ctrl+K su Windows e Linux (anche da userAgentData), Cmd+K su Mac e iPhone",
+    prova(nome_hint,
           h == {"mac": "\u2318K", "win": "Ctrl+K", "linux": "Ctrl+K", "chd": "Ctrl+K", "ios": "\u2318K"}, str(h))
 
 

@@ -876,7 +876,21 @@ def _prove_installazione(prova):
                                       and str(v.get("ritorno")).startswith("ECCEZIONE")]))
 
     # ---- hook
-    mac_posix = _hooks_attesi("<RADICE>/bin/plancia-hook", "<RADICE>/bin/plancia-richiamo")
+    # Su mac e Linux lo script e' il percorso NUDO, com'e' sempre stato, salvo che
+    # abbia qualcosa che la shell interpreta (uno spazio, un apice, una barra
+    # rovesciata, `&`, `$`...): allora e' tra apici (`shlex.quote`), o `sh -c` lo
+    # spezzerebbe. Il percorso e' quello della radice di dove gira la prova: con una
+    # radice di runner Windows (barre rovesciate) o in una cartella con spazi le
+    # virgolette scattano e la stringa "nuda" non e' piu' quella. L'aspettativa le
+    # ricava dalla radice vera con la regola scritta nel contratto di
+    # `piattaforma.riga_script`, senza chiamarla, e poi la pulisce come il figlio.
+    def _nudo(nome):
+        percorso = str(RADICE / "bin" / nome)
+        if re.search(r"[\s'\"\\$`&|;<>()*?\[\]{}!#]", percorso):
+            percorso = shlex.quote(percorso)
+        return pulisci(percorso, [(str(RADICE), "<RADICE>")])
+
+    mac_posix = _hooks_attesi(_nudo("plancia-hook"), _nudo("plancia-richiamo"))
     for p in ("mac", "linux"):
         prova("[%s] hook: gli script nudi, IDENTICI a oggi" % p,
               _settings(dati[p]) == mac_posix, json.dumps(_settings(dati[p]))[:300])

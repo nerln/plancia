@@ -8,6 +8,7 @@ import json
 import mimetypes
 import os
 import re
+import socketserver
 import threading
 import traceback
 import urllib.parse
@@ -1010,6 +1011,21 @@ def _sw_js() -> str:
                  .replace("__PLANCIA_SHELL__", json.dumps(elenco)))
 
 
+class _Server(ThreadingHTTPServer):
+    """Il server di sempre, senza la risoluzione inversa dell'indirizzo.
+
+    `HTTPServer.server_bind` chiama `socket.getfqdn()` (un DNS inverso) DOPO
+    aver preso la porta e PRIMA di metterla in ascolto. Dove quel DNS e'
+    lento (un runner macOS di CI: decine di secondi) la porta e' occupata ma
+    nessuno ascolta, e ogni connessione resta appesa fino al timeout. Il nome
+    del server (`server_name`) qui non lo legge nessuno: si tiene l'indirizzo.
+    """
+
+    def server_bind(self):
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
+
+
 def serve(port=None, open_browser=False, sync_first=True) -> None:
     cfg = config.load_config()
     port = int(port or cfg.get("port", config.DEFAULT_PORT))
@@ -1064,7 +1080,7 @@ def serve(port=None, open_browser=False, sync_first=True) -> None:
                     start_sync(False, "caldo")
         threading.Thread(target=ticker, daemon=True).start()
 
-    httpd = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    httpd = _Server(("127.0.0.1", port), Handler)
     url = f"http://127.0.0.1:{port}"
     print(f"Plancia in ascolto su {url}")
     print(f"Dati in {config.DB_PATH}")

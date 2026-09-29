@@ -638,6 +638,10 @@ def _dinamica_vera(radice, chrome):
                       "visibile entra con .vortice-entra, non un transform dall'angolo (0,0)"] = (
                 False, f"{type(errore).__name__}: {errore}")
 
+        # L'ora si formatta con LOC(), la stessa lingua dell'interfaccia che
+        # scrive la spia (oraCorta in app.js), non con la lingua del browser: su
+        # un runner con il formato a 12 ore `undefined` da "07:40 AM" mentre la
+        # pagina scrive "07:40", e la prova confrontava due formati diversi.
         # La spia (punto 4, correzione del critico): con il server ANCORA
         # vivo e state.overview già in cassa (il giro sopra l'ha popolata),
         # si forza state.overviewQuando nel passato e si richiama route()
@@ -652,8 +656,8 @@ def _dinamica_vera(radice, chrome):
               if (!state.overview) return {saltato:true};
               var passato = new Date(Date.now() - 5*60000);
               state.overviewQuando = passato;
-              var atteso = passato.toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'});
-              var adesso = new Date().toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'});
+              var atteso = passato.toLocaleTimeString(LOC(),{hour:'2-digit',minute:'2-digit'});
+              var adesso = new Date().toLocaleTimeString(LOC(),{hour:'2-digit',minute:'2-digit'});
               await route();
               var s = document.getElementById('spia-memoria');
               return {saltato:false, testo: s?s.textContent:null, atteso: atteso, adesso: adesso};
