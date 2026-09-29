@@ -181,7 +181,8 @@ def _copertura(termini: list, testo: str) -> int:
 
 def cerca(conn, testo: str, escludi_scope: str = "", limite: int = MAX_RICHIAMI,
           soglia: float = SOGLIA, salta: set = None, copertura_minima: int = 2,
-          tipi: tuple = TIPI_TRASVERSALI, stacco: float = STACCO) -> list:
+          tipi: tuple = TIPI_TRASVERSALI, stacco: float = STACCO,
+          solo_visibili: bool = False) -> list:
     """Le memorie che c'entrano con questo messaggio, dalla più pertinente.
 
     Il punteggio è bm25 sull'indice che Plancia tiene già aggiornato. Il titolo
@@ -191,6 +192,12 @@ def cerca(conn, testo: str, escludi_scope: str = "", limite: int = MAX_RICHIAMI,
     Poi passa il filtro di copertura, e alla fine si tiene un nome solo: la
     stessa memoria vive in più cartelle, e richiamarla due volte è due volte lo
     stesso fatto.
+
+    Con `solo_visibili` (compartimenti attivi: `knowledge` è la vista filtrata
+    della connessione) l'indice si interroga solo sulle memorie che la vista
+    lascia vedere, DENTRO la query e prima del `LIMIT 60`: filtrare dopo il
+    taglio darebbe un richiamo vuoto a chi ha poche memorie in un archivio
+    grande, perché le prime sessanta per punteggio sarebbero tutte degli altri.
     """
     termini = parole(testo)
     if len(termini) < 2:
@@ -212,10 +219,12 @@ def cerca(conn, testo: str, escludi_scope: str = "", limite: int = MAX_RICHIAMI,
     # Codex cominciava a pescare la memoria sbagliata. Meglio perdere qualche
     # coniugazione che rispondere male.
     espressione = "kind:memoria AND (" + " OR ".join(f'"{t}"*' for t in termini) + ")"
+    visibili = " AND ref_id IN (SELECT id FROM knowledge)" if solo_visibili else ""
     try:
         righe = conn.execute(
             "SELECT ref_id, bm25(search_fts, 0.0, 0.0, 8.0, 1.0, 0.0, 0.0) AS bm "
-            "FROM search_fts WHERE search_fts MATCH ? ORDER BY bm LIMIT 60",
+            "FROM search_fts WHERE search_fts MATCH ?" + visibili +
+            " ORDER BY bm LIMIT 60",
             (espressione,),
         ).fetchall()
     except sqlite3.Error:
@@ -371,15 +380,37 @@ def pulisci_vecchi(giorni: int = 7) -> int:
 
 def richiama(testo: str, cwd: str = "", session_id: str = "",
              limite: int = MAX_RICHIAMI, soglia: float = SOGLIA,
-             ricorda: bool = True) -> list:
-    """Il giro completo: cerca, esclude quello che è già in contesto, segna."""
+             ricorda: bool = True, payload: dict = None) -> list:
+    """Il giro completo: cerca, esclude quello che è già in contesto, segna.
+
+    Con dei compartimenti nominati (vedi plancia/compartimenti_viste.py) la
+    ricerca vede solo le memorie del compartimento della sessione che scrive:
+    una sessione del predefinito non riceve mai la memoria automatica di un
+    nominato (`<claude>/projects/<codifica della cartella del nominato>/
+    memory/`, che la cerca "scritta in altre cartelle" pescava), e viceversa.
+    Il compartimento lo dicono gli stessi segnali del guardiano: l'id di
+    sessione, la cartella in cui e' stata aperta (dal `transcript_path`, per
+    questo l'hook passa tutto il `payload`) e la cwd. Una sessione con segnali
+    di due nominati non riceve niente.
+    """
     conn = apri_ro()
     if conn is None:
         return []
     try:
+        from . import compartimenti_viste as viste
+        ambito = viste.attivo()
+        if ambito is not None:
+            base = dict(payload) if isinstance(payload, dict) else {}
+            base.setdefault("session_id", session_id)
+            base.setdefault("cwd", cwd)
+            visore = viste.visore_da_payload(ambito, base)
+            if visore == viste.INCERTO:
+                return []
+            viste.applica(conn, ambito, visore, solo=("knowledge",))
         trovati = cerca(conn, testo, escludi_scope=cartella_sessione(cwd),
                         limite=limite, soglia=soglia,
-                        salta=gia_detto(session_id) if session_id else set())
+                        salta=gia_detto(session_id) if session_id else set(),
+                        solo_visibili=ambito is not None)
     finally:
         conn.close()
     if trovati and ricorda and session_id:

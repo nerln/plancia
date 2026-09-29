@@ -4,7 +4,8 @@ const TOKEN = document.querySelector('meta[name=plancia-token]').content;
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 
-const state = { overview: null, view: null, filters: {}, paletteIndex: 0, paletteHits: [] };
+const state = { overview: null, view: null, filters: {}, paletteIndex: 0, paletteHits: [],
+                compartimenti: null, compartimento: null };
 
 
 /* ---------------------------------------------------------------- lingue */
@@ -210,6 +211,9 @@ const EN = {
   'spia_aggiornato': 'updated at {ora}',
   'spia_memoria': 'from memory, {ora}, server unreachable',
   'spia_aggiorno': 'updating…',
+  // E1-PLANCIA: il selettore di compartimento in alto.
+  'compartimento_etichetta': 'Compartment',
+  'compartimento_predefinito': 'Default',
 };
 
 // Il testo italiano delle chiavi qui sopra che non sono già, loro stesse, la
@@ -249,6 +253,10 @@ const IT_TESTI = {
   'spia_aggiornato': 'aggiornato alle {ora}',
   'spia_memoria': 'memoria delle {ora}, server non raggiungibile',
   'spia_aggiorno': 'aggiorno…',
+
+  // E1-PLANCIA: il selettore di compartimento in alto (vedi conCompartimento).
+  'compartimento_etichetta': 'Compartimento',
+  'compartimento_predefinito': 'Predefinito',
 };
 
 // Gli eventi li scrive Plancia stessa, quindi si possono tradurre a vista.
@@ -412,7 +420,23 @@ function toast(msg, bad, ms) {
 // schermo non è stato preso ora, è la stessa istantanea di prima.
 let apiChiamateOk = 0;
 
+/* Compartimenti (E1-PLANCIA): con dei compartimenti nominati in config.json la
+   dashboard, che e' la vista di una persona e non di un agente, mostra tutto ma
+   SEPARATO: un compartimento alla volta, scelto dal selettore in alto (di
+   default il predefinito). Ogni chiamata all'API porta `?compartimento=`, cosi'
+   il server filtra le letture e assegna al compartimento quello che nasce qui.
+   Senza compartimenti (`/api/compartimenti` dice `attivo: false`) non si
+   aggiunge niente e non compare nessun selettore. */
+function conCompartimento(path) {
+  const c = state.compartimenti;
+  if (!c || !c.attivo || !path.startsWith('/api/') || path.startsWith('/api/compartimenti')) return path;
+  if (/[?&]compartimento=/.test(path)) return path;
+  return path + (path.includes('?') ? '&' : '?')
+    + 'compartimento=' + encodeURIComponent(state.compartimento || c.predefinito);
+}
+
 async function api(path, opts = {}) {
+  path = conCompartimento(path);
   const res = await fetch(path, {
     ...opts,
     headers: { 'Content-Type': 'application/json', 'X-Plancia-Token': TOKEN, ...(opts.headers || {}) },
@@ -1964,7 +1988,11 @@ async function openMemory(name) {
 const MEMORIA_VERSIONE = 'plancia-memoria-v1';
 const MEMORIA_TETTO = 400 * 1024; // byte, sulla voce intera (json compreso)
 let memoriaAvvisato = false;
-const memoriaChiave = (vista, lingua) => `${MEMORIA_VERSIONE}:${vista}:${lingua}`;
+// Con i compartimenti attivi la memoria di una vista e' per compartimento: la
+// vista di uno non deve comparire un istante nell'altro mentre il fetch arriva.
+const memoriaChiave = (vista, lingua) => `${MEMORIA_VERSIONE}:${vista}:${lingua}`
+  + (state.compartimenti && state.compartimenti.attivo
+    ? ':c:' + (state.compartimento || state.compartimenti.predefinito) : '');
 
 function memoriaSalva(vista, html) {
   // La vista 'cerca' con una query è un indirizzo (il testo cercato), non
@@ -2630,6 +2658,7 @@ $('#btn-lang').addEventListener('click', async () => {
   storageSet('plancia-ui', UILANG);
   $('#btn-lang').textContent = UILANG.toUpperCase();
   traduciShell();
+  disegnaSelettore();
   state.overview = null;
   await route();
 });
@@ -2696,9 +2725,52 @@ async function pollSync() {
   } catch (e) { $('#sync-text').textContent = T('server non raggiungibile'); }
 }
 
+/* Il selettore di compartimento (E1-PLANCIA). Si disegna solo se il server dice
+   che ci sono compartimenti nominati: senza, la topbar e' quella di sempre. */
+function disegnaSelettore() {
+  const c = state.compartimenti;
+  let sel = $('#sel-compartimento');
+  if (!c || !c.attivo) { if (sel) sel.remove(); return; }
+  if (!sel) {
+    sel = document.createElement('select');
+    sel.id = 'sel-compartimento';
+    sel.style.width = 'auto';
+    sel.style.minWidth = '150px';
+    sel.addEventListener('change', async () => {
+      state.compartimento = sel.value;
+      // quello che la pagina teneva a mente e' del compartimento di prima
+      state.overview = null; state.progetti = null; state.lav = null;
+      state.recap = null; state.filters = {};
+      await route();
+    });
+    $('.topbar-actions').prepend(sel);
+  }
+  sel.title = T('compartimento_etichetta');
+  sel.setAttribute('aria-label', T('compartimento_etichetta'));
+  sel.innerHTML = c.elenco.map((n) =>
+    `<option value="${esc(n)}"${n === state.compartimento ? ' selected' : ''}>`
+    + `${esc(n === c.predefinito ? T('compartimento_predefinito') : n)}</option>`).join('');
+}
+
+// `?compartimento=nome` nell'indirizzo apre la dashboard su quel compartimento
+// (un nome che non c'e' e' il predefinito: lo decide il server).
+const COMPARAM = new URLSearchParams(location.search).get('compartimento');
+
+async function caricaCompartimenti() {
+  try {
+    const c = await api('/api/compartimenti'
+      + (COMPARAM ? '?compartimento=' + encodeURIComponent(COMPARAM) : ''));
+    state.compartimenti = c;
+    state.compartimento = c.attivo ? (c.scelto || c.predefinito) : null;
+  } catch (e) { state.compartimenti = null; }
+  disegnaSelettore();
+}
+
 window.addEventListener('hashchange', route);
 traduciShell();
-route();
+// prima di disegnare la prima vista si sa se ci sono compartimenti: una vista
+// disegnata senza il parametro mostrerebbe il predefinito e poi cambierebbe
+caricaCompartimenti().then(route);
 pollSync();
 setInterval(pollSync, 30000);
 

@@ -537,6 +537,36 @@ progetto, non un padre vuoto. Oggi (il riepilogo) e Prossimi raggruppano i
 progetti per area appena questa mappa esiste; prima che esista, ripiegano su
 una lista piatta, così su un'installazione nuova non si rompe niente.
 
+## Compartimenti
+
+Due gruppi di lavoro sulla stessa macchina che non devono vedersi: un progetto
+condiviso con un altro e tutto il resto. `compartimenti` in
+`~/.plancia/config.json` nomina uno o piu' compartimenti (ognuno con le sue
+`cartelle` e `sessioni`); tutto il resto e' il predefinito. Senza, Plancia fa
+quello che ha sempre fatto.
+
+Con, ogni oggetto ha un compartimento ricavato dai dati che ha gia': una sessione
+dal suo id, dalla sua cartella e dalla sua trascrizione; un task dalla sessione
+che l'ha creato o dal suo progetto; un progetto dai suoi percorsi e dalle memorie
+collegate; una memoria dal file in cui sta (la memoria automatica di Claude Code
+di una cartella e' del compartimento di quella cartella). Poi ogni superficie
+mostra solo il suo. Il briefing di sessione e il richiamo delle memorie "scritte
+in altre cartelle" lasciano fuori gli altri compartimenti. Il server MCP filtra
+quello che legge, e una scrittura su un progetto, un task o un post di un altro
+compartimento e' rifiutata con un messaggio chiaro. La dashboard e' la tua vista,
+non quella di un agente, quindi mostra tutto ma separato: un selettore in alto
+sceglie il compartimento (prima il predefinito), ogni vista lo segue, e quello che
+crei li' resta li'. `?compartimento=nome` nell'indirizzo la apre su uno.
+
+Una sessione con segni di due compartimenti non vede niente. Questo decide cosa
+mostra Plancia; non e' un confine di sicurezza, stesso utente e stesso disco.
+
+Limiti da sapere: il comando `plancia` da terminale e l'assistente vocale della
+dashboard sono la tua vista, non quella di un agente, e non sono filtrati. Le
+regole sulle cartelle confrontano percorsi POSIX (che iniziano con `/` o `~`): un
+percorso Windows con la lettera del disco non e' ancora riconosciuto, quindi su
+Windows ogni oggetto resta nel compartimento predefinito.
+
 ## Due scelte non ovvie
 
 **I transcript si leggono a byte, non a righe.** Sono centinaia di megabyte e
@@ -562,6 +592,7 @@ plancia/turni.py       l'indice sul testo di quello che e' stato detto
 plancia/recap.py       il riepilogo
 plancia/voice.py       sintesi, riproduzione, ascolto
 plancia/briefing.py    quello che vede Claude
+plancia/compartimenti_viste.py  quello che vede ogni compartimento
 plancia/actions.py     le scritture, condivise fra HTTP e MCP
 plancia/api.py         server locale e REST
 plancia/mcp.py         JSON-RPC su stdio
@@ -605,7 +636,7 @@ git config core.hooksPath .githooks
 ```
 
 Accende il gancio che fa girare `python3 tools/prova.py` prima di ogni push:
-2729 controlli in una ventina di secondi, su un archivio finto che non tocca
+2977 controlli in una ventina di secondi, su un archivio finto che non tocca
 il tuo.
 
 ## Licenza

@@ -155,6 +155,46 @@ def _cartelle_e_sessioni_escluse():
     return cartelle, sessioni, True
 
 
+def _config_con_nominati():
+    """config.json nomina dei compartimenti (oltre a `predefinito`)? Una lettura
+    e basta: senza compartimenti questo hook non importa il pacchetto e fa
+    quello che ha sempre fatto. Una config che non si legge conta come "forse":
+    `compartimenti_viste.attivo()` puo' avere ancora l'ultima copia valida."""
+    try:
+        with open(CONFIG, encoding="utf-8") as fh:
+            cfg = json.load(fh)
+    except FileNotFoundError:
+        return False
+    except Exception:
+        return True
+    if not isinstance(cfg, dict):
+        return True
+    comp = cfg.get("compartimenti")
+    if comp is None:
+        return False
+    if not isinstance(comp, dict):
+        return True
+    return any(k != "predefinito" for k in comp)
+
+
+def _carica_viste():
+    """Il modulo plancia.compartimenti_viste, senza mettere ne' la radice del
+    checkout ne' `bin/` sul sys.path (stesso metodo di bin/plancia-guardiano:
+    un file `.py` messo accanto non deve rubare il posto a un modulo di
+    sistema). Solleva se non si carica."""
+    import importlib.util
+    radice = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+    cartella = os.path.join(radice, "plancia")
+    spec = importlib.util.spec_from_file_location(
+        "plancia", os.path.join(cartella, "__init__.py"),
+        submodule_search_locations=[cartella])
+    modulo = importlib.util.module_from_spec(spec)
+    sys.modules["plancia"] = modulo
+    spec.loader.exec_module(modulo)
+    from plancia import compartimenti_viste
+    return compartimenti_viste
+
+
 def _escluso(cwd, session_id, cartelle, sessioni):
     """Stessa regola di plancia/esclusi.sessione_esclusa(): per id esplicito,
     o perché la cartella da cui la sessione è partita è esclusa (o sta sotto
@@ -211,8 +251,14 @@ def _contenitori(casa=None):
     return elenco
 
 
-def ancoraggio(cwd):
+def ancoraggio(cwd, filtro=None):
     """Dice a Claude se la sessione e' ancorata a un progetto o no.
+
+    `filtro`, quando ci sono dei compartimenti (plancia/compartimenti_viste.py),
+    e' una funzione percorso -> bool: i progetti legati a un percorso che il
+    compartimento della sessione non vede non si nominano ne' si contano (senza,
+    l'avviso di una sessione aperta in `~/dev` elencherebbe anche il progetto di
+    un altro compartimento).
 
     Non tocca il filesystem: i percorsi noti li chiede al database, perche'
     elencare le cartelle dentro il Drive sveglia la sincronizzazione e
@@ -240,6 +286,8 @@ def ancoraggio(cwd):
             noti[_norma(percorso)] = chiave
     finally:
         con.close()
+    if filtro is not None:
+        noti = {k: v for k, v in noti.items() if filtro(k)}
 
     # Un contenitore non e' mai la casa di un progetto, per legge della radice:
     # si controlla prima, cosi' un contenitore registrato per sbaglio come
@@ -322,10 +370,48 @@ def run():
     # esattamente il contrario di quello che chi ha scritto
     # "cartelle_escluse" voleva.
 
+    # Compartimenti: chi e' questa sessione. Se in config ce ne sono di nominati
+    # e non si riesce a dirlo (il pacchetto non si carica, un'eccezione), la
+    # sessione NON riceve il briefing: meglio il silenzio che il lavoro di un
+    # altro compartimento.
+    viste = ambito = visore = None
+    comp_errore = False
     if event == "SessionStart":
         try:
-            with open(BRIEFING, encoding="utf-8") as fh:
-                text = fh.read().strip()
+            if _config_con_nominati():
+                viste = _carica_viste()
+                ambito = viste.attivo(DATA)
+                if ambito is not None:
+                    visore = viste.visore_da_payload(ambito, payload)
+        except Exception:
+            comp_errore = True
+
+    if event == "SessionStart":
+        try:
+            if comp_errore or (ambito is not None and visore == viste.INCERTO):
+                sorgente = None
+            elif ambito is not None:
+                # con i compartimenti attivi si legge SOLO il file del proprio
+                # compartimento: il `briefing.md` di prima poteva non essere
+                # separato
+                sorgente = viste.file_briefing(DATA, visore)
+                if not os.path.exists(sorgente):
+                    # appena scritta la config con i compartimenti, prima di
+                    # un sync o di una scrittura: il file per compartimento non
+                    # c'e' ancora. Lo si genera qui (una volta) invece di
+                    # lasciare la sessione senza briefing; se non riesce, silenzio
+                    try:
+                        from plancia import briefing as _briefing
+                        _briefing.write_cache()
+                    except Exception:
+                        pass
+            else:
+                sorgente = BRIEFING
+            if sorgente is None:
+                text = ""
+            else:
+                with open(sorgente, encoding="utf-8") as fh:
+                    text = fh.read().strip()
         except Exception:
             text = ""
         if len(text) > MAX_CONTEXT:
@@ -339,10 +425,14 @@ def run():
         # legata a nessun progetto... se non c'è, creala", e un tool MCP
         # chiamato subito dopo scriveva davvero quella scheda.
         try:
-            if not valido:
+            if not valido or comp_errore:
                 pass
             elif escluso:
                 text += "\n\nSessione privata: non registrare niente in Plancia."
+            elif ambito is not None:
+                if visore != viste.INCERTO:
+                    text += ancoraggio(record["cwd"], lambda p: viste.percorso_visibile(
+                        ambito, visore, p))
             else:
                 text += ancoraggio(record["cwd"])
         except Exception:

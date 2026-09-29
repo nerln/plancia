@@ -434,6 +434,35 @@ not just a blank one. Today (the recap view) and Next up group projects by
 area once this map exists; before it does, they fall back to one flat list, so
 nothing breaks for a fresh install.
 
+## Compartments
+
+Two groups of work on the same machine that must not see each other: a project
+shared with someone else, and the rest. `compartimenti` in
+`~/.plancia/config.json` names one or more compartments (each with its
+`cartelle` and `sessioni`); everything else is the default one. Without it
+Plancia does what it always did.
+
+With it, every object gets a compartment from the data it already has: a session
+from its id, its folder and its transcript; a task from the session that made it,
+or from its project; a project from its paths and the memory notes linked to it;
+a memory note from the file it lives in (Claude Code's automatic memory of a
+folder belongs to that folder's compartment). Then each surface shows only its
+own. The session briefing and the recall of notes "written in other folders"
+leave the other compartments out. The MCP server filters what it reads, and a
+write on another compartment's project, task or post is refused with a plain
+message. The dashboard is your view, not an agent's, so it shows everything but
+separated: a selector at the top picks the compartment (the default one first),
+every view follows it, and what you create there belongs there.
+`?compartimento=name` in the address opens it on one.
+
+A session with signs of two compartments sees nothing. This decides what Plancia
+shows; it is not a security boundary, same user and same disk.
+
+Limits worth knowing: the `plancia` command in a terminal and the dashboard's
+voice assistant are your view, not an agent's, and are not filtered. Folder rules
+compare POSIX paths (starting with `/` or `~`): a Windows drive-letter path is not
+recognised yet, so on Windows every object still falls in the default compartment.
+
 ## Two decisions worth knowing about
 
 **Transcripts are read by byte offset, not by line.** They are hundreds of
@@ -459,6 +488,7 @@ plancia/turni.py       the full text index over what was said
 plancia/recap.py       the daily recap
 plancia/voice.py       speech, playback, listening
 plancia/briefing.py    what Claude sees
+plancia/compartimenti_viste.py  what each compartment sees
 plancia/actions.py     writes, shared by HTTP and MCP
 plancia/api.py         local server and REST
 plancia/mcp.py         JSON-RPC over stdio
@@ -500,7 +530,7 @@ Reads are open: it is your data, already on your disk.
 git config core.hooksPath .githooks
 ```
 
-Turns on the hook that runs `python3 tools/prova.py` before every push: 2729
+Turns on the hook that runs `python3 tools/prova.py` before every push: 2977
 checks in about twenty seconds, against a throwaway archive that never touches
 yours. They cover the schema, the board, the proposals, the search index, the
 recap, the MCP surface and its token budget, every read route of the HTTP API,

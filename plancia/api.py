@@ -15,8 +15,9 @@ from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import (actions, agente, briefing, cantiere, config, eventi, ingest,
-               jarvis, lavagna, recap, riprendi, slot, store, voice)
+from . import (actions, agente, briefing, cantiere, compartimenti_viste as viste,
+               config, eventi, ingest, jarvis, lavagna, recap, riprendi, slot, store,
+               voice)
 
 SYNC_LOCK = threading.Lock()
 SYNC_STATE = {"running": False, "message": "", "started": None, "result": None}
@@ -277,6 +278,45 @@ def _senza_voce(risposta, nota) -> dict:
     return risposta
 
 
+def compartimenti_info(scelto=None) -> dict:
+    """`/api/compartimenti`: cosa sa la dashboard dei compartimenti.
+
+    Senza compartimenti nominati in config.json: `attivo` falso e nessun
+    elenco (il selettore non si disegna e tutto resta com'e' sempre). Con dei
+    nominati: il predefinito e poi i nominati, con i nomi della config, e
+    quello scelto (senza scelta o con un nome che non c'e', il predefinito).
+    La dashboard e' la vista di una persona, non di un agente: mostra tutto,
+    ma un compartimento alla volta."""
+    ambito = viste.attivo()
+    if ambito is None:
+        return {"attivo": False, "elenco": [], "scelto": None,
+                "predefinito": viste.PREDEFINITO}
+    elenco = viste.elenco(ambito)
+    return {"attivo": True, "elenco": elenco,
+            "scelto": scelto if scelto in elenco else viste.PREDEFINITO,
+            "predefinito": viste.PREDEFINITO}
+
+
+def _connessione_separata(scelta):
+    """`(conn, ombra)`: una connessione con le viste del compartimento scelto
+    (`ombra` e' None senza compartimenti: e' la connessione di sempre). Una
+    scelta sconosciuta e' un errore, non il predefinito in silenzio: chi ha
+    scritto il nome sbagliato non deve credere di guardare il proprio."""
+    conn = store.connect()
+    try:
+        ambito = viste.attivo()
+        if ambito is None:
+            return conn, None
+        if scelta and scelta not in viste.elenco(ambito):
+            raise actions.BadInput("compartimento sconosciuto: %s" % scelta)
+        return conn, viste.applica(conn, ambito, scelta or viste.PREDEFINITO,
+                                   dashboard=True,
+                                   appart=viste.appartenenze(conn, ambito))
+    except BaseException:
+        conn.close()
+        raise
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "Plancia/1.0"
     protocol_version = "HTTP/1.1"
@@ -349,6 +389,8 @@ class Handler(BaseHTTPRequestHandler):
         if not self._authorised():
             return self._error(403, "token mancante o non valido")
         try:
+            q = urllib.parse.parse_qs(parsed.query)
+            self._scelta = (q.get("compartimento") or [None])[0]
             self._api_write(method, parsed.path, self._body())
         except actions.BadInput as exc:
             self._error(400, str(exc))
@@ -361,7 +403,15 @@ class Handler(BaseHTTPRequestHandler):
     # --- API -------------------------------------------------------------
     def _api_get(self, path, query):
         first = lambda k, d=None: (query.get(k) or [d])[0]
-        conn = store.connect()
+        if path == "/api/compartimenti":
+            return self._json(compartimenti_info(first("compartimento")))
+        # I compartimenti (vedi plancia/compartimenti_viste.py): con dei nominati
+        # in config ogni lettura passa da una connessione che vede solo il
+        # compartimento scelto con `?compartimento=` (senza: il predefinito).
+        try:
+            conn, ombra = _connessione_separata(first("compartimento"))
+        except actions.BadInput as exc:
+            return self._error(400, str(exc))
         try:
             if path == "/api/overview":
                 return self._json(overview(conn, first("lang")))
@@ -469,8 +519,16 @@ class Handler(BaseHTTPRequestHandler):
                 d = cantiere.dettaglio(conn, int(m.group(1)))
                 return self._json(d) if d else self._error(404, "lancio inesistente")
             if path == "/api/eventi":
+                limite = int(first("limite", 100))
+                if ombra is not None:
+                    # il registro e' un file solo, di tutti: si toglie a valle (e
+                    # `stato` non dice piu' quanti eventi ha in tutto)
+                    righe = ombra.filtra_eventi(eventi.leggi(
+                        first("dopo"), first("tipo"), max(limite * 20, 500)))[:limite]
+                    return self._json({"eventi": righe, "stato": {
+                        "schema": eventi.SCHEMA, "tipi": list(eventi.TIPI)}})
                 return self._json({"eventi": eventi.leggi(first("dopo"), first("tipo"),
-                                                          int(first("limite", 100))),
+                                                          limite),
                                    "stato": eventi.stato()})
             if path == "/api/agents":
                 mese = (datetime.now(timezone.utc) - timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -510,6 +568,14 @@ class Handler(BaseHTTPRequestHandler):
                 # trovava mai niente.
                 from . import turni
                 q = first("q", "")
+                if ombra is not None:
+                    # gli indici FTS non si filtrano con una vista: il filtro sta dentro la query, prima del taglio per rango
+                    dai_turni, gruppi = viste.cerca_turni(
+                        conn, ombra, q, int(first("limit", 30)), first("progetto") or None)
+                    return self._json({
+                        "turni": dai_turni, "progetti": gruppi,
+                        "schede": viste.cerca_schede(conn, ombra, q, int(first("limit", 20))),
+                    })
                 return self._json({
                     "turni": turni.cerca(conn, q, int(first("limit", 30)),
                                          first("progetto") or None),
@@ -531,7 +597,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({
                     "sync": dict(SYNC_STATE),
                     "ultimo_sync": store.get_meta(conn, "last_sync_end"),
-                    "sessione_viva": store.get_meta(conn, "live_session"),
+                    "sessione_viva": (store.get_meta(conn, "live_session")
+                                      if ombra is None else viste.sessione_viva(conn, ombra)),
                     "ultima_voce": store.get_meta(conn, "ultima_voce"),
                     "ultima_voce_da": store.get_meta(conn, "ultima_voce_da"),
                 })
@@ -561,9 +628,20 @@ class Handler(BaseHTTPRequestHandler):
                                    "sessione_data": sessione_data})
             return self._error(404, "rotta inesistente")
         finally:
+            viste.chiudi(conn, ombra)
             conn.close()
 
     def _api_write(self, method, path, body):
+        # `?compartimento=` dice in che vista e' chi scrive: cio' che nasce li'
+        # (un task, un post, un progetto, una nota) ne porta il compartimento
+        scelta = getattr(self, "_scelta", None)
+        if scelta:
+            ambito = viste.attivo()
+            if ambito is None:
+                scelta = None
+            elif scelta not in viste.elenco(ambito):
+                raise actions.BadInput("compartimento sconosciuto: %s" % scelta)
+        nuovo = scelta if scelta and scelta != viste.PREDEFINITO else ""
         conn = store.connect()
         try:
             if path.startswith("/api/voice/") or path == "/api/recap":
@@ -705,7 +783,20 @@ class Handler(BaseHTTPRequestHandler):
                 if not domanda:
                     raise actions.BadInput("serve una domanda")
                 lang = recap.lang_or_default(body.get("lang"))
-                risposta = recap.answer(domanda, lang, conn)
+                # la risposta si costruisce dal compartimento scelto: le viste della
+                # connessione coprono briefing e dati di oggi, la ricerca nell'indice
+                # FTS (che le viste non coprono) passa da `cerca_schede`. L'assistente
+                # vocale `jarvis` riceve la connessione non separata dalla rotta e
+                # NON e' separato.
+                conn_r, ombra_r = _connessione_separata(scelta)
+                try:
+                    risposta = recap.answer(
+                        domanda, lang, conn_r,
+                        schede=(None if ombra_r is None else
+                                (lambda q: viste.cerca_schede(conn_r, ombra_r, q, 8))))
+                finally:
+                    viste.chiudi(conn_r, ombra_r)
+                    conn_r.close()
                 out = {"domanda": domanda, "risposta": risposta, "lingua": lang}
                 if body.get("voce", True):
                     info, nota = _sintesi_o_nota(risposta, lang, subito=True)
@@ -717,7 +808,13 @@ class Handler(BaseHTTPRequestHandler):
                         out["motore"] = info["motore"]
                 return self._json(out)
             if path == "/api/recap" and method == "POST":
-                data = recap.build(conn, body.get("day"), body.get("lang"), body.get("engine"))
+                conn_r, ombra_r = _connessione_separata(scelta)
+                try:
+                    data = recap.build(conn_r, body.get("day"), body.get("lang"),
+                                       body.get("engine"))
+                finally:
+                    viste.chiudi(conn_r, ombra_r)
+                    conn_r.close()
                 if body.get("voce", True):
                     info, nota = _sintesi_o_nota(data["testo"], data["lingua"], subito=True)
                     if info is None:
@@ -736,7 +833,8 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/tasks" and method == "POST":
                 return self._json(actions.task_add(
                     conn, body.get("title"), body.get("body", ""), body.get("project"),
-                    body.get("priority", 2), body.get("due"), body.get("tags", ""), "dashboard"))
+                    body.get("priority", 2), body.get("due"), body.get("tags", ""), "dashboard",
+                    compartimento=nuovo))
             m = re.match(r"^/api/tasks/(\d+)$", path)
             if m and method == "PATCH":
                 return self._json(actions.task_update(conn, int(m.group(1)), **body))
@@ -749,7 +847,7 @@ class Handler(BaseHTTPRequestHandler):
                     conn, body.get("text"), body.get("platform", "x"),
                     body.get("status", "bozza"), body.get("project"), body.get("url"),
                     body.get("source_ref", ""), body.get("scheduled_for"),
-                    media=body.get("media", "")))
+                    media=body.get("media", ""), compartimento=nuovo))
             m = re.match(r"^/api/posts/(\d+)$", path)
             if m and method == "PATCH":
                 return self._json(actions.post_update(conn, int(m.group(1)), **body))
@@ -760,7 +858,7 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/projects" and method == "POST":
                 return self._json(actions.project_create(
                     conn, body.get("name"), body.get("key"), body.get("kind", "progetto"),
-                    body.get("summary", ""), body.get("priority", 2)))
+                    body.get("summary", ""), body.get("priority", 2), compartimento=nuovo))
             m = re.match(r"^/api/projects/([^/]+)$", path)
             if m and method == "PATCH":
                 return self._json(actions.project_update(
@@ -768,7 +866,7 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/events" and method == "POST":
                 return self._json(actions.log_event(
                     conn, body.get("title"), body.get("kind", "nota"), body.get("detail", ""),
-                    body.get("project"), body.get("ref"), "dashboard"))
+                    body.get("project"), body.get("ref"), "dashboard", compartimento=nuovo))
             return self._error(404, "rotta inesistente")
         finally:
             conn.close()

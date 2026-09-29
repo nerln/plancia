@@ -43,7 +43,8 @@ def _after_write(conn):
 # --------------------------------------------------------------------------
 
 def task_add(conn, title, body="", project=None, priority=2, due=None, tags="",
-             source="manuale", session_id=None, cwd=None, agent=None, host=None) -> dict:
+             source="manuale", session_id=None, cwd=None, agent=None, host=None,
+             compartimento="") -> dict:
     title = (title or "").strip()
     if not title:
         raise BadInput("il titolo del task non può essere vuoto")
@@ -68,6 +69,11 @@ def task_add(conn, title, body="", project=None, priority=2, due=None, tags="",
                                 conn.execute("PRAGMA table_info(tasks)")):
         colonne.append("host")
         valori.append(host)
+    if compartimento:
+        # assegnato a mano (dashboard, o un agente di un compartimento nominato):
+        # si somma alla sessione e al progetto, vedi compartimenti_viste.py
+        colonne.append("compartimento")
+        valori.append(compartimento)
     segnaposto = ",".join("?" for _ in colonne)
     cur = conn.execute(
         "INSERT INTO tasks(%s) VALUES(%s)" % (",".join(colonne), segnaposto), valori)
@@ -149,7 +155,8 @@ def tasks_list(conn, status=None, project=None, limit=50) -> list:
 # --------------------------------------------------------------------------
 
 def post_add(conn, text, platform="x", status="bozza", project=None, url=None,
-             source_ref="", scheduled_for=None, session_id=None, media="") -> dict:
+             source_ref="", scheduled_for=None, session_id=None, media="",
+             compartimento="") -> dict:
     text = (text or "").strip()
     if not text:
         raise BadInput("il testo del post non può essere vuoto")
@@ -166,6 +173,8 @@ def post_add(conn, text, platform="x", status="bozza", project=None, url=None,
          ts if status == "pubblicato" else None, session_id, media or "", ts, ts),
     )
     oid = cur.lastrowid
+    if compartimento:
+        conn.execute("UPDATE posts SET compartimento=? WHERE id=?", (compartimento, oid))
     store.add_event(conn, ts, "post", f"post {status}: {text[:60]}", platform, pid,
                     f"post:{oid}", "plancia", dedup=f"post-new:{oid}")
     _after_write(conn)
@@ -271,23 +280,26 @@ def project_update(conn, ident, **fields) -> dict:
     return dict(conn.execute("SELECT * FROM projects WHERE id=?", (row["id"],)).fetchone())
 
 
-def project_create(conn, name, key=None, kind="progetto", summary="", priority=2) -> dict:
+def project_create(conn, name, key=None, kind="progetto", summary="", priority=2,
+                   compartimento="") -> dict:
     if not (name or "").strip():
         raise BadInput("serve un nome")
     pid = store.upsert_project(conn, key or name, name.strip(), kind=kind,
                                summary=summary, priority=priority, auto=0, _force=True)
+    if compartimento:
+        conn.execute("UPDATE projects SET compartimento=? WHERE id=?", (compartimento, pid))
     _after_write(conn)
     return dict(conn.execute("SELECT * FROM projects WHERE id=?", (pid,)).fetchone())
 
 
 def log_event(conn, title, kind="nota", detail="", project=None, ref=None,
-              source="claude") -> dict:
+              source="claude", compartimento="") -> dict:
     if not (title or "").strip():
         raise BadInput("serve un titolo")
     ts = store.now()
     pid = _project_id(conn, project)
     store.add_event(conn, ts, kind, title.strip(), detail or "", pid, ref, source,
-                    dedup=f"{source}:{kind}:{title[:60]}:{ts}")
+                    dedup=f"{source}:{kind}:{title[:60]}:{ts}", compartimento=compartimento)
     if pid:
         store.touch_project(conn, pid, ts)
     _after_write(conn)

@@ -37,6 +37,7 @@ def run() -> int:
             prompt,
             cwd=payload.get("cwd") or "",
             session_id=payload.get("session_id") or "",
+            payload=payload,
         )
         testo = richiamo.blocco(trovati)
     except Exception:
