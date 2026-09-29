@@ -37,6 +37,7 @@ while IFS= read -r f; do SORGENTI+=("$f"); done < <(find "$RADICE/mac/Sources/Co
 python3 "$RADICE/mac/lucchetto.py" "$LUCCHETTO" xcrun swiftc \
   -swift-version 5 -parse-as-library -Onone \
   -target "$(uname -m)-apple-macosx26.0" \
+  ${PROVA_SWIFT_EXTRA:-} \
   -o "$TMP/prova-core" "${SORGENTI[@]}" "$RADICE/mac/Prove/Prova.swift"
 
 echo "==> server finto"
@@ -55,7 +56,7 @@ done
 
 echo "==> prova"
 falliti=0
-PLANCIA_HOME="$CASA" "$TMP/prova-core" "$RADICE/mac/Prove/fixture" "$PORTA" || falliti=1
+PLANCIA_HOME="$CASA" PLANCIA_PROVA_REGISTRO="$TMP/registro" "$TMP/prova-core" "$RADICE/mac/Prove/fixture" "$PORTA" || falliti=1
 
 echo "==> cosa ha visto il server finto"
 controlla() {  # controlla <descrizione> <espressione grep>

@@ -182,8 +182,10 @@ enum Misura {
         // 3. scrittura: un task cambia stato e la sezione si rilegge
         a.vai(.task)
         _ = await quiete(minimo: 800)
-        if vuole("scrittura"), let id = a.compiti.first(where: { ($0.status ?? "") == "aperto" })?.id {
-            for (n, stato) in ["in corso", "aperto", "in corso", "aperto"].enumerated() {
+        if vuole("scrittura"), let id = a.compiti.first?.id {
+            let iniziale = a.compiti.first?.status ?? "in corso"
+            let altro = iniziale == "bloccato" ? "in corso" : "bloccato"
+            for (n, stato) in [altro, iniziale, altro, iniziale].enumerated() {
                 _ = await passo("scrittura", "task \(n + 1) -> \(stato)") { _ = await a.imposta(task: id, stato: stato) }
             }
         }
@@ -208,6 +210,8 @@ enum Misura {
             a.vai(s)
             _ = await quiete(minimo: 800)
             for n in 1...4 {
+                // il ciclo vero passa ogni 30 s: la sezione non e' "appena caricata"
+                try? await Task.sleep(nanoseconds: 3_400_000_000)
                 _ = await passo("sottofondo", "\(s.rawValue) \(n)") { await a.passoDiSottofondo() }
             }
         }
