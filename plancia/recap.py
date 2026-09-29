@@ -528,8 +528,14 @@ def build(conn=None, day=None, lang=None, engine=None, parole=140, cache=True) -
             conn.close()
 
 
-def answer(question: str, lang=None, conn=None, parole=110) -> str:
-    """Una domanda sul proprio lavoro, con il contesto di Plancia già allegato."""
+def answer(question: str, lang=None, conn=None, parole=110, schede=None) -> str:
+    """Una domanda sul proprio lavoro, con il contesto di Plancia già allegato.
+
+    `schede` (opzionale) è una funzione `domanda -> lista di schede` che prende il
+    posto della ricerca sull'indice FTS. Le viste temporanee di una connessione
+    separata per compartimento non coprono le tabelle virtuali, quindi chi
+    risponde da dentro un compartimento passa qui la ricerca filtrata
+    (`compartimenti_viste.cerca_schede`); senza, si cerca su tutto come sempre."""
     from . import briefing
     close = False
     if conn is None:
@@ -539,7 +545,7 @@ def answer(question: str, lang=None, conn=None, parole=110) -> str:
     try:
         lang = lang_or_default(lang)
         pezzi = [briefing.build(conn)]
-        hits = store.search(conn, question, 8)
+        hits = schede(question) if schede else store.search(conn, question, 8)
         if hits:
             pezzi.append("Risultati di ricerca sul suo archivio:\n" +
                          json.dumps(hits, ensure_ascii=False)[:2500])

@@ -5,6 +5,7 @@ lo legge in un millisecondo invece di aprire il database.
 """
 
 import os
+import re
 from datetime import datetime, timedelta, timezone
 
 from . import config, slot, store
@@ -407,14 +408,27 @@ def write_cache() -> str:
     return testi[viste.PREDEFINITO]
 
 
+#: i nomi che `compartimenti_viste.file_briefing` puo' produrre (nome ridotto a
+#: caratteri sicuri, piu' un pezzo di hash se e' cambiato): un file con un altro
+#: nome, messo li' da chi usa la cartella, non e' nostro e non si tocca
+_RX_FILE_BRIEFING = re.compile(r"^briefing\.[A-Za-z0-9_-]{1,40}(-[0-9a-f]{6})?\.md$")
+
+
 def _togli_briefing_altrui(viste, nomi) -> None:
-    """Toglie i `briefing.*.md` di compartimenti che non ci sono piu' (config
-    cambiata, compartimenti spenti): un file vecchio con dentro il lavoro di
-    un compartimento non deve restare li' a farsi leggere."""
+    """Toglie i `briefing.<nome>.md` di compartimenti che non ci sono piu'
+    (config cambiata, compartimenti spenti): un file vecchio con dentro il
+    lavoro di un compartimento non deve restare li' a farsi leggere.
+
+    Solo i file che questo modulo sa scrivere (`_RX_FILE_BRIEFING`), e senza
+    compartimenti (`nomi` vuoto) solo se i compartimenti ci sono stati (la copia
+    dell'ultima config valida esiste): chi non ha mai usato la funzione non vede
+    una `unlink` in piu' e un suo file con quel nome resta dov'e'."""
     tengo = {os.path.basename(viste.file_briefing(str(config.DATA_DIR), n)) for n in nomi}
     try:
+        if not nomi and not os.path.exists(viste._copia_percorso(str(config.DATA_DIR))):
+            return
         for f in config.DATA_DIR.glob("briefing.*.md"):
-            if f.name not in tengo:
+            if f.name not in tengo and _RX_FILE_BRIEFING.match(f.name):
                 f.unlink()
     except OSError:
         pass

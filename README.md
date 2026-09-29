@@ -453,6 +453,11 @@ every view follows it, and what you create there belongs there.
 A session with signs of two compartments sees nothing. This decides what Plancia
 shows; it is not a security boundary, same user and same disk.
 
+Limits worth knowing: the `plancia` command in a terminal and the dashboard's
+voice assistant are your view, not an agent's, and are not filtered. Folder rules
+compare POSIX paths (starting with `/` or `~`): a Windows drive-letter path is not
+recognised yet, so on Windows every object still falls in the default compartment.
+
 ## Two decisions worth knowing about
 
 **Transcripts are read by byte offset, not by line.** They are hundreds of
@@ -520,7 +525,7 @@ Reads are open: it is your data, already on your disk.
 git config core.hooksPath .githooks
 ```
 
-Turns on the hook that runs `python3 tools/prova.py` before every push: 2644
+Turns on the hook that runs `python3 tools/prova.py` before every push: 2674
 checks in about twenty seconds, against a throwaway archive that never touches
 yours. They cover the schema, the board, the proposals, the search index, the
 recap, the MCP surface and its token budget, every read route of the HTTP API,

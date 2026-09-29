@@ -4,7 +4,7 @@
 una sessione, e lo usa il guardiano per negare. Qui si usa la stessa regola per
 FILTRARE quello che Plancia mostra: il briefing di SessionStart, il richiamo di
 UserPromptSubmit, il server MCP e la dashboard. Le regole di appartenenza non si
-riscrivono: si importano da E3 (`Ambito`, `chiamante`, `_nomi_da_segnali`, la
+riscrivono: si importano da E3 (`Ambito`, `chiamante`, la
 regola dello specchio in `<claude>/projects`, gli annidati: vince il piu'
 specifico).
 
@@ -48,8 +48,9 @@ una. Sono viste: in scrittura la connessione fallisce ("cannot modify tasks
 because it is a view"). E' voluto: chi scrive usa una connessione normale, dopo
 aver controllato a mano di che compartimento e' l'oggetto (vedi `mcp.py`). Le
 due cose che le viste non coprono si trattano a parte: le tabelle virtuali FTS
-(`search_fts`, `turni_fts`, si filtrano a valle: `cerca_schede`, `cerca_turni`) e
-la tabella `meta`, dove stanno le cache del riepilogo e delle proposte (una
+(`search_fts`, `turni_fts`: `cerca_schede` e `cerca_turni` mettono il filtro
+DENTRO la query, prima del taglio per rango, cosi' chi ha pochi oggetti in un
+archivio grande li trova) e la tabella `meta`, dove stanno le cache del riepilogo e delle proposte (una
 cache condivisa fra compartimenti sarebbe una fuga: vedi `_ombra_meta`).
 
 Limiti da dire chiari:
@@ -69,9 +70,11 @@ Limiti da dire chiari:
 - Il riepilogo e le proposte hanno una cache per compartimento (`meta` con la
   chiave `<chiave>@<compartimento>`): la cache non separata che scrive un sync
   (`recap.prepara`) non si legge piu' quando i compartimenti sono attivi.
-- Non filtrati: `jarvis` (l'assistente vocale della dashboard) e il comando
-  `plancia` da terminale, che aprono una connessione loro e sono la vista
-  di chi usa Plancia; `esporta.py`.
+- Non filtrati: `jarvis` (l'assistente vocale della dashboard: la rotta gli
+  passa la connessione non separata) e il comando `plancia` da terminale, che
+  sono la vista di chi usa Plancia; `esporta.py`.
+- Percorsi POSIX soltanto (`/...`, `~/...`): `nomi_percorso` non riconosce un
+  percorso Windows con la lettera del disco, che risulta del predefinito.
 """
 
 from __future__ import annotations
@@ -119,8 +122,10 @@ def _leggi_copia(data_dir):
 
 def _salva_copia(data_dir, comp):
     """La copia dei compartimenti dell'ultima config valida, solo se cambia.
-    Se non ce ne sono (e la copia non esiste) non si crea niente: chi non usa i
-    compartimenti non trova un file in piu'."""
+    Se non c'e' nessun NOMINATO (anche con la sola voce `predefinito`) e la copia
+    non esiste non si crea niente: chi non usa i compartimenti non trova un file
+    in piu'. Se la copia c'e' gia' si aggiorna anche a "nessun nominato": una
+    config che poi si rompe non deve far rivivere dei compartimenti spenti."""
     nuovo = json.dumps(comp, indent=2, sort_keys=True, ensure_ascii=False)
     dest = _copia_percorso(data_dir)
     try:
@@ -128,7 +133,7 @@ def _salva_copia(data_dir, comp):
             if f.read() == nuovo:
                 return
     except OSError:
-        if not comp:
+        if not any(k != PREDEFINITO for k in comp):
             return
     try:
         os.makedirs(data_dir, exist_ok=True)
@@ -670,6 +675,21 @@ def chiudi(conn, o):
         pass
 
 
+def sessione_viva(conn, o):
+    """La sessione che ingest ha visto per ultima come viva (`live_session` in
+    `meta`), se e' visibile a chi guarda, altrimenti None. `live_` non passa
+    nella `meta` temporanea (e' di nessuna vista): si legge da `main.meta` e si
+    filtra per la visibilita' della sessione."""
+    try:
+        r = conn.execute("SELECT value FROM main.meta WHERE key='live_session'").fetchone()
+    except Exception:  # noqa: BLE001
+        return None
+    sid = r[0] if r else None
+    if not sid or not o.sessione_ok(sid):
+        return None
+    return sid
+
+
 # --------------------------------------------------------------------------
 # le ricerche che le viste non coprono
 # --------------------------------------------------------------------------
@@ -678,39 +698,109 @@ _SCHEDE = {"task": "tasks", "memoria": "knowledge", "capacita": "capabilities",
            "sessione": "sessions", "post": "posts", "commit": "commits"}
 
 
+def _ok_temp(conn):
+    """Le tabelle `_ok_<tabella>` (gli id visibili) che `applica` ha creato."""
+    return {r[0][4:] for r in conn.execute(
+        "SELECT name FROM temp.sqlite_master WHERE type='table'")
+        if r[0].startswith("_ok_")}
+
+
 def cerca_schede(conn, o, q, limit=20):
-    """`store.search` (l'indice FTS delle schede) senza le schede degli altri:
-    l'indice e' una tabella virtuale e non si filtra con una vista, quindi si
-    chiede di piu' e si toglie a valle."""
+    """`store.search` (l'indice FTS delle schede) senza le schede degli altri.
+
+    L'indice e' una tabella virtuale e non si filtra con una vista. Filtrare
+    DOPO il taglio per rango da' falsi negativi: chi ha poche schede in un
+    archivio grande non trova niente, perche' le prime N per rango sono tutte
+    degli altri. Quindi il filtro sta DENTRO la query: `kind` e `ref_id` devono
+    stare fra gli id visibili (le tabelle `_ok_*` di `applica`), e il `LIMIT` si
+    applica a quello che resta."""
     from . import store
-    hits = store.search(conn, q, max(limit * 6, 60))
+    q = (q or "").strip()
+    if not q:
+        return []
+    if store.has_fts(conn):
+        expr = store._fts_query(q)
+        presenti = _ok_temp(conn)
+        cond = " OR ".join(
+            "(kind='%s' AND ref_id IN (SELECT id FROM temp._ok_%s))" % (k, t)
+            for k, t in _SCHEDE.items() if t in presenti)
+        if expr and cond:
+            try:
+                righe = conn.execute(
+                    "SELECT kind, ref_id, title, project, ts, "
+                    "snippet(search_fts, 3, '«', '»', '…', 14) AS snip "
+                    "FROM search_fts WHERE search_fts MATCH ? AND (%s) "
+                    "ORDER BY rank LIMIT ?" % cond, (expr, limit)).fetchall()
+                return [dict(r) for r in righe]
+            except Exception:  # noqa: BLE001 - FTS rifiuta certe query: come store.search
+                pass
+    # senza indice, `store.search` cerca nei task, che nella connessione filtrata
+    # sono gia' la vista; il controllo a valle e' una seconda cintura
     fuori = []
-    for h in hits:
+    for h in store.search(conn, q, limit):
         tab = _SCHEDE.get(h.get("kind"))
-        if tab and h.get("ref_id") not in o.ok[tab]:
-            continue
-        if not tab:
-            continue
-        fuori.append(h)
-        if len(fuori) >= limit:
-            break
-    return fuori
+        if tab and h.get("ref_id") in o.ok[tab]:
+            fuori.append(h)
+    return fuori[:limit]
 
 
 def cerca_turni(conn, o, q, limit=12, progetto=None):
     """`turni.cerca` senza i turni degli altri (per sessione e per percorso del
-    transcript), sempre dal campione piu' largo. Torna `(turni, gruppi)`: i
-    gruppi contano per progetto sul campione filtrato, non su tutto l'indice
-    (quello conterebbe anche i turni degli altri)."""
+    transcript). Torna `(turni, gruppi)`.
+
+    Come per le schede il filtro sta DENTRO la query (una funzione SQL che dice
+    se `(sessione, percorso)` e' visibile), prima del taglio per rango e del
+    `LIMIT`: un compartimento con un turno solo in un indice di migliaia lo
+    trova. La query e' quella di `turni.cerca` (stesse giunture, stesso ordine,
+    stesso scarto dei doppioni) e i gruppi contano per progetto sui soli turni
+    visibili, su tutto l'indice."""
     from . import turni
-    grezzi = turni.cerca(conn, q, limit=max(limit * 12, 120), progetto=progetto)
-    buoni = [t for t in grezzi if o.sessione_ok(t.get("sessione"), t.get("percorso"))]
-    gruppi = {}
-    for t in buoni:
-        gruppi[t.get("progetto") or "?"] = gruppi.get(t.get("progetto") or "?", 0) + 1
-    ordinati = sorted(gruppi.items(), key=lambda kv: -kv[1])[:8]
-    return (buoni[:limit],
-            [{"progetto": k, "turni": n} for k, n in ordinati])
+    turni.prepara(conn)
+    domanda = turni._domanda(q)
+    if not domanda:
+        return [], []
+    memo = {}
+
+    def visibile_sql(sessione, percorso):
+        k = (sessione, percorso)
+        if k not in memo:
+            try:
+                memo[k] = 1 if o.sessione_ok(sessione, percorso or "") else 0
+            except Exception:  # noqa: BLE001 - nel dubbio, invisibile
+                memo[k] = 0
+        return memo[k]
+    conn.create_function("_e1_turno_ok", 2, visibile_sql)
+    guardia = "_e1_turno_ok(turni_fts.sessione, turni_fts.percorso)"
+    sql = ("SELECT turni_fts.sessione, turni_fts.ruolo, turni_fts.ts, "
+           "%s AS progetto, turni_fts.percorso, turni_fts.riga, "
+           "snippet(turni_fts, 0, '«', '»', '…', 24) AS frammento "
+           "FROM turni_fts %s WHERE turni_fts MATCH ? AND %s"
+           % (turni.ETICHETTA, turni.GIUNTURA, guardia))
+    args = [domanda]
+    if progetto:
+        sql += " AND %s LIKE ?" % turni.ETICHETTA
+        args.append("%%%s%%" % progetto)
+    sql += " ORDER BY rank, ts DESC LIMIT ?"
+    args.append(limit * 4)
+    try:
+        righe = conn.execute(sql, args).fetchall()
+        gr = conn.execute(
+            "SELECT %s e, COUNT(*) n FROM turni_fts %s WHERE turni_fts MATCH ? AND %s "
+            "GROUP BY e ORDER BY n DESC LIMIT 8" % (turni.ETICHETTA, turni.GIUNTURA, guardia),
+            (domanda,)).fetchall()
+    except Exception:  # noqa: BLE001 - FTS5 rifiuta certe query scritte a mano
+        return [], []
+    visti, esito = set(), []
+    for r in righe:
+        d = dict(r)
+        impronta = " ".join((d.get("frammento") or "").split())[:140]
+        if impronta in visti:
+            continue
+        visti.add(impronta)
+        esito.append(d)
+        if len(esito) >= limit:
+            break
+    return esito, [{"progetto": r[0] or "?", "turni": r[1]} for r in gr]
 
 
 # --------------------------------------------------------------------------

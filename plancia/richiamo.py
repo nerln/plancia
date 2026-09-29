@@ -181,7 +181,8 @@ def _copertura(termini: list, testo: str) -> int:
 
 def cerca(conn, testo: str, escludi_scope: str = "", limite: int = MAX_RICHIAMI,
           soglia: float = SOGLIA, salta: set = None, copertura_minima: int = 2,
-          tipi: tuple = TIPI_TRASVERSALI, stacco: float = STACCO) -> list:
+          tipi: tuple = TIPI_TRASVERSALI, stacco: float = STACCO,
+          solo_visibili: bool = False) -> list:
     """Le memorie che c'entrano con questo messaggio, dalla più pertinente.
 
     Il punteggio è bm25 sull'indice che Plancia tiene già aggiornato. Il titolo
@@ -191,6 +192,12 @@ def cerca(conn, testo: str, escludi_scope: str = "", limite: int = MAX_RICHIAMI,
     Poi passa il filtro di copertura, e alla fine si tiene un nome solo: la
     stessa memoria vive in più cartelle, e richiamarla due volte è due volte lo
     stesso fatto.
+
+    Con `solo_visibili` (compartimenti attivi: `knowledge` è la vista filtrata
+    della connessione) l'indice si interroga solo sulle memorie che la vista
+    lascia vedere, DENTRO la query e prima del `LIMIT 60`: filtrare dopo il
+    taglio darebbe un richiamo vuoto a chi ha poche memorie in un archivio
+    grande, perché le prime sessanta per punteggio sarebbero tutte degli altri.
     """
     termini = parole(testo)
     if len(termini) < 2:
@@ -212,10 +219,12 @@ def cerca(conn, testo: str, escludi_scope: str = "", limite: int = MAX_RICHIAMI,
     # Codex cominciava a pescare la memoria sbagliata. Meglio perdere qualche
     # coniugazione che rispondere male.
     espressione = "kind:memoria AND (" + " OR ".join(f'"{t}"*' for t in termini) + ")"
+    visibili = " AND ref_id IN (SELECT id FROM knowledge)" if solo_visibili else ""
     try:
         righe = conn.execute(
             "SELECT ref_id, bm25(search_fts, 0.0, 0.0, 8.0, 1.0, 0.0, 0.0) AS bm "
-            "FROM search_fts WHERE search_fts MATCH ? ORDER BY bm LIMIT 60",
+            "FROM search_fts WHERE search_fts MATCH ?" + visibili +
+            " ORDER BY bm LIMIT 60",
             (espressione,),
         ).fetchall()
     except sqlite3.Error:
@@ -400,7 +409,8 @@ def richiama(testo: str, cwd: str = "", session_id: str = "",
             viste.applica(conn, ambito, visore, solo=("knowledge",))
         trovati = cerca(conn, testo, escludi_scope=cartella_sessione(cwd),
                         limite=limite, soglia=soglia,
-                        salta=gia_detto(session_id) if session_id else set())
+                        salta=gia_detto(session_id) if session_id else set(),
+                        solo_visibili=ambito is not None)
     finally:
         conn.close()
     if trovati and ricorda and session_id:

@@ -940,6 +940,9 @@ def esegui(prova) -> None:
         srv.chiudi()
         server = None
 
+        # le guardie senza prova del primo giro e gli indici FTS grandi
+        _prova_guardie(prova, base)
+
         # archivio grande: quanto costa filtrare
         _prova_archivio_grande(prova, base)
 
@@ -987,6 +990,266 @@ def _prova_regole(prova) -> None:
           "finiscono nello stesso file",
           a == "/d/briefing.alfa.md" and os.path.dirname(b) == "/d"
           and b != v.file_briefing("/d", "a_b") and "/" not in os.path.basename(b))
+
+
+_SCRIPT_INDICI = r"""
+import json, os, sys
+sys.path.insert(0, "__RADICE__")
+from plancia import store, turni
+spec = json.loads(os.environ["FIX"])
+conn = store.connect(); store.init_db(conn)
+ts = "2026-09-20T09:00:00Z"
+turni.prepara(conn)
+
+def turno(testo, sid, percorso):
+    conn.execute(
+        "INSERT INTO turni_fts(testo, sessione, ruolo, ts, progetto, percorso, riga) "
+        "VALUES(?,?,?,?,?,?,?)", (testo, sid, "user", ts, "etichetta", percorso, 1))
+
+# 700 turni del predefinito che nominano la parola piu' volte, e uno solo di
+# alfa che la nomina una volta in un testo lungo: per rango sta in fondo
+for i in range(700):
+    turno("FAGGIO ginestra ginestra ginestra ginestra numero %d" % i,
+          spec["id_pred"], spec["file_pred"])
+turno("QUERCIA una sola volta la ginestra in un testo " + "riempitivo " * 40,
+      spec["id_alfa"], spec["file_alfa"])
+# un turno di alfa la cui sessione l'archivio non conosce: lo dice solo il
+# percorso del transcript (nello specchio della cartella di alfa)
+turno("QUERCIA turno noto solo per percorso PERCORSOSPECCHIO",
+      spec["id_ignoto"], spec["file_ignoto"])
+
+# 200 task del predefinito e uno di alfa, stessa cosa per le schede
+for i in range(200):
+    conn.execute("INSERT INTO tasks(title, status, created_at, updated_at) "
+                 "VALUES(?, 'aperto', ?, ?)",
+                 ("FAGGIO ginestra ginestra ginestra idea %d" % i, ts, ts))
+pid = conn.execute("SELECT id FROM projects WHERE key='quercia'").fetchone()[0]
+conn.execute("INSERT INTO tasks(title, project_id, status, created_at, updated_at) "
+             "VALUES(?,?, 'aperto', ?, ?)",
+             ("QUERCIA unica ginestra tra molte altre parole di riempimento per "
+              "abbassare il rango di questa scheda", pid, ts, ts))
+
+# 80 memorie del predefinito e una di alfa
+for k in spec["memorie"]:
+    conn.execute(
+        "INSERT INTO knowledge(name, path, scope, description, type, body, links, "
+        "project_id, updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
+        (k["nome"], k["path"], k["scope"], k["descrizione"], "feedback", k["corpo"],
+         "[]", None, ts))
+conn.commit()
+store.rebuild_search(conn)
+conn.commit()
+print(json.dumps({"ok": True}))
+"""
+
+ID_IGNOTO = "cccccccc-0000-4000-8000-0000000000aa"
+
+
+def _prova_guardie(prova, base: Path) -> None:
+    """Le guardie che il codice dichiara e nessuna prova esercitava (ognuna e'
+    stata vista sopravvivere a una mutazione che la toglie), e i due difetti del
+    secondo giro: la ricerca nell'indice FTS che filtra DOPO il taglio per rango
+    (chi ha poche cose in un archivio grande non trova niente) e la risposta a
+    voce che portava in contesto la ricerca non filtrata."""
+    fix = _prepara(base / "guardie")
+    if not fix["fixture_ok"]:
+        prova("guardie: l'archivio finto si costruisce", False, fix["fixture_err"])
+        return
+    env, w, claude, ids, dirs = fix["env"], fix["w"], fix["claude"], fix["ids"], fix["dirs"]
+    dati = Path(env["PLANCIA_HOME"])
+    _scrivi_config(env, comp=_config_comp(w))
+
+    # ---- la cache del riepilogo, scritta da chi chiama l'MCP, torna sotto il nome
+    # del compartimento (`viste.chiudi`): due chiamate e la chiave `@alfa` c'e'
+    _mcp(fix, "alfa", [("plancia", {"azione": "recap"})])
+    con = _apri(env)
+    chiavi = {r[0] for r in con.execute("SELECT key FROM meta")}
+    con.close()
+    prova("MCP: la cache del riepilogo di una sessione di alfa resta sotto `recap_*@alfa` "
+          "dopo la prima chiamata (e non nella cache non separata)",
+          any(k.startswith("recap_") and k.endswith("@alfa") for k in chiavi)
+          and "recap_testo" not in chiavi, str(sorted(chiavi))[:300])
+
+    # ---- il compartimento della sessione MCP si stabilisce anche dal transcript:
+    # id sconosciuto ad alfa, cwd di partenza fuori da alfa, transcript nello specchio
+    tr = claude / "projects" / _codifica(dirs["alfa"]) / (ID_IGNOTO + ".jsonl")
+    tr.write_text("", "utf-8")
+    m = _mcp(fix, "alfa", [("plancia_projects", {})], cwd=dirs["predefinito"], sid=ID_IGNOTO)
+    prova("MCP: una sessione con id sconosciuto, cwd fuori da alfa e transcript sotto la "
+          "codifica di alfa e' trattata da alfa (vede QUERCIA, non FAGGIO)",
+          not m[0][0] and "QUERCIA" in m[0][1] and "FAGGIO" not in m[0][1], str(m)[:300])
+    m = _mcp(fix, "predefinito", [("plancia_projects", {})], cwd=dirs["predefinito"],
+             sid="dddddddd-0000-4000-8000-0000000000dd")
+    prova("MCP: una sessione senza nessun segnale di un nominato e' del predefinito",
+          not m[0][0] and "FAGGIO" in m[0][1] and "QUERCIA" not in m[0][1], str(m)[:300])
+
+    # ---- l'hook, se il pacchetto non si carica, tace (niente lettura senza filtro)
+    scr = base / "hook-rotto"
+    (scr / "bin").mkdir(parents=True)
+    (scr / "plancia").mkdir()
+    shutil.copy(str(RADICE / "bin" / "plancia-hook"), str(scr / "bin" / "plancia-hook"))
+    (scr / "plancia" / "__init__.py").write_text("raise ImportError('rotto apposta')\n", "utf-8")
+    for nome in ("briefing.md", "briefing.predefinito.md", "briefing.alfa.md"):
+        (dati / nome).write_text("BRIEFING DI PROVA FAGGIO QUERCIA\n", "utf-8")
+    payload = {"hook_event_name": "SessionStart", "session_id": ids["predefinito"],
+               "transcript_path": fix["file"]["predefinito"], "cwd": str(dirs["predefinito"]),
+               "source": "startup"}
+    p = subprocess.run([PYTHON, str(scr / "bin" / "plancia-hook")], input=json.dumps(payload),
+                       capture_output=True, text=True, env=_env_sub(env), timeout=60)
+    prova("hook: con dei compartimenti attivi e il pacchetto che non si carica non stampa "
+          "niente (nemmeno il briefing non separato)",
+          p.returncode == 0 and p.stdout.strip() == "", p.stdout[:200] + p.stderr[:200])
+    for nome in ("briefing.md", "briefing.predefinito.md", "briefing.alfa.md"):
+        (dati / nome).unlink()
+
+    # ---- il briefing per compartimento che non c'e' ancora lo genera l'hook
+    h = _hook(fix, "alfa")
+    prova("hook: appena scritta la config, senza un briefing per compartimento, ne genera "
+          "uno (la sessione di alfa vede il proprio lavoro e non quello degli altri)",
+          "QUERCIA" in h["testo"] and "FAGGIO" not in h["testo"] and "SALICE" not in h["testo"],
+          h["testo"][:300] + h["err"][:200])
+    prova("hook: il briefing generato al volo lascia anche quello degli altri compartimenti",
+          (dati / "briefing.predefinito.md").exists() and (dati / "briefing.beta.md").exists())
+
+    # ---- i briefing dei compartimenti spenti spariscono, gli altri file no
+    estraneo = dati / "briefing.v1.2.md"
+    estraneo.write_text("un file di chi usa la cartella\n", "utf-8")
+    _scrivi_config(env, comp={"beta": {"cartelle": [str(w / "beta")]}, "predefinito": {}})
+    subprocess.run([PYTHON, str(RADICE / "bin" / "plancia"), "briefing"],
+                   env=_env_sub(env), capture_output=True, timeout=120)
+    prova("briefing: togliendo alfa dalla config il suo `briefing.alfa.md` sparisce, quello "
+          "di beta resta",
+          not (dati / "briefing.alfa.md").exists() and (dati / "briefing.beta.md").exists(),
+          str(sorted(f.name for f in dati.glob("briefing*"))))
+    prova("briefing: un file con un nome che Plancia non sa scrivere non si tocca",
+          estraneo.exists())
+    _scrivi_config(env, comp=_config_comp(w))
+
+    # ---- chi non ha mai usato i compartimenti non perde un suo file
+    senza = base / "senza-comp"
+    env2 = _ambiente(senza)
+    _scrivi_config(env2)
+    suo = Path(env2["PLANCIA_HOME"]) / "briefing.mio.md"
+    suo.write_text("mio\n", "utf-8")
+    subprocess.run([PYTHON, str(RADICE / "bin" / "plancia"), "briefing"],
+                   env=_env_sub(env2), capture_output=True, timeout=120)
+    prova("briefing: senza compartimenti (mai usati) un file `briefing.<nome>.md` di chi usa "
+          "la cartella resta dov'e'", suo.exists())
+    _scrivi_config(env2, comp={"predefinito": {}})
+    subprocess.run([PYTHON, str(RADICE / "bin" / "plancia"), "briefing"],
+                   env=_env_sub(env2), capture_output=True, timeout=120)
+    prova("config con la sola voce `predefinito`: nessuna copia di config in piu' nella "
+          "cartella dei dati",
+          not (Path(env2["PLANCIA_HOME"]) / "compartimenti.e1-ultima-valida.json").exists()
+          and suo.exists())
+
+    # ---- plancia_task_update con project="" svuota il progetto anche con i compartimenti
+    z = _mcp(fix, "alfa", [("plancia_task_add", {"title": "task da svuotare QUERCIA",
+                                                 "project": "quercia"})])
+    try:
+        tid = json.loads(z[0][1])["id"]
+    except Exception:  # noqa: BLE001
+        tid = None
+    if tid is not None:
+        u = _mcp(fix, "alfa", [("plancia_task_update", {"id": tid, "project": ""})])
+        con = _apri(env)
+        pid_dopo = con.execute("SELECT project_id FROM tasks WHERE id=?", (tid,)).fetchone()
+        con.close()
+        prova("MCP alfa: plancia_task_update con project vuoto svuota il progetto del task",
+              not u[0][0] and pid_dopo is not None and pid_dopo[0] is None, str((u, pid_dopo)))
+    else:
+        prova("MCP alfa: task_add per la prova di project vuoto", False, str(z)[:200])
+
+    # ---- gli indici FTS: chi ha una cosa sola in un archivio grande la trova
+    memorie = []
+    for i in range(80):
+        memorie.append(_memoria("ibisco-cumino-%d" % i, "ibisco cumino", "FAGGIO",
+                                w / "pred", claude))
+    memorie.append(_memoria("quercia-ibisco-cumino-rara", "ibisco cumino", "QUERCIA",
+                            w / "alfa", claude))
+    ignoto = claude / "projects" / _codifica(dirs["alfa"]) / (ID_IGNOTO + ".jsonl")
+    spec = {"id_pred": ids["predefinito"], "file_pred": fix["file"]["predefinito"],
+            "id_alfa": ids["alfa"], "file_alfa": fix["file"]["alfa"],
+            "id_ignoto": ID_IGNOTO, "file_ignoto": str(ignoto), "memorie": memorie}
+    r = subprocess.run([PYTHON, "-c", _SCRIPT_INDICI.replace("__RADICE__", str(RADICE))],
+                       env=dict(_env_sub(env), FIX=json.dumps(spec)),
+                       capture_output=True, text=True, timeout=300)
+    if r.returncode != 0:
+        prova("guardie: gli indici grandi si costruiscono", False, (r.stderr or r.stdout)[-600:])
+        return
+    a = _mcp(fix, "alfa", [("plancia_search", {"query": "ginestra"}),
+                           ("plancia_search", {"query": "PERCORSOSPECCHIO"})])
+    prova("MCP alfa: un turno solo in un indice di 700 turni degli altri si trova "
+          "(il filtro sta dentro la query, non dopo il taglio per rango)",
+          "QUERCIA una sola volta" in a[0][1] and "FAGGIO" not in a[0][1], a[0][1][:300])
+    prova("MCP alfa: una scheda sola fra 200 degli altri si trova",
+          "QUERCIA unica ginestra" in a[0][1], a[0][1][:300])
+    prova("MCP alfa: un turno di una sessione sconosciuta, il cui transcript sta nello "
+          "specchio di alfa, e' di alfa (il percorso conta)",
+          "PERCORSOSPECCHIO" in a[1][1] and "FAGGIO" not in a[1][1], a[1][1][:300])
+    b = _mcp(fix, "predefinito", [("plancia_search", {"query": "PERCORSOSPECCHIO"}),
+                                  ("plancia_search", {"query": "ginestra"})])
+    prova("MCP predefinito: il turno noto per percorso di alfa non si vede",
+          "PERCORSOSPECCHIO" not in b[0][1], b[0][1][:300])
+    prova("MCP predefinito: la ricerca in un indice grande non porta niente di alfa",
+          "QUERCIA" not in b[1][1] and "FAGGIO" in b[1][1], b[1][1][:300])
+    r_alfa = _richiamo(fix, "alfa", "ibisco cumino")
+    r_pred = _richiamo(fix, "predefinito", "ibisco cumino")
+    prova("richiamo alfa: una memoria sola fra 80 del predefinito che rispondono meglio "
+          "si trova (il filtro sta dentro la query, prima del LIMIT)",
+          "QUERCIA" in r_alfa and "FAGGIO" not in r_alfa, r_alfa[:300])
+    prova("richiamo predefinito: le 80 memorie del predefinito, e niente di alfa",
+          "FAGGIO" in r_pred and "QUERCIA" not in r_pred, r_pred[:300])
+
+    # ---- dashboard: la stessa ricerca, e lo stato della sessione viva
+    srv = _Server(fix)
+    try:
+        c, corpo = srv.get("/api/search?q=ginestra&compartimento=alfa", testo=True)
+        prova("dashboard alfa: la ricerca trova il turno e la scheda di alfa fra le "
+              "migliaia degli altri", "QUERCIA una sola volta" in corpo
+              and "QUERCIA unica ginestra" in corpo and "FAGGIO" not in corpo, corpo[:300])
+        c, corpo = srv.get("/api/search?q=PERCORSOSPECCHIO&compartimento=alfa", testo=True)
+        c2, corpo2 = srv.get("/api/search?q=PERCORSOSPECCHIO", testo=True)
+        prova("dashboard: il turno noto per percorso e' visibile ad alfa e invisibile al "
+              "predefinito", "PERCORSOSPECCHIO" in corpo and "PERCORSOSPECCHIO" not in corpo2,
+              corpo[:200] + " | " + corpo2[:200])
+        con = _apri(env)
+        con.execute("INSERT OR REPLACE INTO meta(key, value) VALUES('live_session', ?)",
+                    (ids["alfa"],))
+        con.commit()
+        con.close()
+        _, sa = srv.get("/api/status?compartimento=alfa")
+        _, sp = srv.get("/api/status")
+        _, sb = srv.get("/api/status?compartimento=beta")
+        prova("dashboard: la sessione viva di alfa si vede in alfa e non nelle altre viste "
+              "(il pallino 'live' non sparisce con i compartimenti attivi)",
+              sa.get("sessione_viva") == ids["alfa"] and not sp.get("sessione_viva")
+              and not sb.get("sessione_viva"), str((sa, sp, sb))[:300])
+
+        # ---- la risposta a voce: la ricerca nell'archivio e' quella del compartimento
+        segnale = base / "guardie" / "claude-chiamato"
+        for comp in ("predefinito", "alfa", "beta"):
+            if segnale.exists():
+                segnale.unlink()
+            sel = "" if comp == "predefinito" else "?compartimento=%s" % comp
+            c, d = srv.scrivi("POST", "/api/voice/ask" + sel,
+                              {"domanda": "task", "voce": False, "lang": "it"})
+            passato = segnale.read_text("utf-8") if segnale.exists() else ""
+            pezzo = ""
+            if "Risultati di ricerca sul suo archivio:" in passato:
+                pezzo = passato.split("Risultati di ricerca sul suo archivio:", 1)[1]
+                pezzo = pezzo.split("Dati di oggi:", 1)[0]
+            altri_ = [x for x in MARCHI if x != comp]
+            prova("voce %s: la domanda arriva al modello (con il contesto)" % comp,
+                  c == 200 and "Dati di oggi:" in passato, "%s %s" % (c, passato[:200]))
+            prova("voce %s: i risultati di ricerca allegati non portano niente degli altri "
+                  "compartimenti (ne' il prompt intero)" % comp,
+                  _senza(passato, altri_),
+                  passato[:400])
+            prova("voce %s: i risultati di ricerca allegati ci sono e sono del compartimento"
+                  % comp, MARCHI[comp] in pezzo, pezzo[:200])
+    finally:
+        srv.chiudi()
 
 
 def _apri(env):

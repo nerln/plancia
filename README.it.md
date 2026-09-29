@@ -556,6 +556,12 @@ crei li' resta li'. `?compartimento=nome` nell'indirizzo la apre su uno.
 Una sessione con segni di due compartimenti non vede niente. Questo decide cosa
 mostra Plancia; non e' un confine di sicurezza, stesso utente e stesso disco.
 
+Limiti da sapere: il comando `plancia` da terminale e l'assistente vocale della
+dashboard sono la tua vista, non quella di un agente, e non sono filtrati. Le
+regole sulle cartelle confrontano percorsi POSIX (che iniziano con `/` o `~`): un
+percorso Windows con la lettera del disco non e' ancora riconosciuto, quindi su
+Windows ogni oggetto resta nel compartimento predefinito.
+
 ## Due scelte non ovvie
 
 **I transcript si leggono a byte, non a righe.** Sono centinaia di megabyte e
@@ -625,7 +631,7 @@ git config core.hooksPath .githooks
 ```
 
 Accende il gancio che fa girare `python3 tools/prova.py` prima di ogni push:
-2644 controlli in una ventina di secondi, su un archivio finto che non tocca
+2674 controlli in una ventina di secondi, su un archivio finto che non tocca
 il tuo.
 
 ## Licenza

@@ -395,6 +395,16 @@ def run():
                 # compartimento: il `briefing.md` di prima poteva non essere
                 # separato
                 sorgente = viste.file_briefing(DATA, visore)
+                if not os.path.exists(sorgente):
+                    # appena scritta la config con i compartimenti, prima di
+                    # un sync o di una scrittura: il file per compartimento non
+                    # c'e' ancora. Lo si genera qui (una volta) invece di
+                    # lasciare la sessione senza briefing; se non riesce, silenzio
+                    try:
+                        from plancia import briefing as _briefing
+                        _briefing.write_cache()
+                    except Exception:
+                        pass
             else:
                 sorgente = BRIEFING
             if sorgente is None:

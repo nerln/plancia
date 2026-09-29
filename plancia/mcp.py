@@ -428,7 +428,7 @@ def call_tool(name: str, args: dict) -> str:
             # primo prompt di ogni sessione, lo 0,08% del materiale, ed e' il
             # motivo per cui e' stata chiamata cinque volte in tutto.
             if ombra is not None:
-                # l'indice FTS non si filtra con una vista: si toglie a valle
+                # l'indice FTS non si filtra con una vista: il filtro sta dentro la query, prima del taglio per rango
                 dai_turni, gruppi = viste.cerca_turni(
                     lettura, ombra, q, min(limite, 12), args.get("project"))
                 schede = viste.cerca_schede(lettura, ombra, q, limite)
@@ -515,8 +515,11 @@ def call_tool(name: str, args: dict) -> str:
                 conn, int(args.get("id")), status=args.get("status"),
                 priority=args.get("priority"), title=args.get("title"),
                 body=args.get("body"), due=args.get("due"),
-                project=_progetto_scrivibile(conn, lettura, ombra, args.get("project"))
-                if args.get("project") is not None else None))
+                # "" svuota il progetto del task: `_progetto_scrivibile` lo
+                # trasformerebbe in None ("non toccare"), quindi passa cosi' com'e'
+                project=(args.get("project") if args.get("project") in (None, "")
+                         else _progetto_scrivibile(conn, lettura, ombra,
+                                                   args.get("project")))))
 
         if name == "plancia_posts":
             return _fmt(actions.posts_list(lettura, args.get("status"), args.get("platform")))

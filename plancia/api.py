@@ -569,7 +569,7 @@ class Handler(BaseHTTPRequestHandler):
                 from . import turni
                 q = first("q", "")
                 if ombra is not None:
-                    # gli indici FTS non si filtrano con una vista: si toglie a valle
+                    # gli indici FTS non si filtrano con una vista: il filtro sta dentro la query, prima del taglio per rango
                     dai_turni, gruppi = viste.cerca_turni(
                         conn, ombra, q, int(first("limit", 30)), first("progetto") or None)
                     return self._json({
@@ -597,7 +597,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({
                     "sync": dict(SYNC_STATE),
                     "ultimo_sync": store.get_meta(conn, "last_sync_end"),
-                    "sessione_viva": store.get_meta(conn, "live_session"),
+                    "sessione_viva": (store.get_meta(conn, "live_session")
+                                      if ombra is None else viste.sessione_viva(conn, ombra)),
                     "ultima_voce": store.get_meta(conn, "ultima_voce"),
                     "ultima_voce_da": store.get_meta(conn, "ultima_voce_da"),
                 })
@@ -782,11 +783,17 @@ class Handler(BaseHTTPRequestHandler):
                 if not domanda:
                     raise actions.BadInput("serve una domanda")
                 lang = recap.lang_or_default(body.get("lang"))
-                # la risposta si costruisce dal compartimento scelto (l'assistente
-                # vocale `jarvis`, che apre una connessione sua, non e' separato)
+                # la risposta si costruisce dal compartimento scelto: le viste della
+                # connessione coprono briefing e dati di oggi, la ricerca nell'indice
+                # FTS (che le viste non coprono) passa da `cerca_schede`. L'assistente
+                # vocale `jarvis` riceve la connessione non separata dalla rotta e
+                # NON e' separato.
                 conn_r, ombra_r = _connessione_separata(scelta)
                 try:
-                    risposta = recap.answer(domanda, lang, conn_r)
+                    risposta = recap.answer(
+                        domanda, lang, conn_r,
+                        schede=(None if ombra_r is None else
+                                (lambda q: viste.cerca_schede(conn_r, ombra_r, q, 8))))
                 finally:
                     viste.chiudi(conn_r, ombra_r)
                     conn_r.close()
