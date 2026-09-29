@@ -4094,8 +4094,60 @@ def _prove_allarme_6(prova, a: Ambiente):
     r = corri(seg_alfa)
     prova("allarme6: spento, al tempo scaduto: niente uscita, niente riga",
           r is not None and r.ammesso and len(a.registro()) == n0, repr(r))
-    # un allarme che scatta mentre il modulo si carica resta il guasto di prima (fail-open)
+    # settimo giro: l'allarme che scatta mentre il chiamante e' ANCORA DA STABILIRE (non si sa
+    # a che compartimento appartiene la sessione) non e' "incerto": non nega nessuno, ammette
+    # con il `systemMessage` e la riga `tempo-scaduto`, come per il predefinito. Il diniego
+    # "spezzalo" resta per chi e' GIA' stabilito come nominato o incerto (segnali discordanti).
+    comp.write_text(originale + "\n\ndef chiamante(*args, **kw):\n    import time as _t\n"
+                    "    _t.sleep(30)\n", "utf-8")
+    for modo in ("bloccante", "solo-registro"):
+        a.scrivi_config(dict(json.loads(cfg), guardiano=modo))
+        for chi_, seg_ in (("nominato", seg_alfa), ("predefinito", seg_pred)):
+            for volta in (1, 2):
+                n0 = len(a.registro())
+                r = corri(seg_)
+                nuove = a.registro()[n0:]
+                prova(f"allarme7: {modo}, allarme con il chiamante ancora da stabilire, sessione "
+                      f"{chi_} (chiamata {volta}): ammesso, con il `systemMessage`, senza nessun "
+                      "diniego",
+                      r is not None and r.rc == 0 and not r.negato and "deny" not in r.out
+                      and "spezzalo" in messaggio(r), repr(r))
+                prova(f"allarme7: ...e una riga `tempo-scaduto` senza compartimento nel registro "
+                      f"({modo}, {chi_}, chiamata {volta})",
+                      len(nuove) == 1 and nuove[0]["esito"] == "tempo-scaduto"
+                      and nuove[0]["compartimento"] == "" and nuove[0]["modalita"] == modo,
+                      str(nuove))
+    a.scrivi_config(dict(json.loads(cfg), guardiano="spento"))
+    n0 = len(a.registro())
+    r = corri(seg_alfa)
+    prova("allarme7: spento, allarme con il chiamante da stabilire: niente uscita, niente riga",
+          r is not None and r.ammesso and len(a.registro()) == n0, repr(r))
+    # ...mentre un chiamante GIA' stabilito come incerto (la stessa cartella data a due
+    # nominati) al tempo scaduto in `bloccante` e' ancora negato con "spezzalo"
+    comp.write_text(originale + "\n\ndef valuta(*args, **kw):\n    import time as _t\n"
+                    "    _t.sleep(30)\n", "utf-8")
+    cfg2 = json.loads(cfg)
+    cfg2["compartimenti"]["beta"]["cartelle"].append(str(pulita))
+    for modo in ("bloccante", "solo-registro"):
+        a.scrivi_config(dict(cfg2, guardiano=modo))
+        n0 = len(a.registro())
+        r = corri(seg_alfa)
+        nuove = a.registro()[n0:]
+        if modo == "bloccante":
+            prova("allarme7: bloccante, un chiamante gia' stabilito come INCERTO (due nominati "
+                  "sulla stessa cartella) al tempo scaduto: negato con `spezzalo`",
+                  r is not None and r.negato and "spezzalo" in r.motivo
+                  and "alfa,beta" in r.motivo, repr(r))
+            prova("allarme7: ...e una riga `negato` nel registro",
+                  len(nuove) == 1 and nuove[0]["esito"] == "negato", str(nuove))
+        else:
+            prova("allarme7: solo-registro, l'INCERTO al tempo scaduto: ammesso, con la riga "
+                  "`avrebbe-negato`",
+                  r is not None and r.rc == 0 and not r.negato and "spezzalo" in messaggio(r)
+                  and len(nuove) == 1 and nuove[0]["esito"] == "avrebbe-negato", f"{r!r} {nuove}")
+    a.scrivi_config(dict(json.loads(cfg), guardiano="bloccante"))
     comp.write_text(originale + "\n\nimport time as _t2\n_t2.sleep(30)\n", "utf-8")
+    # un allarme che scatta mentre il modulo si carica resta il guasto di prima (fail-open)
     a.scrivi_config(dict(json.loads(cfg), guardiano="bloccante"))
     marca = a.dati / "guardiano.non-parte"
     if marca.exists():
@@ -4159,6 +4211,125 @@ def _prove_allarme_6(prova, a: Ambiente):
     finally:
         cm.valuta = orig
         shutil.rmtree(dati, ignore_errors=True)
+    a.togli_config()
+
+
+def _prove_cd_scritture_7(prova, a: Ambiente):
+    """Settimo giro, punto 2: dopo un `cd` con una destinazione che non si sa valutare
+    (`cd $(mktemp -d)`, `cd -`) una scrittura con un NOME SEMPLICE (senza barra: `git init`,
+    `git commit`, `git add .`, `touch f`, `echo x > f`, `mkdir x`, `tar xzf a.tgz`) e' ammessa
+    per il PREDEFINITO, come dice il docstring (non si puo' dire dove porta, e negarla sarebbe
+    il falso positivo di ogni script); una con una barra (`touch sub/f`) o il nome di un file
+    del guardiano (`rm config.json`) resta negata. Il NOMINATO resta com'e': negato."""
+    a.togli_config()
+    pulita = _alfa_pulita(a)
+
+    def pred(cmd):
+        return a.chiama(a.pl("Bash", {"command": cmd}, sid=S_COMUNE, aperta_in=a.progetto))
+
+    def alfa(cmd):
+        return a.chiama(a.pl("Bash", {"command": cmd}, sid=S_ALFA_LIBERA, aperta_in=pulita))
+
+    semplici = [
+        "cd $(mktemp -d) && git init", "cd $(mktemp -d) && git commit -m x",
+        "cd $(mktemp -d) && git clone https://example.org/x/y",
+        "d=$(mktemp -d); cd $d && git init", "cd - && git add .",
+        "cd $(mktemp -d) && touch f", "cd $(mktemp -d) && echo x > f",
+        "cd $(mktemp -d) && mkdir x", "cd - && cp a b", "cd - && mv a b",
+        "cd - && tee out.txt < in.txt", "cd $(cat lista) && rm nota.txt",
+        "cd \"$X\" && git commit -am x", "cd - && touch *.txt", "cd - && git add . && git commit -m x",
+    ]
+    for c in semplici:
+        r = pred(c)
+        prova(f"cd7: predefinito, `{c}`: ammesso (un nome semplice dopo una cartella "
+              "sconosciuta, come dice il docstring)", r.ammesso, repr(r))
+        r = alfa(c)
+        prova(f"cd7: alfa, `{c}`: negato (per il nominato non cambia)", r.negato, repr(r))
+    con_barra = [
+        "cd $(mktemp -d) && touch sub/f", "cd - && cp x sub/y", "cd - && echo x > sub/f",
+        "cd $(mktemp -d) && mkdir ../x", "cd - && git clone https://example.org/x/y sub/y",
+        "cd $(mktemp -d) && touch ..", "cd - && cp -r . ../x",
+    ]
+    for c in con_barra:
+        r = pred(c)
+        prova(f"cd7: predefinito, `{c}`: negato (un percorso relativo con una barra, o `..`, "
+              "dopo una cartella sconosciuta)", r.negato and "non si sa dove porta" in r.motivo,
+              repr(r))
+    # una ricerca o una copia RICORSIVA da una cartella che non si sa resta negata (legge
+    # tutto l'albero, che potrebbe essere di un nominato)
+    for c in ("cd - && grep -r x .", "cd $(mktemp -d) && cp -r . x", "cd - && find . -name x",
+              "cd - && rg x"):
+        r = pred(c)
+        prova(f"cd7: predefinito, `{c}`: negato (ricorsivo da una cartella sconosciuta)",
+              r.negato, repr(r))
+    # il nome di un file del guardiano resta negato anche senza barra
+    for c in ("cd $(mktemp -d) && rm config.json", "cd - && tee guardiano.log < x",
+              "cd $(cat lista) && truncate -s0 compartimenti.ultima-valida.json",
+              "cd - && sed -i s/x/y/ config.json", "cd - && echo x > settings.json"):
+        r = pred(c)
+        prova(f"cd7: predefinito, `{c}`: negato (e' il nome di un file del guardiano)",
+              r.negato and "non si sa dove porta" in r.motivo, repr(r))
+    # le letture non cambiano, e una scrittura con un percorso assoluto si valuta per quello
+    for c in ("cd $(mktemp -d) && ls", "cd - && cat nota.txt", "cd - && git status"):
+        r = pred(c)
+        prova(f"cd7: predefinito, `{c}`: ammesso", r.ammesso, repr(r))
+    r = pred(f"cd - && touch {a.alfa1}/x")
+    prova("cd7: predefinito, `cd - && touch <cartella di alfa>/x`: negato (il percorso assoluto "
+          "vale)", r.negato, repr(r))
+    a.togli_config()
+
+
+def _prove_git_letture_7(prova, a: Ambiente):
+    """Settimo giro, punto 3: in una cartella di codice CONDIVISA un nominato puo' LEGGERE
+    con git (`log`, `show`, `diff`, `status`, `blame`, `rev-parse`, `branch` senza operandi o
+    con `--contains`, `tag -l MODELLO`, `config --get`, `reflog`, `notes list`, `notes show`,
+    `fetch --dry-run`, `stash list`, `worktree list`, `submodule status`): non sono scritture.
+    Le scritture di git restano negate."""
+    cod = a.radice / "codice-condiviso-7"
+    cod.mkdir(parents=True, exist_ok=True)
+    (cod / "README").write_text("x\n", "utf-8")
+    X = str(cod)
+    a.togli_config()
+    pulita = _alfa_pulita(a)
+    base = json.loads(_testo(a.dati / "config.json"))
+    a.scrivi_config(dict(base, condivise=[X]))
+
+    def alfa(cmd):
+        return a.chiama(a.pl("Bash", {"command": cmd}, sid=S_ALFA_LIBERA, aperta_in=pulita))
+
+    letture = [
+        "log", "log --oneline -5", "show HEAD", "diff", "diff HEAD~1", "status", "blame README",
+        "rev-parse HEAD", "branch", "branch -a", "branch -vv", "branch --list", "branch --list 'x*'",
+        "branch --show-current", "branch --contains abc", "branch --no-contains abc",
+        "branch --merged main", "branch --no-merged main", "branch --points-at HEAD",
+        "branch -r --contains abc", "tag", "tag -l", "tag -l \"v*\"", "tag --list 'v*'", "tag -n",
+        "tag -n5 -l 'v*'", "tag --contains abc", "tag --points-at HEAD", "tag --merged main",
+        "tag -v v1", "config --get user.name", "config --list", "reflog", "reflog show",
+        "reflog HEAD", "reflog -n 5", "reflog exists refs/heads/x", "notes", "notes list",
+        "notes show HEAD", "notes --ref x list", "notes get-ref", "fetch --dry-run",
+        "fetch --dry-run origin", "stash list", "stash show", "stash show -p",
+        "worktree list", "submodule", "submodule status", "submodule summary", "remote -v",
+        "ls-files", "ls-remote origin",
+    ]
+    for g in letture:
+        for cmd in (f"git -C {X} {g}", f"cd {X} && git {g}"):
+            r = alfa(cmd)
+            prova(f"git7: alfa, `{cmd.replace(X, '<X>')}`: ammesso (una lettura in una cartella "
+                  "condivisa)", r.ammesso, repr(r))
+    scritture = [
+        "commit -m x", "add .", "fetch", "fetch origin", "push", "branch nuovo", "branch -d x",
+        "branch -D x", "branch -m a b", "branch nuovo abc", "tag v1", "tag -a v1 -m m",
+        "tag -d v1", "tag -f v1", "tag -s v1", "notes add -m x", "notes append -m x",
+        "notes remove", "notes edit", "notes merge x", "notes prune", "reflog expire --all",
+        "reflog delete HEAD@{1}", "stash", "stash push", "stash pop", "stash drop", "stash apply",
+        "worktree add ../x", "worktree remove x", "submodule update", "submodule add u p",
+        "remote add o u", "config a b", "gc", "init", "checkout x", "reset --hard",
+    ]
+    for g in scritture:
+        for cmd in (f"git -C {X} {g}", f"cd {X} && git {g}"):
+            r = alfa(cmd)
+            prova(f"git7: alfa, `{cmd.replace(X, '<X>')}`: negato (una scrittura in una cartella "
+                  "condivisa)", r.negato, repr(r))
     a.togli_config()
 
 
@@ -4287,6 +4458,8 @@ def esegui(prova):
         _prove_sed_awk_6(prova, a)
         _prove_condivise_6(prova, a)
         _prove_allarme_6(prova, a)
+        _prove_cd_scritture_7(prova, a)
+        _prove_git_letture_7(prova, a)
         _prove_limiti_6(prova)
     finally:
         a.chiudi()

@@ -149,7 +149,10 @@ Limiti da dire chiari (non sono difetti da correggere qui):
   quella che `_bersagli_scrittura` riconosce: redirezioni, `tee`, `cp`, `rm`, `touch`,
   `sed -i`, `sed w`, `awk print >`, le scritture di git (`commit`, `add`, `fetch`,
   `pull`, `branch`, `tag`, `config`, `gc`, `clone` dentro, `checkout`, `reset`,
-  `stash`), `-t DIR` e `--target-directory`, `-o`/`--output` (per `-o` i comandi che
+  `stash`; NON le letture: `log`, `show`, `diff`, `status`, `blame`, `rev-parse`, `branch`
+  senza operandi o con `--contains`/`--list`, `tag -l MODELLO`, `config --get`, `reflog`,
+  `notes list`/`show`, `fetch --dry-run`, `stash list`, `worktree list`, `submodule
+  status`: `_git_e_lettura`), `-t DIR` e `--target-directory`, `-o`/`--output` (per `-o` i comandi che
   lo intendono cosi': `gcc`, `pandoc`...), `zip`, `split`, `mktemp -p`, `mkfifo`,
   `xattr -w`, `ffmpeg`, un collegamento simbolico creato nello stesso comando (`ln -s X
   l && touch l/f`), codice di un interprete: un programma che scrive per conto suo
@@ -172,7 +175,12 @@ Limiti da dire chiari (non sono difetti da correggere qui):
   dopo un `||` lasciano la cartella SCONOSCIUTA: un percorso relativo CON una barra
   dopo si nega per prudenza, un nome semplice (`ls`, `git status`, `cat nota.txt`)
   no, per nessuno: non si puo' dire dove porta, e negarlo sarebbe il falso positivo di
-  ogni script. Dedotto, non provato su una shell vera: un `cd` che fallisce in un `&&`.
+  ogni script. Una SCRITTURA con un nome semplice (`git init`, `git commit`, `git add .`,
+  `touch f`, `echo x > f`, `mkdir x`, `cp a b`) non nega per il PREDEFINITO; per un
+  nominato nega ancora ("scrivi percorsi assoluti"). Per il predefinito restano negati un
+  percorso con una barra o `..` (`touch sub/f`), una ricerca o una copia ricorsiva (`grep -r
+  x .`, `cp -r . x`) e il nome di un file del guardiano (`rm config.json`). Dedotto, non
+  provato su una shell vera: un `cd` che fallisce in un `&&`.
 - `echo` e `printf` stampano i loro argomenti e non toccano percorsi, MA solo se
   il testo non arriva a un comando che lo usa: fuori da una pipe, fuori da una
   sostituzione (`$(...)`, apici inversi: `f=$(echo x); cat $f`), e se scritto in
@@ -259,10 +267,12 @@ il guardiano NON vede, elenco onesto:
   virgolette, un percorso relativo dentro il codice di un interprete dopo un `cd`;
 - i `managed settings`, l'app (`mcp__ccd_settings__*`), un secondo hook che approva, un
   `disableAllHooks` scritto prima che il guardiano fosse acceso, `kill` del processo;
-- un comando che l'analisi non finisce di guardare in due secondi: per un nominato e'
-  negato ("comando troppo complesso da controllare in tempo: spezzalo"), per il
-  predefinito e' ammesso con un avviso ogni volta (`uscita_tempo_scaduto`); il tetto dei
-  percorsi (5000) lascia solo una nota per il predefinito;
+- un comando che l'analisi non finisce di guardare in due secondi: per un nominato (o un
+  incerto) GIA' STABILITO e' negato ("comando troppo complesso da controllare in tempo:
+  spezzalo"), per il predefinito, e per un chiamante non ancora stabilito (l'allarme
+  scatta prima di sapere a che compartimento appartiene la sessione), e' ammesso con un
+  avviso ogni volta (`uscita_tempo_scaduto`); il tetto dei percorsi (5000) lascia solo una
+  nota per il predefinito;
 - Windows (manca SIGALRM: niente allarme), un volume che distingue le maiuscole, un Python
   diverso dal 3.9 di sistema per l'hook: non provati.
 
@@ -3538,6 +3548,12 @@ def valuta(payload: dict, ambito: Ambito, chi: dict, data_dir: str):
                                                   env=_env_payload(payload),
                                                   avvisi=avvisi):
         if p == _IGNOTA:
+            if not nominato and _nome_semplice(testo) and not _ric_attiva(ricorsivo):
+                # il predefinito: un nome semplice (`cp a b`, `git add .`) dopo una cartella
+                # sconosciuta non nega, come `cat nota.txt` (vedi `_scrive_un_protetto` per il
+                # nome di un file del guardiano); una ricerca o una copia RICORSIVA (`grep -r
+                # x .`, `cp -r . x`, `tar`) da una cartella che non si sa resta negata
+                continue
             return {"bersaglio": testo, "proprietario": "sconosciuto",
                     "motivo": "compartimento %s: il comando cambia cartella con una "
                               "destinazione che non si sa determinare (`cd -`, una "
@@ -3673,6 +3689,54 @@ _GIT_SCRIVE_REPO = frozenset((
     "commit", "add", "fetch", "gc", "update-ref", "init", "push", "prune", "repack",
     "pack-refs", "commit-tree", "mktag", "replace", "filter-branch", "notes",
     "maintenance", "update-index", "symbolic-ref", "reflog", "bisect"))
+# Opzioni di `git branch` e `git tag` che ELENCANO (e i loro operandi sono modelli o
+# commit, non nomi da creare) e quelle che scrivono. Un raggruppamento corto (`-vl`, `-n5`)
+# vale per ogni lettera.
+_GIT_BRANCH_ELENCA = frozenset(("--list", "--contains", "--no-contains", "--merged",
+                                "--no-merged", "--points-at"))
+_GIT_BRANCH_SCRIVE = frozenset(("--delete", "--move", "--copy", "--force", "--track",
+                                "--no-track", "--set-upstream-to", "--unset-upstream",
+                                "--edit-description", "--create-reflog"))
+_GIT_TAG_ELENCA = frozenset(("--list", "--contains", "--no-contains", "--merged",
+                             "--no-merged", "--points-at", "--verify"))
+_GIT_TAG_SCRIVE = frozenset(("--delete", "--force", "--annotate", "--sign", "--local-user",
+                             "--message", "--file", "--edit"))
+_GIT_NOTES_SCRIVE = frozenset(("add", "copy", "append", "edit", "merge", "remove", "prune"))
+
+
+def _git_e_lettura(sotto, resto: list, opzioni: list) -> bool:
+    """`git SOTTO ...` SOLO LEGGE, anche se un operando sembra un nome da scrivere:
+    `branch --contains abc`, `branch --list 'x*'`, `tag -l 'v*'`, `reflog`, `notes list`,
+    `notes show HEAD`, `fetch --dry-run`, `stash list`, `worktree list`, `submodule status`.
+    `resto` sono le parole senza `-` dopo il sottocomando, `opzioni` quelle con `-`. Una
+    scrittura (`branch nuovo`, `tag v1`, `tag -a v1 -m m`, `notes add`, `reflog expire`,
+    `stash`, `fetch`) non e' una lettura; nel dubbio si tratta come scrittura."""
+    corte = "".join(o[1:] for o in opzioni if not o.startswith("--"))
+    lunghe = {o.split("=", 1)[0] for o in opzioni if o.startswith("--")}
+    if sotto == "branch":
+        if set(corte) & set("dDmMcCfut") or lunghe & _GIT_BRANCH_SCRIVE:
+            return False
+        return not resto or "l" in corte or bool(lunghe & _GIT_BRANCH_ELENCA)
+    if sotto == "tag":
+        if set(corte) & set("dasfmuFe") or lunghe & _GIT_TAG_SCRIVE:
+            return False
+        return (not resto or bool(set(corte) & set("lnv"))
+                or bool(lunghe & _GIT_TAG_ELENCA))
+    if sotto == "notes":
+        return not (set(resto) & _GIT_NOTES_SCRIVE)
+    if sotto == "reflog":
+        return not (set(resto) & {"expire", "delete"})
+    if sotto == "fetch":
+        return "--dry-run" in opzioni
+    if sotto == "stash":
+        return resto[:1] in (["list"], ["show"])
+    if sotto == "worktree":
+        return resto[:1] == ["list"]
+    if sotto == "submodule":
+        return not resto or resto[0] in ("status", "summary")
+    return False
+
+
 # Comandi che con `-o FILE` scrivono FILE (per `ssh -o`, `grep -o`, `unzip -o`,
 # `tar -o`, `ls -o`, `pytest -o` la stessa opzione vuol dire altro).
 _OUT_O_CMD = frozenset((
@@ -3721,6 +3785,10 @@ class _Protetti:
         # le cartelle che li contengono: scriverci dentro "in massa" (find
         # -delete, un `cp -r` su tutta la cartella, un `tar x`) li tocca
         self.cartelle = {os.path.dirname(p) for p in self.esatti | self.settings_utente}
+        # i loro NOMI, senza la cartella: dopo un `cd` che non si sa dove porta un nome
+        # semplice puo' essere uno di questi (`cd $(cat lista) && rm config.json`)
+        self.nomi = {os.path.basename(p) for p in self.esatti | self.settings_utente} | {
+            "settings.json", "settings.local.json"}
         self.radice_l = self.radice.lower()
         self.bin_l = self.bin.lower()
         self.pycache_l = os.path.join(self.radice, "plancia", "__pycache__").lower()
@@ -4090,7 +4158,9 @@ def _bersagli_scrittura(cmd: str, cwd, env=None, prof: int = 0):
     def tipo_(t, x, s):
         r = risolvi(x, s)
         if r is None:
-            yield ("ignota", x, s)
+            # il testo GIA' espanso (`f=sub/f; cd - && touch $f` nomina `sub/f`): chi
+            # decide guarda se ha una barra
+            yield ("ignota", _espandi_var(x, env, s["vars"]) or x, s)
             return
         for n in r:
             yield (t, n, s)
@@ -4351,7 +4421,9 @@ def _bersagli_scrittura(cmd: str, cwd, env=None, prof: int = 0):
                     break
             resto = [a for a in args[k_sotto + 1:] if not a.startswith("-")] if sotto else []
             opzioni = [a for a in args[k_sotto + 1:] if a.startswith("-")] if sotto else []
-            if sotto in _GIT_SCRIVE:
+            if _git_e_lettura(sotto, resto, opzioni):
+                pass        # una lettura: `branch --contains x`, `tag -l 'v*'`, `notes list`...
+            elif sotto in _GIT_SCRIVE:
                 yield from tipo_("stato", dir_git or ".", s)
             elif sotto in _GIT_SCRIVE_REPO:
                 yield from tipo_("repo", dir_git or ".", s)
@@ -4419,16 +4491,28 @@ def _bersagli_scrittura(cmd: str, cwd, env=None, prof: int = 0):
         yield ("cli", "config.save_config", None)
 
 
-def _scrive_un_protetto(cmd: str, cwd, P: _Protetti, env=None):
+def _nome_semplice(x: str) -> bool:
+    """`x` e' un nome senza barra (`f`, `.`, `nota.txt`, `*.txt`): non `..`, non un
+    percorso (`sub/f`, `../x`), non una `~`."""
+    return "/" not in x and x != ".." and not x.startswith("~")
+
+
+def _scrive_un_protetto(cmd: str, cwd, P: _Protetti, env=None, semplici_ok=False):
     """`(bersaglio, come)` se il comando Bash scrive, cancella o sposta un file
     del guardiano, cambia i permessi della sua cartella, o imposta una sua chiave
     con la CLI; altrimenti None. `come` e' `cli`, `scrive`, `settings` (un file di
     impostazioni di Claude Code) o `ignota` (una scrittura relativa dopo un `cd` che
-    non si sa dove porta). Vedi `_bersagli_scrittura` per l'elenco dei casi."""
+    non si sa dove porta). Con `semplici_ok` (il PREDEFINITO) la scrittura `ignota` di un
+    nome semplice (`git init`, `git add .`, `touch f`, `echo x > f`) non nega, come una
+    lettura: negarla sarebbe il falso positivo di ogni script; nega ancora un percorso con
+    una barra (`sub/f`, `../x`) e il nome di un file del guardiano (`rm config.json`).
+    Vedi `_bersagli_scrittura` per l'elenco dei casi."""
     for tipo, val, _ in _bersagli_scrittura(cmd, cwd, env):
         if tipo == "cli":
             return val, "cli"
         if tipo == "ignota":
+            if semplici_ok and _nome_semplice(val) and val.lower() not in P.nomi:
+                continue
             return val, "ignota"
         if tipo == "dati":
             return val, "scrive"
@@ -4479,7 +4563,7 @@ def _valuta_protetti(nome, ti, ambito, chi, data_dir, mio, env=None):
                                 "motivo": "compartimento %s: la modifica di %s %s"
                                           % (mio, n, perche)}
         return None
-    r = _scrive_un_protetto(cmd, cwd, P, env)
+    r = _scrive_un_protetto(cmd, cwd, P, env, semplici_ok=not chi["nomi"])
     if not r:
         return None
     bersaglio, come = r
@@ -4824,14 +4908,21 @@ def uscita_tempo_scaduto(data_dir: str):
 
     Un comando che non si riesce a controllare in tempo non e' "ammesso" per tutti:
     - `spento`: niente;
-    - `bloccante`, sessione di un NOMINATO o INCERTA (l'allarme e' scattato prima di
-      sapere chi chiama): NEGATO, con il motivo "comando troppo complesso da controllare
-      in tempo: spezzalo";
+    - chiamante NON ANCORA STABILITO (l'allarme e' scattato prima di sapere a che
+      compartimento appartiene la sessione: un disco che si ferma mentre si leggono le
+      cartelle configurate): NON e' "incerto" (segnali discordanti), e' un dato che
+      manca, e negare per questo chiuderebbe TUTTE le sessioni, anche il predefinito che
+      legge un file proprio. Ammesso, in `bloccante` e in `solo-registro`, con il
+      `systemMessage` OGNI volta e una riga `tempo-scaduto` senza compartimento, come per
+      il predefinito;
+    - `bloccante`, sessione GIA' STABILITA come di un NOMINATO o come INCERTA (due
+      compartimenti sulla stessa cartella): NEGATO, con il motivo "comando troppo
+      complesso da controllare in tempo: spezzalo";
     - `bloccante`, sessione del predefinito: ammesso (il predefinito non si blocca per un
       guasto), ma con il `systemMessage` OGNI volta, e una riga nel registro (nessun
       limite di tempo, nessun silenzio dopo la prima);
     - `solo-registro`: ammesso, con la riga (`avrebbe-negato` per un nominato o un
-      incerto) e il `systemMessage`."""
+      incerto, `tempo-scaduto` per gli altri) e il `systemMessage`."""
     st = _STATO_HOOK
     modo = st.get("modo")
     if modo is None:
@@ -4839,21 +4930,29 @@ def uscita_tempo_scaduto(data_dir: str):
     if modo == "spento":
         return ""
     chi = st.get("chi")
-    nominato_o_incerto = chi is None or bool(chi["nomi"])
-    nome = ",".join(chi["nomi"]) if chi and chi["nomi"] else (
-        PREDEFINITO if chi is not None else "incerto")
+    sid, strumento = st.get("sid") or "", st.get("strumento") or ""
+    if chi is None:
+        motivo = "chiamante non ancora stabilito: %s" % _MOTIVO_TEMPO
+        scrivi_registro(data_dir, {
+            "modalita": modo, "sessione": sid, "compartimento": "", "strumento": strumento,
+            "bersaglio": "", "motivo": motivo, "esito": "tempo-scaduto"})
+        return json.dumps({"systemMessage": (
+            "plancia-guardiano: il controllo non e' finito in tempo prima di sapere a che "
+            "compartimento appartiene la sessione (%s). Il comando e' stato ammesso senza "
+            "il controllo dei compartimenti." % _MOTIVO_TEMPO)}, ensure_ascii=False)
+    nominato = bool(chi["nomi"])
+    nome = ",".join(chi["nomi"]) if nominato else PREDEFINITO
     motivo = "compartimento %s: %s" % (nome, _MOTIVO_TEMPO)
-    blocca = modo == "bloccante" and nominato_o_incerto
-    esito = "negato" if blocca else ("avrebbe-negato" if nominato_o_incerto else "tempo-scaduto")
+    blocca = modo == "bloccante" and nominato
+    esito = "negato" if blocca else ("avrebbe-negato" if nominato else "tempo-scaduto")
     scrivi_registro(data_dir, {
-        "modalita": modo, "sessione": st.get("sid") or "",
-        "compartimento": nome if chi is not None else "", "strumento": st.get("strumento") or "",
+        "modalita": modo, "sessione": sid, "compartimento": nome, "strumento": strumento,
         "bersaglio": "", "motivo": motivo, "esito": esito})
     if blocca:
         return uscita_negata(motivo)
     return json.dumps({"systemMessage": (
         "plancia-guardiano: %s (%s). Il comando e' stato ammesso senza il controllo dei "
-        "compartimenti." % (_MOTIVO_TEMPO, "sessione del predefinito" if not nominato_o_incerto
+        "compartimenti." % (_MOTIVO_TEMPO, "sessione del predefinito" if not nominato
                             else "solo-registro"))}, ensure_ascii=False)
 
 

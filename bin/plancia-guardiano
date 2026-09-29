@@ -35,11 +35,14 @@ codice C che non guarda i segnali (dichiarato).
 L'allarme che scatta MENTRE il guardiano decide (un comando troppo complesso da
 controllare in tempo, per esempio `$(` annidati) non e' un guasto: e' un comando che
 non si e' potuto controllare, e `compartimenti.uscita_tempo_scaduto` decide. Un
-nominato (o una sessione incerta) in `bloccante` e' NEGATO con il motivo "comando
-troppo complesso da controllare in tempo: spezzalo"; il predefinito e' ammesso ma con
-il `systemMessage` OGNI volta (nessun silenzio dopo la prima); in `solo-registro` non si
-nega mai. Solo un allarme scattato durante il caricamento del pacchetto (o prima di aver
-letto la config) resta il guasto di sempre.
+nominato (o una sessione incerta) in `bloccante`, GIA' STABILITO come tale, e' NEGATO con
+il motivo "comando troppo complesso da controllare in tempo: spezzalo"; il predefinito e'
+ammesso ma con il `systemMessage` OGNI volta (nessun silenzio dopo la prima); in
+`solo-registro` non si nega mai. Se l'allarme scatta prima di sapere a che compartimento
+appartiene la sessione (chiamante non ancora stabilito, per esempio un disco fermo mentre
+si leggono le cartelle configurate) non e' "incerto": nessuno e' negato, si ammette con il
+`systemMessage` e una riga `tempo-scaduto`. Solo un allarme scattato durante il
+caricamento del pacchetto (o prima di aver letto la config) resta il guasto di sempre.
 
 Non installato da questo file: si aggiunge a mano a `settings.json` (matcher
 `*`, evento PreToolUse), prima in `solo-registro`.
@@ -173,7 +176,8 @@ def _carica():
 def _tempo_scaduto(exc):
     """L'allarme e' scattato MENTRE il modulo decideva (non mentre si caricava): un
     comando troppo complesso da controllare in tempo. Un nominato o una sessione incerta
-    in `bloccante` e' NEGATO (motivo: "spezzalo"); il predefinito e' ammesso ma con il
+    in `bloccante`, se gia' stabilito come tale, e' NEGATO (motivo: "spezzalo"); il
+    predefinito e un chiamante non ancora stabilito sono ammessi ma con il
     `systemMessage` ogni volta. Torna True se ha gestito il caso (il guardiano girava:
     `compartimenti.uscita_tempo_scaduto`), False se no (allarme durante il caricamento,
     config non ancora letta: e' il guasto di sempre, `_non_parte`)."""
