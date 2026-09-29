@@ -1637,3 +1637,13 @@ html[data-app="mac"] .label {
 .mriga .mnome { font-size: var(--t-sm); color: var(--text); flex: none; }
 .mriga .sub { font-size: var(--t-xs); min-width: 0; }
 .mriga:not(.preso) { opacity: .55; }
+
+/* Il selettore di compartimento (E1-PLANCIA). Sotto i 500 px la testata va a
+   capo e il selettore prende la prima riga intera: senza, stava fuori dallo
+   schermo e allungava la pagina. */
+#sel-compartimento { width: auto; min-width: 150px; max-width: 100%; }
+@media (max-width: 500px) {
+  .topbar { flex-wrap: wrap; }
+  .topbar-actions { flex-wrap: wrap; min-width: 0; max-width: 100%; }
+  #sel-compartimento { order: -1; flex: 1 1 100%; width: 100%; min-width: 0; }
+}

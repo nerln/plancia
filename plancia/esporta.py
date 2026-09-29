@@ -326,13 +326,19 @@ def costruisci(dati: dict) -> str:
             .replace("__TIPI__", json.dumps(TIPI, ensure_ascii=False)))
 
 
-def esporta(destinazione) -> tuple:
-    conn = sqlite3.connect(f"file:{config.DB_PATH}?mode=ro", uri=True)
-    conn.row_factory = sqlite3.Row
+def esporta(destinazione, conn=None) -> tuple:
+    """Scrive l'export. `conn` (opzionale) e' una connessione gia' aperta, con le
+    viste di un compartimento (`compartimenti_viste.applica`): l'export contiene
+    solo quello che la connessione lascia vedere. Senza, si legge tutto."""
+    chiudi = conn is None
+    if conn is None:
+        conn = sqlite3.connect(f"file:{config.DB_PATH}?mode=ro", uri=True)
+        conn.row_factory = sqlite3.Row
     try:
         dati = raccogli(conn)
     finally:
-        conn.close()
+        if chiudi:
+            conn.close()
     pagina = costruisci(dati)
     destinazione.parent.mkdir(parents=True, exist_ok=True)
     destinazione.write_text(pagina, "utf-8")

@@ -291,6 +291,10 @@ AGGIUNTE = {
     # solo per le note scritte a mano (`plancia_log`, la dashboard) senza un
     # progetto: le altre righe hanno il compartimento dal loro `ref` o progetto
     "events": (("compartimento", "TEXT DEFAULT ''"),),
+    # un lancio parte da una cartella (la HOME, se il progetto non ne ha una)
+    # che non dice di che compartimento e': chi lo lancia da un nominato (dalla
+    # sua vista, dalla sua sessione) ne scrive il nome qui
+    "runs": (("compartimento", "TEXT DEFAULT ''"),),
 }
 
 

@@ -278,8 +278,14 @@ def _scrive_da(modo=None, scrive=False) -> bool:
 
 def avvia(conn, titolo, dettaglio="", progetto=None, istruzioni="", agente="claude",
           scrive=False, cwd=None, task_id=None, lingua="it", attendi=False,
-          sessione=None, modo=None) -> dict:
+          sessione=None, modo=None, compartimento="") -> dict:
     """Mette in coda un lancio e lo fa partire. Torna subito con l'id.
+
+    `compartimento` (vuoto per il predefinito) e' il nome del compartimento
+    nominato da cui parte il lancio (la sua vista, la sua sessione): finisce in
+    `runs.compartimento` e il lancio compare in quella vista e in nessun'altra,
+    anche se parte da una cartella che non dice di chi e' (vedi
+    compartimenti_viste.py).
 
     `scrive` (bool) ha preso il posto di `modo` ("proposta"/"esegui") come
     unico interruttore per i permessi: sceglie fra `TOOL_LETTURA` e
@@ -305,6 +311,8 @@ def avvia(conn, titolo, dettaglio="", progetto=None, istruzioni="", agente="clau
         "VALUES(?,?,?,?,?,'in coda',?)",
         (task_id, agente, modo, prompt, cwd, store.now()))
     run_id = cur.lastrowid
+    if compartimento:
+        conn.execute("UPDATE runs SET compartimento=? WHERE id=?", (compartimento, run_id))
     log = LOG_DIR / f"run-{run_id}.log"
     conn.execute("UPDATE runs SET log=? WHERE id=?", (str(log), run_id))
     if task_id:

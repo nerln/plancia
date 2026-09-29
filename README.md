@@ -458,10 +458,26 @@ every view follows it, and what you create there belongs there.
 A session with signs of two compartments sees nothing. This decides what Plancia
 shows; it is not a security boundary, same user and same disk.
 
-Limits worth knowing: the `plancia` command in a terminal and the dashboard's
-voice assistant are your view, not an agent's, and are not filtered. Folder rules
-compare POSIX paths (starting with `/` or `~`): a Windows drive-letter path is not
-recognised yet, so on Windows every object still falls in the default compartment.
+The `plancia` command in a terminal works out its compartment the way the MCP
+server does, from `CLAUDE_CODE_SESSION_ID` and the current folder: a command run
+from a session of a named compartment sees that compartment only (board, events,
+runs, briefing, search, sessions, recap, ask, jarvis, export, and the rest), and
+a write on another compartment's project or task is refused. A human terminal
+with no session id and a current folder outside every named compartment is the
+default one and sees the default one; inside a named compartment's folder it
+sees that one. The dashboard's voice assistant works from the compartment picked
+in the selector, and from a named compartment a free-form question is answered
+with that compartment's data in the prompt, not by the warm process with the
+Plancia tools. A run started from a compartment belongs to it, even when its
+project has no folder. Commands that administer all of Plancia (`init`, `riordina
+--applica`, `riprendi --backfill`) are refused from a named compartment. With
+compartments on, `briefing.md` is not written (one file per compartment instead)
+and it comes back when they are removed.
+
+Limits worth knowing: folder rules compare POSIX paths (starting with `/` or
+`~`): a Windows drive-letter path is not recognised yet, so on Windows every
+object still falls in the default compartment. The daily recap that a scheduler
+runs has no session, so it is the default compartment's.
 
 ## Two decisions worth knowing about
 
@@ -551,7 +567,7 @@ warning each time). The full list is in the docstring of `plancia/compartimenti.
 git config core.hooksPath .githooks
 ```
 
-Turns on the hook that runs `python3 tools/prova.py` before every push: 3804
+Turns on the hook that runs `python3 tools/prova.py` before every push: 3951
 checks in a few minutes, against a throwaway archive that never touches
 yours. They cover the schema, the board, the proposals, the search index, the
 recap, the MCP surface and its token budget, every read route of the HTTP API,

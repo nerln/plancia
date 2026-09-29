@@ -12,7 +12,8 @@ indovinare, si passa a Claude.
 
 import re
 
-from . import actions, agente, cantiere, proposte, recap, risposte, store
+from . import (actions, agente, cantiere, compartimenti_viste, proposte, recap,
+               risposte, store)
 
 # --------------------------------------------------------------------------
 # comandi riconosciuti al volo
@@ -374,13 +375,19 @@ def chiedi_a_claude(frase: str, lang: str, parole=55) -> str:
     return (res.stdout or "").strip() if res.returncode == 0 else ""
 
 
-def _esegui_proposta(conn, scelta, d, lang, forza_esecuzione=False) -> dict:
+def _esegui_proposta(conn, scelta, d, lang, forza_esecuzione=False, lett=None,
+                     tag="") -> dict:
     """Trasforma una proposta in un fatto.
+
+    Con i compartimenti (vedi compartimenti_viste.py) `lett` e' la connessione
+    con le viste (da cui si legge il lancio o il task a cui la proposta punta) e
+    `tag` il compartimento a cui appartiene il lancio che ne esce.
 
     Il modo resta quello scritto nella proposta, cioè proposta, a meno che tu
     non abbia detto esplicitamente di eseguire. Una frase come "fallo" non deve
     mai finire per modificare file da sola.
     """
+    lett = lett or conn
     a = scelta.get("azione") or {}
     tipo = a.get("tipo")
 
@@ -389,7 +396,7 @@ def _esegui_proposta(conn, scelta, d, lang, forza_esecuzione=False) -> dict:
                 "azione": {"tipo": "vai", "vista": a.get("vista", "oggi")}}
 
     if tipo == "rilancia":
-        r = conn.execute("SELECT prompt, agente, modo, cwd, task_id FROM runs WHERE id=?",
+        r = lett.execute("SELECT prompt, agente, modo, cwd, task_id FROM runs WHERE id=?",
                          (a.get("run"),)).fetchone()
         if not r:
             return {"tipo": "proposta", "risposta": d["niente_proposte"]}
@@ -400,7 +407,8 @@ def _esegui_proposta(conn, scelta, d, lang, forza_esecuzione=False) -> dict:
         modo = "esegui" if forza_esecuzione else r["modo"]
         esito = cantiere.avvia(conn, r["prompt"][:200], agente=r["agente"],
                                scrive=(modo == "esegui"),
-                               cwd=r["cwd"], task_id=r["task_id"], lingua=lang)
+                               cwd=r["cwd"], task_id=r["task_id"], lingua=lang,
+                               compartimento=tag)
         return {"tipo": "cantiere",
                 "risposta": d["mandato"].format(chi=r["agente"], cosa=scelta["testo"][:60]),
                 "azione": {"tipo": "vai", "vista": "oggi"}, "run": esito["run"]}
@@ -417,15 +425,15 @@ def _esegui_proposta(conn, scelta, d, lang, forza_esecuzione=False) -> dict:
         tid = a.get("task_id")
         if tid:
             from . import riprendi as _riprendi
-            task = actions.task_get(conn, tid)
+            task = actions.task_get(lett, tid)
             if task:
-                s = _riprendi.stato(conn, task)
+                s = _riprendi.stato(lett, task)
                 sessione = _riprendi.sessione_da_riprendere(s)
                 agente_scelto = s.get("agent") or agente_scelto
         esito = cantiere.avvia(conn, a.get("titolo", scelta["testo"])[:200],
                                progetto=a.get("progetto"), agente=agente_scelto,
                                scrive=(modo == "esegui"), task_id=tid, lingua=lang,
-                               sessione=sessione)
+                               sessione=sessione, compartimento=tag)
         chiave = "mandato_esegui" if modo == "esegui" else "mandato"
         return {"tipo": "cantiere",
                 "risposta": d[chiave].format(chi=agente_scelto,
@@ -439,35 +447,49 @@ def _esegui_proposta(conn, scelta, d, lang, forza_esecuzione=False) -> dict:
 # ingresso unico
 # --------------------------------------------------------------------------
 
-def esegui(testo: str, lang=None, conn=None) -> dict:
-    esito = _esegui(testo, lang, conn)
+def esegui(testo: str, lang=None, conn=None, vista=None) -> dict:
+    """Esegue una frase. Con `vista` (una `compartimenti_viste.Vista`: la
+    dashboard nel suo compartimento, il comando da terminale di una sessione)
+    si legge solo da lei, si scrive solo su oggetti che vede e quello che parte
+    e' del suo compartimento; senza compartimenti la vista e' la connessione di
+    sempre. `conn` resta per chi la passa gia' (le prove)."""
+    esito = _esegui(testo, lang, conn, vista)
     # L'ultima cosa detta si tiene da parte qui e non nella rotta HTTP: da
     # terminale, dall'app e da MCP "ripeti" deve rispondere alla stessa cosa.
+    # Con i compartimenti sta nella `meta` della vista: ognuno ripete la sua.
     try:
         if esito.get("risposta") and not esito.get("ripetuta"):
-            c = conn or store.connect()
+            c = vista.lettura if vista is not None else (conn or store.connect())
             store.set_meta(c, "ultima_risposta", esito["risposta"])
             c.commit()
-            if conn is None:
+            if vista is None and conn is None:
                 c.close()
     except Exception:
         pass
     return esito
 
 
-def _esegui(testo: str, lang=None, conn=None) -> dict:
+def _esegui(testo: str, lang=None, conn=None, vista=None) -> dict:
     lang = recap.lang_or_default(lang)
     d = _dizionario(lang)
     chiudi = False
-    if conn is None:
+    if vista is not None:
+        conn = vista.conn
+        if vista.incerta:
+            return {"tipo": "claude", "risposta": d["non_capito"], "via": "compartimento"}
+    elif conn is None:
         conn = store.connect()
         store.init_db(conn)
         chiudi = True
+    # `lett`: da dove si LEGGE (le viste del compartimento, se ci sono); `conn`:
+    # dove si scrive, solo dopo aver visto che l'oggetto e' leggibile da `lett`
+    lett = vista.lettura if vista is not None else conn
+    tag = vista.tag if vista is not None else ""
     try:
         comando, arg = riconosci(testo)
 
         if comando == "ripeti":
-            ultima = store.get_meta(conn, "ultima_risposta") or ""
+            ultima = store.get_meta(lett, "ultima_risposta") or ""
             if not ultima:
                 return {"tipo": "ripeti", "risposta": d["niente_da_ripetere"], "via": "comando"}
             # Si rimanda lo stesso testo: chi non ha sentito vuole quello, non
@@ -483,7 +505,7 @@ def _esegui(testo: str, lang=None, conn=None) -> dict:
 
         if comando == "annulla":
             from . import cantiere
-            attivi = [r for r in cantiere.elenco(conn, limite=5)
+            attivi = [r for r in cantiere.elenco(lett, limite=5)
                       if r["stato"] in ("in coda", "in corso")]
             if not attivi:
                 return {"tipo": "annulla", "risposta": d["niente_da_fermare"], "via": "comando"}
@@ -502,7 +524,7 @@ def _esegui(testo: str, lang=None, conn=None) -> dict:
                 return {"tipo": "vai", "risposta": d["vai"].format(vista=arg),
                         "azione": {"tipo": "vai", "vista": vista}}
             # "apri" seguito da altro non è una vista: probabilmente è un progetto
-            riga = store.get_project(conn, arg)
+            riga = store.get_project(lett, arg)
             if riga:
                 return {"tipo": "vai", "risposta": d["vai"].format(vista=riga["name"]),
                         "azione": {"tipo": "progetto", "chiave": riga["key"]}}
@@ -513,10 +535,10 @@ def _esegui(testo: str, lang=None, conn=None) -> dict:
                 tid = int(arg)
             except ValueError:
                 tid = None
-            task = actions.task_get(conn, tid) if tid is not None else None
+            task = actions.task_get(lett, tid) if tid is not None else None
             if not task:
                 return {"tipo": "riprendi", "risposta": d["riprendi_non_trovato"].format(id=arg)}
-            s = _riprendi.stato(conn, task)
+            s = _riprendi.stato(lett, task)
             if s["stato"] == "viva":
                 # LOTTO-L3-RITOCCO punto 7: prima si diceva sempre "l'ho
                 # copiato negli appunti", anche quando `_copia_appunti`
@@ -543,14 +565,15 @@ def _esegui(testo: str, lang=None, conn=None) -> dict:
                     "azione": {"tipo": "vai", "vista": "task"}}
 
         if comando in ("fallo", "eseguilo"):
-            scelta = proposte.scegli(conn, arg or None, lang)
+            scelta = proposte.scegli(lett, arg or None, lang)
             if not scelta:
                 return {"tipo": "proposta", "risposta": d["niente_proposte"]}
             return _esegui_proposta(conn, scelta, d, lang,
-                                    forza_esecuzione=(comando == "eseguilo"))
+                                    forza_esecuzione=(comando == "eseguilo"),
+                                    lett=lett, tag=tag)
 
         if comando in ("archivia", "riapri_progetto") and arg:
-            riga = store.get_project(conn, arg)
+            riga = store.get_project(lett, arg)
             if not riga:
                 return {"tipo": "progetto",
                         "risposta": d["progetto_non_trovato"].format(nome=arg)}
@@ -574,17 +597,17 @@ def _esegui(testo: str, lang=None, conn=None) -> dict:
                     "azione": {"tipo": "aggiorna"}}
 
         if comando == "riepilogo":
-            dati = recap.build(conn, lang=lang)
+            dati = recap.build(lett, lang=lang)
             return {"tipo": "riepilogo", "risposta": dati["testo"],
                     "azione": {"tipo": "vai", "vista": "riepilogo"}, "lungo": True}
 
         if comando == "task_add" and arg and len(arg) > 2:
-            task = actions.task_add(conn, arg[:200], source="jarvis")
+            task = actions.task_add(conn, arg[:200], source="jarvis", compartimento=tag)
             return {"tipo": "task", "risposta": d["task_add"].format(titolo=task["title"]),
                     "azione": {"tipo": "vai", "vista": "task"}}
 
         if comando == "task_done":
-            aperti = actions.tasks_list(conn, "aperti", limit=30)
+            aperti = actions.tasks_list(lett, "aperti", limit=30)
             if not aperti:
                 return {"tipo": "task", "risposta": d["nessun_task"]}
             scelto = None
@@ -608,10 +631,21 @@ def _esegui(testo: str, lang=None, conn=None) -> dict:
 
         # Prima di scomodare un modello: la domanda è una di quelle che i dati
         # sanno già? Costa zero e risponde in un decimo di secondo.
-        locale = risposte.prova(conn, testo, lang)
+        locale = risposte.prova(lett, testo, lang)
         if locale:
             return {"tipo": "dati", "risposta": locale}
 
+        if vista is not None and vista.nominato:
+            # Il modello con i tool `plancia_*` (il processo caldo, o quello a
+            # freddo) parte da una cartella di Plancia e vedrebbe il compartimento
+            # del predefinito, e il processo caldo tiene il filo del discorso fra
+            # una frase e l'altra: da un compartimento nominato si risponde
+            # invece con i soli dati della sua vista nel prompt, senza tool e
+            # senza memoria di chi ha parlato prima.
+            risposta = recap.answer(
+                testo, lang, lett,
+                schede=lambda q: compartimenti_viste.cerca_schede(lett, vista.ombra, q, 8))
+            return {"tipo": "claude", "risposta": risposta or d["non_capito"]}
         risposta = agente.chiedi(testo, lang)
         if not risposta:
             # il processo caldo non è partito: si ripiega su quello a freddo

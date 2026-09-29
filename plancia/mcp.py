@@ -318,42 +318,17 @@ def _sessione_bloccata(conn):
 
 
 def _progetto_scrivibile(conn, lettura, ombra, ident, esiste=False, chiave=False):
-    """Il progetto da usare in una scrittura, senza uscire dal compartimento.
-
-    Senza compartimenti torna `ident` com'e' (comportamento di sempre). Con i
-    compartimenti torna l'id del progetto SE la sessione lo vede; se `ident` ne
-    nomina esattamente uno di un altro compartimento rifiuta con un messaggio
-    chiaro (non nomina il compartimento dell'altro: e' quello che non si deve
-    sapere). Un progetto che non c'e' resta come prima (nessuna scheda, o
-    'inesistente' se `esiste` dice che ci deve essere): non si ripiega mai sulla
-    ricerca per somiglianza sull'intero archivio, che potrebbe pescare un
-    progetto altrui."""
-    if ombra is None:
-        return ident
-    if ident in (None, "", 0):
-        if esiste:
-            raise actions.BadInput("serve il progetto")
-        return None
-    riga = store.get_project(lettura, ident)
-    if riga:
-        return riga["key"] if chiave else riga["id"]
-    if viste.progetto_esatto(conn, ident):
-        raise actions.BadInput(viste.MSG_ALTRO % f"il progetto '{ident}'")
-    if esiste:
-        raise actions.BadInput(f"progetto '{ident}' inesistente")
-    return None
+    """Il progetto da usare in una scrittura, senza uscire dal compartimento
+    (la regola e' `compartimenti_viste.progetto_scrivibile`, la stessa del
+    comando da terminale e della dashboard)."""
+    return viste.progetto_scrivibile(conn, lettura, ombra, ident, esiste=esiste,
+                                     chiave=chiave)
 
 
 def _oggetto_scrivibile(conn, lettura, ombra, leggi, chiave, nome):
-    """Rifiuta di toccare un task o un post che la sessione non vede: la
-    lettura con le viste non lo trova, quella senza si'. Se non esiste in
-    nessuno dei due la funzione che scrive dice da se' 'inesistente'."""
-    if ombra is None:
-        return
-    if leggi(lettura, chiave):
-        return
-    if leggi(conn, chiave):
-        raise actions.BadInput(viste.MSG_ALTRO % f"{nome} {chiave}")
+    """Rifiuta di toccare un task o un post che la sessione non vede (la regola
+    e' `compartimenti_viste.oggetto_scrivibile`)."""
+    viste.oggetto_scrivibile(conn, lettura, ombra, leggi, chiave, nome)
 
 
 def call_tool(name: str, args: dict) -> str:
@@ -632,7 +607,8 @@ def call_tool(name: str, args: dict) -> str:
             return _fmt(cantiere.avvia(
                 conn, titolo, args.get("dettaglio", ""), progetto,
                 args.get("istruzioni", ""), args.get("agente", "claude"),
-                args.get("modo", "proposta"), None, args.get("task_id")))
+                args.get("modo", "proposta"), None, args.get("task_id"),
+                compartimento=tag_comp))
 
         if name == "plancia_lanci":
             if args.get("id"):
@@ -643,10 +619,9 @@ def call_tool(name: str, args: dict) -> str:
             limite = int(args.get("limite") or 50)
             if ombra is None:
                 return _fmt(eventi.leggi(args.get("dopo"), args.get("tipo"), limite))
-            # il registro e' un file solo, di tutti: si legge piu' largo e si
-            # toglie cio' che non e' di questo compartimento
-            righe = eventi.leggi(args.get("dopo"), args.get("tipo"), max(limite * 20, 500))
-            return _fmt(ombra.filtra_eventi(righe)[:limite])
+            # il registro e' un file solo, di tutti: il filtro sta dentro la
+            # lettura, prima del taglio agli ultimi `limite`
+            return _fmt(ombra.leggi_eventi(args.get("dopo"), args.get("tipo"), limite))
 
         if name == "plancia_sync":
             from . import ingest
@@ -686,7 +661,8 @@ def call_tool(name: str, args: dict) -> str:
                 return _fmt(cantiere.avvia(
                     conn, task.get("title") or "", "", task.get("project_key"),
                     args.get("istruzioni", ""), s.get("agent") or task.get("agent") or "claude",
-                    bool(args.get("scrive")), None, task["id"], sessione=sessione_fork))
+                    bool(args.get("scrive")), None, task["id"], sessione=sessione_fork,
+                    compartimento=tag_comp))
             argv = _riprendi.comando(task, s, lettura)
             return _fmt({"stato": s.get("stato"), "motivo": s.get("motivo"),
                         "sessione": s.get("session_id"), "cwd": s.get("cwd"),

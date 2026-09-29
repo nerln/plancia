@@ -709,7 +709,7 @@ def _figlio_minori(piatt: str) -> None:
 
     recap.claude_bin = lambda: ""
     recap.answer = lambda *a, **k: "Risposta di prova."
-    jarvis.esegui = lambda frase, lang=None, conn=None: {"tipo": "risposta", "risposta": "Jarvis di prova.",
+    jarvis.esegui = lambda frase, lang=None, conn=None, vista=None: {"tipo": "risposta", "risposta": "Jarvis di prova.",
                                                          "lingua": "it"}
     voice.voicebox_vivo = lambda *a, **k: False
     voice.pocket_vivo = lambda *a, **k: False

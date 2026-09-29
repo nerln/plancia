@@ -521,10 +521,10 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/eventi":
                 limite = int(first("limite", 100))
                 if ombra is not None:
-                    # il registro e' un file solo, di tutti: si toglie a valle (e
+                    # il registro e' un file solo, di tutti: il filtro sta dentro
+                    # la lettura, prima del taglio agli ultimi `limite` (e
                     # `stato` non dice piu' quanti eventi ha in tutto)
-                    righe = ombra.filtra_eventi(eventi.leggi(
-                        first("dopo"), first("tipo"), max(limite * 20, 500)))[:limite]
+                    righe = ombra.leggi_eventi(first("dopo"), first("tipo"), limite)
                     return self._json({"eventi": righe, "stato": {
                         "schema": eventi.SCHEMA, "tipi": list(eventi.TIPI)}})
                 return self._json({"eventi": eventi.leggi(first("dopo"), first("tipo"),
@@ -643,6 +643,23 @@ class Handler(BaseHTTPRequestHandler):
                 raise actions.BadInput("compartimento sconosciuto: %s" % scelta)
         nuovo = scelta if scelta and scelta != viste.PREDEFINITO else ""
         conn = store.connect()
+        # Con i compartimenti attivi una scrittura non tocca un oggetto di un
+        # altro compartimento da qui (la dashboard e' la vista di una persona, ma
+        # l'API si puo' chiamare anche a mano): il bersaglio si controlla contro
+        # la vista scelta (senza scelta, il predefinito), come fa l'MCP. La
+        # vista si apre solo se serve, e solo una volta.
+        aperte = []
+
+        def vista():
+            if not aperte:
+                aperte.append(viste.apri_vista(scelta, dashboard=True))
+            return aperte[0]
+
+        def con_progetto_valido(corpo):
+            """`corpo` con `project` sostituito dal progetto scrivibile (l'id)."""
+            if corpo.get("project") is None:
+                return corpo
+            return dict(corpo, project=vista().progetto(corpo["project"], esiste=True))
         try:
             if path.startswith("/api/voice/") or path == "/api/recap":
                 # utile a capire da dove è partita la voce quando qualcosa non torna
@@ -691,12 +708,17 @@ class Handler(BaseHTTPRequestHandler):
                 # da Claude/Codex, che una sessione la hanno già) partiva
                 # sempre da zero, anche quando "Riprendi" prometteva il
                 # contrario.
+                progetto = vista().progetto(body.get("progetto"), chiave=True)
+                if body.get("task_id") is not None:
+                    vista().oggetto(actions.task_get, int(body["task_id"]), "il task")
+                # `compartimento=nuovo`: il lancio e' della vista da cui parte,
+                # anche se il progetto non ha una cartella (parte dalla HOME)
                 return self._json(cantiere.avvia(
-                    conn, titolo, body.get("dettaglio", ""), body.get("progetto"),
+                    conn, titolo, body.get("dettaglio", ""), progetto,
                     body.get("istruzioni", ""), body.get("agente", "claude"),
                     bool(body.get("scrive")), body.get("cwd"),
                     body.get("task_id"), recap.lang_or_default(body.get("lang")),
-                    sessione=body.get("sessione") or None))
+                    sessione=body.get("sessione") or None, compartimento=nuovo))
             if path == "/api/riprendi/backfill" and method == "POST":
                 # Un nome di batch nuovo a ogni chiamata (mai virgole o spazi,
                 # riprendi._batch_valido lo richiede): senza un batch tornato
@@ -713,6 +735,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"ripristinati": riprendi.annulla(conn, batch)})
             m = re.match(r"^/api/riprendi/(\d+)$", path)
             if m and method == "POST":
+                vista().oggetto(actions.task_get, int(m.group(1)), "il task")
                 task = actions.task_get(conn, int(m.group(1)))
                 if not task:
                     # LOTTO-L3-RITOCCO punto 12: stesso codice e stesso corpo
@@ -738,11 +761,13 @@ class Handler(BaseHTTPRequestHandler):
                         conn, task.get("title") or "", "", task.get("project_key"),
                         body.get("istruzioni", ""), s.get("agent") or task.get("agent") or "claude",
                         bool(body.get("scrive")), None, task["id"],
-                        recap.lang_or_default(body.get("lang")), sessione=sessione)
+                        recap.lang_or_default(body.get("lang")), sessione=sessione,
+                        compartimento=nuovo)
                     return self._json(esito)
                 raise actions.BadInput("serve 'apri' o 'background'")
             m = re.match(r"^/api/runs/(\d+)/annulla$", path)
             if m and method == "POST":
+                vista().oggetto(cantiere.dettaglio, int(m.group(1)), "il lancio")
                 return self._json({"annullato": cantiere.annulla(conn, int(m.group(1)))})
             if path == "/api/jarvis/scalda" and method == "POST":
                 agente.scalda(recap.lang_or_default(body.get("lang")))
@@ -752,7 +777,10 @@ class Handler(BaseHTTPRequestHandler):
                 if not testo:
                     raise actions.BadInput("serve una frase")
                 lang = recap.lang_or_default(body.get("lang"))
-                esito = jarvis.esegui(testo, lang, conn)
+                # la voce lavora dal compartimento scelto: legge dalle viste,
+                # scrive solo dopo aver controllato il bersaglio, e i lanci che
+                # fa sono di quel compartimento
+                esito = jarvis.esegui(testo, lang, vista=vista())
                 esito["lingua"] = lang
                 esito["detto"] = testo
                 # Se la voce sarebbe comunque quella di sistema, la sintesi la
@@ -832,12 +860,16 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"avviato": started, "stato": SYNC_STATE})
             if path == "/api/tasks" and method == "POST":
                 return self._json(actions.task_add(
-                    conn, body.get("title"), body.get("body", ""), body.get("project"),
+                    conn, body.get("title"), body.get("body", ""),
+                    vista().progetto(body.get("project")),
                     body.get("priority", 2), body.get("due"), body.get("tags", ""), "dashboard",
                     compartimento=nuovo))
             m = re.match(r"^/api/tasks/(\d+)$", path)
+            if m and method in ("PATCH", "DELETE"):
+                vista().oggetto(actions.task_get, int(m.group(1)), "il task")
             if m and method == "PATCH":
-                return self._json(actions.task_update(conn, int(m.group(1)), **body))
+                return self._json(actions.task_update(
+                    conn, int(m.group(1)), **con_progetto_valido(body)))
             if m and method == "DELETE":
                 conn.execute("DELETE FROM tasks WHERE id=?", (int(m.group(1)),))
                 conn.commit()
@@ -845,12 +877,16 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/posts" and method == "POST":
                 return self._json(actions.post_add(
                     conn, body.get("text"), body.get("platform", "x"),
-                    body.get("status", "bozza"), body.get("project"), body.get("url"),
+                    body.get("status", "bozza"), vista().progetto(body.get("project")),
+                    body.get("url"),
                     body.get("source_ref", ""), body.get("scheduled_for"),
                     media=body.get("media", ""), compartimento=nuovo))
             m = re.match(r"^/api/posts/(\d+)$", path)
+            if m and method in ("PATCH", "DELETE"):
+                vista().oggetto(actions.post_get, int(m.group(1)), "il post")
             if m and method == "PATCH":
-                return self._json(actions.post_update(conn, int(m.group(1)), **body))
+                return self._json(actions.post_update(
+                    conn, int(m.group(1)), **con_progetto_valido(body)))
             if m and method == "DELETE":
                 conn.execute("DELETE FROM posts WHERE id=?", (int(m.group(1)),))
                 conn.commit()
@@ -862,13 +898,17 @@ class Handler(BaseHTTPRequestHandler):
             m = re.match(r"^/api/projects/([^/]+)$", path)
             if m and method == "PATCH":
                 return self._json(actions.project_update(
-                    conn, urllib.parse.unquote(m.group(1)), **body))
+                    conn, vista().progetto(urllib.parse.unquote(m.group(1)),
+                                           esiste=True, chiave=True), **body))
             if path == "/api/events" and method == "POST":
                 return self._json(actions.log_event(
                     conn, body.get("title"), body.get("kind", "nota"), body.get("detail", ""),
-                    body.get("project"), body.get("ref"), "dashboard", compartimento=nuovo))
+                    vista().progetto(body.get("project")), body.get("ref"), "dashboard",
+                    compartimento=nuovo))
             return self._error(404, "rotta inesistente")
         finally:
+            for v in aperte:
+                v.chiudi()
             conn.close()
 
     # --- file statici ----------------------------------------------------
