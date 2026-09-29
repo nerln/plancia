@@ -109,8 +109,10 @@ if [ -n "$CERT" ]; then
   fi
 fi
 
-# 7. l'impronta da pubblicare accanto al file
-shasum -a 256 "$DMG" | tee "$DMG.sha256"
+# 7. l'impronta da pubblicare accanto al file. Si calcola dentro dist/ con il
+#    solo nome del file: con il percorso assoluto il .sha256 pubblicato portava
+#    la cartella di chi rilascia, e `shasum -c` non tornava a nessun altro.
+( cd "$FUORI" && shasum -a 256 "$(basename "$DMG")" ) | tee "$DMG.sha256"
 
 echo
 echo "pronto: $DMG"
