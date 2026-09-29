@@ -617,6 +617,11 @@ class Handler(BaseHTTPRequestHandler):
                     return self._error(404, "task inesistente")
                 s = riprendi.stato(conn, task)
                 argv = riprendi.comando(task, s, conn)
+                # LOTTO 21-RIPRENDI: cosa farebbe un lavoro "in background"
+                # per questo task (riprendere la sessione originale, una
+                # copia, una nuova, niente), da mostrare PRIMA di lanciarlo
+                piano = riprendi.piano(conn, s.get("agent"), s.get("session_id"),
+                                       s.get("cwd"), task.get("host") or "")
                 # La data da mostrare in "sessione del <data>" (chiusa/codex):
                 # riprendi.stato() non la porta (non le serve per decidere lo
                 # stato), quindi si va a prenderla dalla sessione vera se
@@ -629,7 +634,7 @@ class Handler(BaseHTTPRequestHandler):
                 sessione_data = sessione_data or task.get("updated_at")
                 return self._json({"riprendi": s, "comando": argv,
                                    "messaggio": riprendi.messaggio(task),
-                                   "sessione_data": sessione_data})
+                                   "sessione_data": sessione_data, "piano": piano})
             return self._error(404, "rotta inesistente")
         finally:
             viste.chiudi(conn, ombra)
@@ -698,31 +703,45 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"ok": True})
             if path == "/api/cantiere" and method == "POST":
                 titolo = (body.get("titolo") or "").strip()
-                if not titolo:
+                anteprima = bool(body.get("anteprima"))
+                if not titolo and not anteprima and body.get("run") is None:
                     raise actions.BadInput("serve un titolo")
                 # LOTTO-L3-RITOCCO punto 13: `scrive` (bool, dal nuovo
                 # interruttore del front) invece di `modo` ("proposta"/
                 # "esegui", il vecchio menu a tendina sparito col punto 2 di
                 # LOTTO-L3-RIPRENDI-UI) - vedi cantiere.avvia/_scrive_da.
                 #
-                # L3-RIPRENDI-UI-4 (obbligatoria del critico): `sessione`
-                # inoltrata a cantiere.avvia(), che già la accetta (--resume
-                # --fork-session quando c'è) - prima il modulo "In
-                # background" senza un task_id (righe della lavagna venute
-                # da Claude/Codex, che una sessione la hanno già) partiva
-                # sempre da zero, anche quando "Riprendi" prometteva il
-                # contrario.
+                # LOTTO 21-RIPRENDI: `sessione` (o `task_id`, o `run` per
+                # rilanciare un lancio) e' la sessione di ORIGINE del lavoro.
+                # Se e' chiusa il lavoro la riprende con lo stesso id; se e'
+                # aperta non parte niente (`lanciato: false`, con il messaggio
+                # da incollare) salvo `copia: true`; se e' persa parte una
+                # sessione nuova e la risposta lo dice in `piano`. Con
+                # `anteprima: true` non parte niente: torna solo il `piano`,
+                # cosi' il front lo mostra prima di chiedere il si.
                 progetto = vista().progetto(body.get("progetto"), chiave=True)
                 if body.get("task_id") is not None:
                     vista().oggetto(actions.task_get, int(body["task_id"]), "il task")
+                if body.get("run") is not None:
+                    vista().oggetto(cantiere.dettaglio, int(body["run"]), "il lancio")
+                    esito = riprendi.rilancia_run(
+                        conn, int(body["run"]),
+                        scrive=(bool(body["scrive"]) if "scrive" in body else None),
+                        lingua=recap.lang_or_default(body.get("lang")),
+                        anteprima=anteprima, compartimento=nuovo,
+                        copia=bool(body.get("copia")), lett=vista().lettura)
+                    if esito is None:
+                        return self._error(404, "lancio inesistente")
+                    return self._json(esito)
                 # `compartimento=nuovo`: il lancio e' della vista da cui parte,
                 # anche se il progetto non ha una cartella (parte dalla HOME)
-                return self._json(cantiere.avvia(
+                return self._json(riprendi.lancia(
                     conn, titolo, body.get("dettaglio", ""), progetto,
                     body.get("istruzioni", ""), body.get("agente", "claude"),
                     bool(body.get("scrive")), body.get("cwd"),
                     body.get("task_id"), recap.lang_or_default(body.get("lang")),
-                    sessione=body.get("sessione") or None, compartimento=nuovo))
+                    sessione=body.get("sessione") or None, copia=bool(body.get("copia")),
+                    anteprima=anteprima, compartimento=nuovo, lett=vista().lettura))
             if path == "/api/riprendi/backfill" and method == "POST":
                 # Un nome di batch nuovo a ogni chiamata (mai virgole o spazi,
                 # riprendi._batch_valido lo richiede): senza un batch tornato
@@ -750,25 +769,24 @@ class Handler(BaseHTTPRequestHandler):
                     return self._error(404, "task inesistente")
                 if body.get("apri"):
                     return self._json(riprendi.apri(task, conn))
-                if body.get("background"):
-                    # Il fork (verdetto §B, "In background"): se il task ha
-                    # gia' una sessione viva o chiusa, cantiere.avvia() la
-                    # riprende (--resume/exec resume, con --fork-session per
-                    # Claude: vedi plancia/cantiere.py._comando, non toccato
-                    # da questo lotto) invece di ripartire da un prompt
-                    # scritto a mano. "Persa" non ha niente da forkare:
-                    # sessione resta None e componi_prompt() scrive il
-                    # contesto lei.
+                if body.get("background") or body.get("anteprima"):
+                    # "In background" (LOTTO 21-RIPRENDI): il lavoro riprende
+                    # la sessione ORIGINALE del task (stesso id, sua cartella)
+                    # quando e' chiusa; su una viva non parte niente (si torna
+                    # il messaggio da incollare) salvo `copia`; su una persa
+                    # parte una sessione nuova e la risposta lo dice. Con
+                    # `anteprima` non parte niente e torna solo il piano.
                     s = riprendi.stato(conn, task)
-                    sessione = riprendi.sessione_da_riprendere(s)
-                    esito = cantiere.avvia(
+                    esito = riprendi.lancia(
                         conn, task.get("title") or "", "", task.get("project_key"),
                         body.get("istruzioni", ""), s.get("agent") or task.get("agent") or "claude",
                         bool(body.get("scrive")), None, task["id"],
-                        recap.lang_or_default(body.get("lang")), sessione=sessione,
+                        recap.lang_or_default(body.get("lang")), task=task,
+                        copia=bool(body.get("copia")),
+                        anteprima=bool(body.get("anteprima")) and not body.get("background"),
                         compartimento=nuovo)
                     return self._json(esito)
-                raise actions.BadInput("serve 'apri' o 'background'")
+                raise actions.BadInput("serve 'apri', 'background' o 'anteprima'")
             m = re.match(r"^/api/runs/(\d+)/annulla$", path)
             if m and method == "POST":
                 vista().oggetto(cantiere.dettaglio, int(m.group(1)), "il lancio")

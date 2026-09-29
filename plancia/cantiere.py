@@ -23,6 +23,7 @@ Questa riga prima diceva il contrario.
 
 import json
 import os
+import re
 import subprocess
 import threading
 import time
@@ -90,8 +91,19 @@ CHIUSURA = (
     "righe vengono lette ad alta voce.")
 
 
+# Nella sessione ripresa il permesso di scrivere lo decide `_comando`, ma
+# l'agente non lo sa: una riga breve gli dice che è una proposta.
+SOLA_LETTURA = ("Solo lettura: non modificare nessun file. Dimmi cosa faresti e "
+                "cosa potrebbe andare storto.")
+
+
 def componi_prompt(conn, titolo, dettaglio="", progetto=None, istruzioni="",
-                   modo="proposta", lingua="it", task_id=None, sessione=None) -> str:
+                   modo="proposta", lingua="it", task_id=None, sessione=None,
+                   prompt_pronto=None) -> str:
+    """Il prompt di un lancio. `prompt_pronto`, se dato, è il testo intero (senza
+    sessione) o il messaggio di ripresa (con sessione): niente altro si compone."""
+    if prompt_pronto and not sessione:
+        return prompt_pronto
     if sessione:
         # La sessione ripresa (`--resume`/`exec resume`, vedi _comando) ha già
         # tutto il contesto del progetto: rifarglielo da capo (titolo,
@@ -99,10 +111,15 @@ def componi_prompt(conn, titolo, dettaglio="", progetto=None, istruzioni="",
         # contraddire quello che la conversazione sa già. Il task_id serve
         # solo a farsi riconoscere ("il task N di Plancia"), non a
         # ricomporre altro: senza task_id la frase diventa più generica.
-        pezzi = [f"riprendi il task {task_id} di Plancia: {titolo}."] if task_id else \
-            [f"riprendi da Plancia: {titolo}."]
+        if prompt_pronto:
+            pezzi = [prompt_pronto]
+        else:
+            pezzi = [f"riprendi il task {task_id} di Plancia: {titolo}."] if task_id else \
+                [f"riprendi da Plancia: {titolo}."]
         if istruzioni:
             pezzi.append(istruzioni)
+        if modo != "esegui":
+            pezzi.append(SOLA_LETTURA)
         return " ".join(pezzi)
 
     pezzi = [TESTATA.get(modo, TESTATA["proposta"]), "", f"## Il lavoro\n{titolo}"]
@@ -168,14 +185,17 @@ def cartella_per(conn, progetto=None) -> str:
 # l'esecuzione
 # --------------------------------------------------------------------------
 
-def _comando(agente: str, scrive=False, cwd: str = "", sessione=None, modo=None) -> list:
+def _comando(agente: str, scrive=False, cwd: str = "", sessione=None, modo=None,
+             copia=False) -> list:
     """L'argv del lancio. `scrive` sceglie i permessi (letto sotto);
-    `sessione`, se data, riprende quella conversazione invece di aprirne una
-    da zero (verdetto §B, "In background": il fork dà un id nuovo, cosi'
-    ogni riga di `runs` che questo lancio scrive continua a portare un
-    `sessione` diverso da quello della conversazione ripresa, che è quanto
-    serve a `riconcilia()` per non confondere i due — non che la colonna
-    porti un vincolo UNIQUE, che non ha).
+    `sessione`, se data, riprende QUELLA conversazione, con lo stesso id
+    (`claude -p --resume <id>`, `codex exec resume <id>`): è il punto del
+    LOTTO 21-RIPRENDI, il lavoro continua nella sessione che il task aveva
+    salvato. Con `copia=True` invece ne parte una copia (`--fork-session`,
+    `codex exec fork <id>`) che ha la stessa storia ma un id nuovo: si usa
+    solo quando la sessione è aperta altrove e si è chiesto di proseguire lo
+    stesso. Prima di questo lotto il fork era l'unica strada, anche per una
+    sessione chiusa.
     `modo`/`scrive` stringa: vedi `_scrive_da`, chiamata qui per prima cosa
     così anche chi passa ancora `_comando(agente, "proposta", cwd)` alla
     vecchia maniera (posizionale, nello slot che oggi si chiama `scrive`)
@@ -205,7 +225,9 @@ def _comando(agente: str, scrive=False, cwd: str = "", sessione=None, modo=None)
         base = [exe, "exec", "--cd", cwd, "--sandbox", sandbox,
                 "--skip-git-repo-check", "--color", "never"]
         if sessione:
-            base += ["resume", sessione, "-"]
+            # `codex exec fork <id> -` esiste (letto con --help, mai lanciato):
+            # stessa forma di `resume`, prompt da stdin.
+            base += ["fork" if copia else "resume", sessione, "-"]
         return base
     exe = recap.claude_bin()
     if not exe:
@@ -214,11 +236,15 @@ def _comando(agente: str, scrive=False, cwd: str = "", sessione=None, modo=None)
     cmd = [exe, "-p", "--model", cfg.get("modello_cantiere", "sonnet"),
            "--output-format", "stream-json", "--verbose"]
     if sessione:
-        # --fork-session va sempre insieme a --resume (RICOGNIZIONE riga 91):
-        # senza, un lancio headless su una sessione magari ancora aperta
-        # nell'app scriverebbe nello stesso jsonl da due processi (verdetto,
-        # punto 6 dei "punti ciechi").
-        cmd += ["--resume", sessione, "--fork-session"]
+        # Senza `--fork-session` claude riprende la sessione con lo stesso id
+        # (letto in `claude --help`: "--fork-session: When resuming, create a
+        # new session ID instead of reusing the original"). Il chiamante
+        # (`riprendi.lancia`) ha già controllato che la sessione non sia
+        # aperta: due processi sullo stesso jsonl la rovinerebbero, ed è per
+        # questo che una viva si copia (`copia=True`) o non si tocca.
+        cmd += ["--resume", sessione]
+        if copia:
+            cmd += ["--fork-session"]
     if scrive:
         cmd += ["--permission-mode", "acceptEdits", "--allowedTools"] + TOOL_SCRITTURA
     else:
@@ -246,6 +272,29 @@ def _leggi_claude(riga: str, acc: dict):
             for p in (d.get("permission_denials") or [])
             if (p or {}).get("tool_name")
         })
+
+
+# Codex, quando l'app ChatGPT/Codex Desktop tiene aperto il thread, rifiuta
+# `exec resume` con un errore di questo tipo (nota vera di questa macchina).
+_CONFLITTO_CODEX = ("thread-store conflict", "already has an active writer")
+_ID_SESSIONE_CODEX = re.compile(r"session id:\s*([0-9a-fA-F][0-9a-fA-F-]{30,})")
+
+
+def _leggi_codex(riga: str, acc: dict):
+    """Dallo stream di testo di Codex: l'id della sessione (la riga
+    `session id: ...` dell'intestazione) e il conflitto col thread aperto."""
+    if not acc.get("sessione"):
+        m = _ID_SESSIONE_CODEX.search(riga)
+        if m:
+            acc["sessione"] = m.group(1)
+    bassa = riga.lower()
+    if any(k in bassa for k in _CONFLITTO_CODEX):
+        acc["conflitto"] = True
+
+
+TESTO_CONFLITTO = (
+    "Codex non può riprendere questa sessione da qui: l'app ChatGPT/Codex la tiene "
+    "aperta. Chiudi quel thread e riprova, oppure chiedi una copia o una sessione nuova.")
 
 
 def _scrive_da(modo=None, scrive=False) -> bool:
@@ -278,8 +327,16 @@ def _scrive_da(modo=None, scrive=False) -> bool:
 
 def avvia(conn, titolo, dettaglio="", progetto=None, istruzioni="", agente="claude",
           scrive=False, cwd=None, task_id=None, lingua="it", attendi=False,
-          sessione=None, modo=None, compartimento="") -> dict:
+          sessione=None, modo=None, compartimento="", copia=False,
+          prompt_pronto=None) -> dict:
     """Mette in coda un lancio e lo fa partire. Torna subito con l'id.
+
+    `sessione` è la conversazione da RIPRENDERE con lo stesso id, non da forkare
+    (LOTTO 21-RIPRENDI); `copia=True` ne fa invece una copia con id nuovo.
+    Chi decide se è lecito riprenderla (chiusa? viva? persa?) è
+    `riprendi.lancia()`, che è la porta da usare: questa funzione si fida.
+    `prompt_pronto` è il prompt intero (senza sessione) o il messaggio di
+    ripresa (con sessione), scritto da chi chiama.
 
     `compartimento` (vuoto per il predefinito) e' il nome del compartimento
     nominato da cui parte il lancio (la sua vista, la sua sessione): finisce in
@@ -303,7 +360,7 @@ def avvia(conn, titolo, dettaglio="", progetto=None, istruzioni="", agente="clau
 
     cwd = cwd or cartella_per(conn, progetto)
     prompt = componi_prompt(conn, titolo, dettaglio, progetto, istruzioni, modo, lingua,
-                            task_id, sessione)
+                            task_id, sessione, prompt_pronto)
 
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     cur = conn.execute(
@@ -315,6 +372,10 @@ def avvia(conn, titolo, dettaglio="", progetto=None, istruzioni="", agente="clau
         conn.execute("UPDATE runs SET compartimento=? WHERE id=?", (compartimento, run_id))
     log = LOG_DIR / f"run-{run_id}.log"
     conn.execute("UPDATE runs SET log=? WHERE id=?", (str(log), run_id))
+    if sessione and not copia:
+        # riprende la STESSA conversazione: l'id lo si sa già, prima ancora
+        # che l'agente risponda (una copia ne avrà uno suo, letto dallo stream)
+        conn.execute("UPDATE runs SET sessione=? WHERE id=?", (sessione, run_id))
     if task_id:
         conn.execute("UPDATE tasks SET status='in corso', agent=?, run_id=?, updated_at=? "
                      "WHERE id=?", (agente, run_id, store.now(), task_id))
@@ -322,27 +383,30 @@ def avvia(conn, titolo, dettaglio="", progetto=None, istruzioni="", agente="clau
 
     eventi.scrivi("lavoro.avviato", titolo=titolo, progetto=progetto,
                   dati={"run": run_id, "agente": agente, "modo": modo, "cwd": cwd,
-                        "sessione": sessione})
+                        "sessione": sessione,
+                        "continua": ("copia" if copia else "riprendi") if sessione else "nuova"})
 
     if attendi:
         _esegui(run_id, agente, scrive, prompt, cwd, str(log), titolo, progetto, task_id,
-               sessione)
+               sessione, copia)
     else:
         threading.Thread(target=_esegui, daemon=True,
                          args=(run_id, agente, scrive, prompt, cwd, str(log), titolo,
-                               progetto, task_id, sessione)).start()
-    return {"run": run_id, "agente": agente, "modo": modo, "cwd": cwd, "log": str(log)}
+                               progetto, task_id, sessione, copia)).start()
+    return {"run": run_id, "agente": agente, "modo": modo, "cwd": cwd, "log": str(log),
+            "sessione": sessione or None,
+            "continua": ("copia" if copia else "riprendi") if sessione else "nuova"}
 
 
 def _esegui(run_id, agente, scrive, prompt, cwd, log, titolo, progetto, task_id,
-           sessione=None):
+           sessione=None, copia=False):
     conn = store.connect()
     store.init_db(conn)
     acc = {"sessione": None, "esito": "", "token": 0, "costo": 0, "errore": False,
            "negati": []}
     inizio = time.time()
     try:
-        cmd = _comando(agente, scrive, cwd, sessione)
+        cmd = _comando(agente, scrive, cwd, sessione, copia=copia)
     except RuntimeError as exc:
         _chiudi(conn, run_id, "fallito", str(exc), acc, titolo, progetto, task_id, scrive)
         conn.close()
@@ -368,13 +432,19 @@ def _esegui(run_id, agente, scrive, prompt, cwd, log, titolo, progetto, task_id,
                     _leggi_claude(riga, acc)
                 else:
                     # Codex scrive testo: l'esito è la coda dell'output
+                    _leggi_codex(riga, acc)
                     ultime.append(riga.rstrip())
                     if len(ultime) > 40:
                         ultime.pop(0)
             proc.wait(timeout=3600)
             if agente == "codex" and not acc["esito"]:
                 acc["esito"] = "\n".join(ultime[-12:]).strip()
-            if proc.returncode != 0 or acc["errore"]:
+            if agente == "codex" and acc.get("conflitto"):
+                # Il thread è aperto nell'app: non è un guasto, è una sessione
+                # occupata. Lo si dice com'è invece di lasciare "fallito" muto.
+                stato = "bloccato"
+                acc["esito"] = TESTO_CONFLITTO
+            elif proc.returncode != 0 or acc["errore"]:
                 stato = "fallito"
             elif acc.get("negati"):
                 # Uscita pulita, lavoro non fatto: l'agente ha chiesto un
@@ -406,7 +476,10 @@ def _chiudi(conn, run_id, stato, esito, acc, titolo, progetto, task_id, scrive):
         # Solo l'esecuzione vera chiude il task: una proposta lo lascia aperto,
         # perché proporre non è fare. E un lancio bloccato resta bloccato anche
         # sul task, altrimenti sparisce dalla lavagna come se fosse a posto.
-        if stato == "bloccato":
+        if stato == "bloccato" and acc.get("conflitto"):
+            # la sessione era occupata, il task non è cambiato: resta com'era
+            nuovo = "aperto"
+        elif stato == "bloccato":
             nuovo = "bloccato"
         elif stato == "riuscito" and scrive:
             nuovo = "fatto"
