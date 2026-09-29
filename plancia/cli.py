@@ -1,6 +1,7 @@
 """Riga di comando di Plancia."""
 
 import argparse
+import functools
 import json
 import os
 import sys
@@ -8,6 +9,54 @@ import webbrowser
 from datetime import datetime, timedelta, timezone
 
 from . import __version__, actions, briefing, config, store
+
+
+# --------------------------------------------------------------------------
+# Compartimenti (plancia/compartimenti_viste.py): il comando `plancia` da
+# terminale e' un lettore dell'archivio come l'MCP, e una sessione di un
+# compartimento nominato lo lancia dalla sua shell (la skill installata glielo
+# insegna). Capisce di che compartimento e' chi lo lancia con le stesse regole
+# dell'MCP: `CLAUDE_CODE_SESSION_ID` e la cartella corrente dell'ambiente (piu'
+# la cartella in cui la sessione e' stata aperta, se il suo transcript si
+# trova). Un terminale umano, senza id di sessione e con la cartella fuori da
+# ogni nominato, e' il predefinito e vede il predefinito; dentro la cartella di
+# un nominato vede quel nominato. Senza compartimenti in config non cambia niente.
+# --------------------------------------------------------------------------
+
+def _vista():
+    """La `Vista` di chi lancia il comando: `lettura` (con le viste) per
+    leggere, `conn` per scrivere dopo i controlli. Una sessione con segnali di
+    piu' compartimenti non vede niente e il comando esce."""
+    from . import compartimenti_viste as viste
+    v = viste.apri_vista()
+    if v.incerta:
+        v.chiudi()
+        sys.exit(viste.MSG_INCERTO)
+    return v
+
+
+def _solo_fuori_dai_nominati(v):
+    """I comandi che amministrano tutta Plancia (riordino dei padri, semina,
+    attribuzioni in blocco) non si lanciano dalla sessione di un compartimento
+    nominato."""
+    from . import compartimenti_viste as viste
+    if v.nominato:
+        v.chiudi()
+        sys.exit(viste.MSG_AMMINISTRAZIONE)
+
+
+def _con_rifiuti(f):
+    """Un comando che scrive: il rifiuto di toccare un oggetto di un altro
+    compartimento (`actions.BadInput`) e' un messaggio e un'uscita 1, non un
+    traceback."""
+    @functools.wraps(f)
+    def chiama(args):
+        try:
+            return f(args)
+        except actions.BadInput as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+    return chiama
 
 
 #: Quanto si aspetta la risposta di `/api/status` prima di dire che nessuno
@@ -109,13 +158,31 @@ def cmd_mcp(args):
     return mcp.main()
 
 
+@_con_rifiuti
 def cmd_briefing(args):
-    print(briefing.build(project=args.project) if args.project else briefing.write_cache())
+    from . import compartimenti_viste as viste
+    if viste.attivo() is None:
+        print(briefing.build(project=args.project) if args.project
+              else briefing.write_cache())
+        return
+    # con i compartimenti: il briefing di chi lancia (i file per compartimento si
+    # riscrivono lo stesso: e' anche il comando che li rinfresca)
+    v = _vista()
+    try:
+        if not args.project:
+            briefing.write_cache()
+        print(briefing.build(v.lettura, project=args.project, esteso=bool(args.project)))
+    finally:
+        v.chiudi()
 
 
 def cmd_recap(args):
     from . import recap, voice
-    data = recap.build(day=args.day, lang=args.lang, engine=args.engine)
+    v = _vista()
+    try:
+        data = recap.build(v.lettura, args.day, args.lang, args.engine)
+    finally:
+        v.chiudi()
     if args.json:
         print(json.dumps(data, ensure_ascii=False, indent=2, default=str))
         return
@@ -161,7 +228,15 @@ def cmd_notifica(titolo, testo):
 def cmd_ask(args):
     from . import recap, voice
     domanda = " ".join(args.domanda)
-    risposta = recap.answer(domanda, args.lang)
+    from . import compartimenti_viste as viste
+    v = _vista()
+    try:
+        schede = None
+        if v.attiva:
+            schede = lambda q: viste.cerca_schede(v.lettura, v.ombra, q, 8)  # noqa: E731
+        risposta = recap.answer(domanda, args.lang, v.lettura, schede=schede)
+    finally:
+        v.chiudi()
     print(risposta)
     if args.speak:
         info = voice.parla(risposta, recap.lang_or_default(args.lang), args.voce,
@@ -172,7 +247,11 @@ def cmd_ask(args):
 def cmd_jarvis(args):
     from . import jarvis, voice
     frase = " ".join(args.frase)
-    esito = jarvis.esegui(frase, args.lang)
+    v = _vista()
+    try:
+        esito = jarvis.esegui(frase, args.lang, vista=v)
+    finally:
+        v.chiudi()
     print(f"[{esito['tipo']}] {esito['risposta']}")
     if esito.get("azione"):
         print(f"  azione: {esito['azione']}")
@@ -213,19 +292,26 @@ def cmd_voice(args):
         print(f"[{info['motore']} · {voice.voce_per(lang) or 'voce predefinita'}] ok")
 
 
+@_con_rifiuti
 def cmd_task(args):
-    conn = store.connect()
-    store.init_db(conn)
+    v = _vista()
+    conn = v.conn
     try:
         if args.azione == "add":
-            task = actions.task_add(conn, " ".join(args.testo), project=args.project,
-                                    priority=args.priority, due=args.due)
+            # un task nato da un nominato e' del nominato; da un altro
+            # compartimento non si scrive su un progetto che non e' suo
+            task = actions.task_add(conn, " ".join(args.testo),
+                                    project=v.progetto(args.project),
+                                    priority=args.priority, due=args.due,
+                                    compartimento=v.tag)
             print(f"#{task['id']} {task['title']}")
         elif args.azione == "done":
-            task = actions.task_update(conn, int(args.testo[0]), status="fatto")
+            tid = int(args.testo[0])
+            v.oggetto(actions.task_get, tid, "il task")
+            task = actions.task_update(conn, tid, status="fatto")
             print(f"chiuso #{task['id']} {task['title']}")
         else:
-            rows = actions.tasks_list(conn, args.status, args.project, 100)
+            rows = actions.tasks_list(v.lettura, args.status, args.project, 100)
             if not rows:
                 print("nessun task")
             for t in rows:
@@ -234,13 +320,13 @@ def cmd_task(args):
                 due = f"  scade {t['due']}" if t["due"] else ""
                 print(f"{mark} #{t['id']:<4} {t['title']}{proj}{due}")
     finally:
-        conn.close()
+        v.chiudi()
 
 
 def cmd_lavagna(args):
     from . import lavagna
-    conn = store.connect()
-    store.init_db(conn)
+    vis = _vista()
+    conn = vis.lettura
     try:
         c = lavagna.conteggi(conn)
         print("  " + "   ".join(f"{f}: {d.get('aperti', 0)} aperti" for f, d in c.items()))
@@ -249,9 +335,10 @@ def cmd_lavagna(args):
             prog = f"  [{v['progetto']}]" if v["progetto"] else ""
             print(f"{v['fonte']:<8} {v['stato']:<9} {v['titolo'][:64]}{prog}")
     finally:
-        conn.close()
+        vis.chiudi()
 
 
+@_con_rifiuti
 def cmd_manda(args):
     from . import cantiere, riprendi
     # LOTTO-L3-RIPRENDI-UI punto 3: "manda" resta un alias di "riprendi
@@ -261,10 +348,16 @@ def cmd_manda(args):
     # all'output vero.
     print("«plancia manda» e' un alias di «plancia riprendi --background»: "
           "sparira' in un prossimo rilascio.", file=sys.stderr)
-    conn = store.connect()
-    store.init_db(conn)
+    v = _vista()
+    conn = v.conn
     try:
         sessione = None
+        progetto = v.progetto(args.progetto, chiave=True)
+        if v.nominato and progetto is None:
+            # senza un progetto l'agente partirebbe in una cartella qualunque,
+            # che non e' detto sia del compartimento
+            raise actions.BadInput("da un compartimento nominato serve un progetto "
+                                   "del compartimento (--progetto).")
         if args.task:
             # Stessa logica del ramo background di cmd_riprendi: se il task
             # ha già una sessione viva o chiusa, il lancio la riprende
@@ -272,14 +365,15 @@ def cmd_manda(args):
             # zero. Senza questo, "manda" e "riprendi --background" sullo
             # stesso task avrebbero comportamenti diversi, e non sarebbe più
             # un vero alias.
-            task = actions.task_get(conn, args.task)
+            v.oggetto(actions.task_get, args.task, "il task")
+            task = actions.task_get(v.lettura, args.task)
             if task:
-                s = riprendi.stato(conn, task)
+                s = riprendi.stato(v.lettura, task)
                 sessione = riprendi.sessione_da_riprendere(s)
-        r = cantiere.avvia(conn, " ".join(args.titolo), progetto=args.progetto,
+        r = cantiere.avvia(conn, " ".join(args.titolo), progetto=progetto,
                            istruzioni=args.istruzioni or "", agente=args.agente,
                            modo=args.modo, task_id=args.task, attendi=args.attendi,
-                           sessione=sessione)
+                           sessione=sessione, compartimento=v.tag)
         print(f"lancio #{r['run']} · {r['agente']} · {r['modo']} · {r['cwd']}")
         if args.attendi:
             d = cantiere.dettaglio(conn, r["run"])
@@ -287,14 +381,18 @@ def cmd_manda(args):
         else:
             print("gira in sottofondo: `plancia lanci` per vedere com'è andata")
     finally:
-        conn.close()
+        v.chiudi()
 
 
+@_con_rifiuti
 def cmd_riprendi(args):
     from . import cantiere, riprendi
-    conn = store.connect()
-    store.init_db(conn)
+    v = _vista()
+    conn = v.conn
     try:
+        if args.annulla or args.backfill:
+            # attribuzioni in blocco su tutte le sessioni: non da un nominato
+            _solo_fuori_dai_nominati(v)
         if args.annulla:
             # LOTTO-L3-RITOCCO punto 8: prima si prendeva `Path(args.annulla).stem`
             # (pensato per chi incolla un percorso di log), ma un batch è solo un
@@ -319,11 +417,12 @@ def cmd_riprendi(args):
         if not args.id:
             print("serve un id di task, oppure --backfill o --annulla BATCH")
             return 1
-        task = actions.task_get(conn, args.id)
+        v.oggetto(actions.task_get, args.id, "il task")
+        task = actions.task_get(v.lettura, args.id)
         if not task:
             print(f"task {args.id} inesistente")
             return 1
-        s = riprendi.stato(conn, task)
+        s = riprendi.stato(v.lettura, task)
         print(f"#{task['id']} {task['title']}  →  {s['stato']}: {s['motivo']}")
         if args.dove:
             print(f"  cwd: {s.get('cwd') or '(nessuna)'}")
@@ -346,21 +445,21 @@ def cmd_riprendi(args):
             esito = cantiere.avvia(
                 conn, task.get("title") or "", "", task.get("project_key"),
                 args.istruzioni or "", s.get("agent") or task.get("agent") or "claude",
-                args.scrive, None, task["id"], sessione=sessione)
+                args.scrive, None, task["id"], sessione=sessione, compartimento=v.tag)
             print(f"lancio #{esito['run']} · {esito['agente']} · {esito['modo']} · {esito['cwd']}")
             return
-        argv = riprendi.comando(task, s, conn)
+        argv = riprendi.comando(task, s, v.lettura)
         if argv:
             print("  comando: " + " ".join(argv))
         print("  messaggio: " + riprendi.messaggio(task))
     finally:
-        conn.close()
+        v.chiudi()
 
 
 def cmd_lanci(args):
     from . import cantiere
-    conn = store.connect()
-    store.init_db(conn)
+    vis = _vista()
+    conn = vis.lettura
     try:
         if args.id:
             d = cantiere.dettaglio(conn, args.id)
@@ -378,12 +477,18 @@ def cmd_lanci(args):
             print(f"#{r['id']:<4} {r['agente']:<7} {r['modo']:<9} {r['stato']:<10}"
                   f"{(r['task'] or r['prompt'][:50]).splitlines()[0][:50]}{durata}")
     finally:
-        conn.close()
+        vis.chiudi()
 
 
 def cmd_eventi(args):
     from . import eventi
-    for e in eventi.leggi(args.dopo, args.tipo, args.limite):
+    v = _vista()
+    try:
+        righe = (v.ombra.leggi_eventi(args.dopo, args.tipo, args.limite) if v.attiva
+                 else eventi.leggi(args.dopo, args.tipo, args.limite))
+    finally:
+        v.chiudi()
+    for e in righe:
         # Il progetto e l'agente sono la metà del valore di un evento: senza,
         # chi legge deve andare a cercarsi da solo di cosa si parlava.
         coda = " · ".join(x for x in (e.get("progetto"),
@@ -395,11 +500,16 @@ def cmd_eventi(args):
 def cmd_riordina(args):
     from pathlib import Path
     from . import riordina
-    conn = store.connect()
-    store.init_db(conn)
+    v = _vista()
+    conn = v.conn
     try:
+        if args.applica or args.annulla:
+            # cambia i padri di progetti in blocco: non dalla sessione di un nominato
+            _solo_fuori_dai_nominati(v)
         if args.proponi:
-            percorso, righe = riordina.proponi(conn, dove=args.dove)
+            # la proposta legge dalle viste: chi guarda da un compartimento non
+            # vede i progetti degli altri
+            percorso, righe = riordina.proponi(v.lettura, dove=args.dove)
             conteggi = {}
             for r in righe:
                 conteggi[r["regola"]] = conteggi.get(r["regola"], 0) + 1
@@ -438,12 +548,12 @@ def cmd_riordina(args):
             n = riordina.annulla(conn, Path(args.annulla).stem)
             print(f"rimesse: {n}")
     finally:
-        conn.close()
+        v.chiudi()
 
 
 def cmd_projects(args):
-    conn = store.connect()
-    store.init_db(conn)
+    v = _vista()
+    conn = v.lettura
     try:
         rows = conn.execute(
             "SELECT p.*, (SELECT COUNT(*) FROM tasks t WHERE t.project_id=p.id "
@@ -454,7 +564,7 @@ def cmd_projects(args):
             print(f"{p['status'][:8]:<9} {p['key']:<22} {p['name'][:38]:<39} "
                   f"{p['task_aperti'] or '':<3} {(p['last_activity'] or '')[:10]}")
     finally:
-        conn.close()
+        v.chiudi()
 
 
 def cmd_sessioni(args):
@@ -464,8 +574,8 @@ def cmd_sessioni(args):
     quello della cartella da cui e' stata aperta: la tilde in fondo alla riga
     segna le sessioni attribuite guardando i percorsi che hanno toccato.
     """
-    conn = store.connect()
-    store.init_db(conn)
+    vis = _vista()
+    conn = vis.lettura
     try:
         sql = ("SELECT s.session_id, s.started_at, COALESCE(s.agent,'claude') AS agente, "
                "s.n_user, s.first_prompt, s.title, s.dedotto_da, s.dir_dedotta, "
@@ -511,7 +621,7 @@ def cmd_sessioni(args):
         if not args.tutte:
             print("le chiamate interne e le sessioni temporanee sono fuori: --tutte le mostra")
     finally:
-        conn.close()
+        vis.chiudi()
 
 
 def _colora(frammento: str, tinta: bool) -> str:
@@ -529,13 +639,18 @@ def cmd_search(args):
     incollano in un editor e si apre il punto esatto, che è la differenza fra
     una ricerca e un riassunto.
     """
-    from . import turni
-    conn = store.connect()
-    store.init_db(conn)
+    from . import compartimenti_viste as viste, turni
+    v = _vista()
+    conn = v.lettura
     tinta = sys.stdout.isatty()
     q = " ".join(args.query)
     try:
-        trovati = turni.cerca(conn, q, limit=args.limit, progetto=args.project)
+        if v.attiva:
+            # l'indice dei turni e quello delle schede non si filtrano con una
+            # vista: il filtro sta dentro la query (compartimenti_viste)
+            trovati, _ = viste.cerca_turni(conn, v.ombra, q, args.limit, args.project)
+        else:
+            trovati = turni.cerca(conn, q, limit=args.limit, progetto=args.project)
         for t in trovati:
             chi = "tu" if t["ruolo"] == "user" else "claude"
             testa = f"{chi:<7} {t['progetto'] or '-'}"
@@ -548,7 +663,14 @@ def cmd_search(args):
             print()
 
         if args.project and not trovati:
-            noti = ", ".join(p["progetto"] for p in turni.progetti(conn)[:8])
+            if v.attiva:
+                # le etichette dell'indice sono di tutti: si elencano i progetti
+                # che chi guarda vede
+                noti = ", ".join(r[0] for r in conn.execute(
+                    "SELECT key FROM projects WHERE hidden=0 ORDER BY last_activity DESC "
+                    "LIMIT 8"))
+            else:
+                noti = ", ".join(p["progetto"] for p in turni.progetti(conn)[:8])
             print(f"nessun turno in «{args.project}». Etichette note: {noti}")
             return
 
@@ -556,7 +678,8 @@ def cmd_search(args):
         # stamparle lo stesso farebbe sembrare che il filtro non abbia funzionato.
         if args.project:
             return
-        schede = store.search(conn, q, 5)
+        schede = (viste.cerca_schede(conn, v.ombra, q, 5) if v.attiva
+                  else store.search(conn, q, 5))
         if schede:
             if trovati:
                 print("nelle schede:")
@@ -567,7 +690,7 @@ def cmd_search(args):
         elif not trovati:
             print("nessun risultato")
     finally:
-        conn.close()
+        v.chiudi()
 
 
 def cmd_ricorda(args):
@@ -577,7 +700,7 @@ def cmd_ricorda(args):
     e senza farsi vedere: se non c'è un modo di guardarlo da fuori, l'unico modo
     di accorgersi che sbaglia è insospettirsi delle risposte, che è tardi.
     """
-    from . import richiamo
+    from . import compartimenti_viste as viste, richiamo
     conn = richiamo.apri_ro()
     if conn is None:
         print("archivio non ancora creato: lancia `plancia sync`")
@@ -585,12 +708,23 @@ def cmd_ricorda(args):
     tinta = sys.stdout.isatty()
     testo = " ".join(args.testo)
     try:
+        # con i compartimenti: solo le memorie di chi lancia, come il richiamo
+        # vero (viste temporanee sulla connessione, filtro dentro la query)
+        ambito = viste.attivo()
+        if ambito is not None:
+            visore = viste.visore_cli(ambito)
+            if visore == viste.INCERTO:
+                sys.exit(viste.MSG_INCERTO)
+            viste.applica(conn, ambito, visore, solo=("knowledge",))
+        vis = ambito is not None
         if args.tutto:
             trovati = richiamo.cerca(conn, testo, soglia=0.0, limite=12,
-                                     tipi=None if args.progetti else richiamo.TIPI_TRASVERSALI)
+                                     tipi=None if args.progetti else richiamo.TIPI_TRASVERSALI,
+                                     solo_visibili=vis)
         else:
             trovati = richiamo.cerca(conn, testo, escludi_scope=richiamo.cartella_sessione(os.getcwd()),
-                                     tipi=None if args.progetti else richiamo.TIPI_TRASVERSALI)
+                                     tipi=None if args.progetti else richiamo.TIPI_TRASVERSALI,
+                                     solo_visibili=vis)
     finally:
         conn.close()
 
@@ -629,10 +763,22 @@ def cmd_esporta(args):
     casi il file non tocca internet.
     """
     from pathlib import Path
-    from . import esporta as _esp
-    dove = Path(args.dove).expanduser() if args.dove else (
-        config.DATA_DIR / "memoria.html")
-    percorso, peso, quante = _esp.esporta(dove)
+    from . import compartimenti_viste as viste, esporta as _esp
+    v = _vista()
+    try:
+        if args.dove:
+            dove = Path(args.dove).expanduser()
+        elif v.attiva:
+            # un file per compartimento: uno solo, di tutti, lo leggerebbe chiunque
+            dove = Path(viste.file_compartimento(str(config.DATA_DIR), "memoria",
+                                                 v.visore, "html"))
+        else:
+            dove = config.DATA_DIR / "memoria.html"
+        # il cervello di chi lancia: le viste tolgono la memoria, i progetti e i
+        # task degli altri compartimenti
+        percorso, peso, quante = _esp.esporta(dove, conn=v.lettura if v.attiva else None)
+    finally:
+        v.chiudi()
     print(f"{quante} memorie · {peso / 1024:.0f} KB")
     print(percorso)
     print("\nsul telefono: AirDrop questo file, poi aprilo e «Aggiungi a schermata Home».")
@@ -648,6 +794,12 @@ def cmd_esporta(args):
 
 def cmd_init(args):
     from . import init_seed, ingest
+    v = _vista()
+    try:
+        # semina i progetti da tutti i dati della macchina: non da un nominato
+        _solo_fuori_dai_nominati(v)
+    finally:
+        v.chiudi()
     progetti = init_seed.raccogli()
     for p in sorted(progetti.values(), key=lambda x: x["key"]):
         pezzi = ", ".join(f"{k}: {len(v)}" for k, v in p["links"].items())
@@ -693,8 +845,8 @@ def cmd_daily(args):
 def cmd_flusso(args):
     """Da dove arrivano i dati, quanto sono freschi e quanto costa aggiornarli."""
     from . import codex, ingest
-    conn = store.connect()
-    store.init_db(conn)
+    vis = _vista()
+    conn = vis.lettura
     try:
         drive = ingest.drive_root()
         fonti = [
@@ -727,7 +879,7 @@ def cmd_flusso(args):
         from . import agente
         print(f"  processo Claude caldo: {agente.stato() or 'nessuno'}")
     finally:
-        conn.close()
+        vis.chiudi()
 
 
 def cmd_esclusi(args):

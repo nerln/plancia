@@ -566,18 +566,18 @@ def esegui(prova) -> None:
               "quercia" in h["testo"].lower() and _senza(h["testo"], ["beta", "predefinito"]),
               h["testo"][-400:])
         stale = Path(env["PLANCIA_HOME"]) / "briefing.md"
-        vecchio = stale.read_text("utf-8")
         stale.write_text("VECCHIO QUERCIA FAGGIO SALICE\n", "utf-8")
         Path(env["PLANCIA_HOME"], "briefing.predefinito.md").unlink(missing_ok=True)
         h = _hook(fix, "predefinito")
         prova("briefing: con i compartimenti attivi l'hook non legge mai il "
               "briefing.md non separato (un file rimasto da prima non passa)",
               "VECCHIO" not in h["testo"], h["testo"][:200])
-        stale.write_text(vecchio, "utf-8")
+        stale.write_text("VECCHIO QUERCIA FAGGIO SALICE\n", "utf-8")
         subprocess.run([PYTHON, str(RADICE / "bin" / "plancia"), "briefing"],
                        env=_env_sub(env), capture_output=True, timeout=120)
-        prova("briefing: il file del predefinito e' anche briefing.md, senza i nominati",
-              _senza(stale.read_text("utf-8"), ["alfa", "beta"]))
+        prova("briefing: con i compartimenti attivi il `briefing.md` non separato non si "
+              "scrive piu' e quello rimasto da prima si toglie",
+              not stale.exists(), stale.read_text("utf-8")[:100] if stale.exists() else "")
         h = _hook(fix, "alfa", evento="SessionEnd")
         prova("briefing: l'hook di chiusura non stampa niente", h["uscita"].strip() == "",
               h["uscita"][:100])
@@ -942,6 +942,9 @@ def esegui(prova) -> None:
 
         # le guardie senza prova del primo giro e gli indici FTS grandi
         _prova_guardie(prova, base)
+
+        # il terzo giro: il comando da terminale, i lanci, il registro lungo
+        _prova_terzo_giro(prova, base)
 
         # archivio grande: quanto costa filtrare
         _prova_archivio_grande(prova, base)
@@ -1327,3 +1330,458 @@ def _prova_archivio_grande(prova, base: Path) -> None:
           d["calcolo_ms"] + d["viste_ms"] < 3000, str(d))
     prova("il filtro su un archivio grande toglie davvero le sessioni dei nominati",
           0 < d["visibili"] < 3000, str(d))
+
+
+# --------------------------------------------------------------------------
+# terzo giro: il comando `plancia` da terminale, i lanci, il registro lungo
+# --------------------------------------------------------------------------
+
+def _cli(fix, args, comp=None, sid=None, cwd=None, umano=False, extra=None):
+    """Lancia `bin/plancia <args>` come lo lancerebbe chi lo usa: dalla shell di
+    una sessione di `comp` (`CLAUDE_CODE_SESSION_ID` e cwd dentro il suo
+    compartimento) oppure, con `umano`, da un terminale senza id di sessione.
+    Torna `(codice, stdout, stderr)`."""
+    env = dict(_env_sub(fix["env"]))
+    if sid or (comp and not umano):
+        env["CLAUDE_CODE_SESSION_ID"] = sid or fix["ids"][comp]
+    if extra:
+        env.update(extra)
+    run_cwd = str(cwd or (fix["dirs"][comp] if comp else fix["w"]))
+    p = subprocess.run([PYTHON, str(RADICE / "bin" / "plancia")] + list(args),
+                       capture_output=True, text=True, env=env, cwd=run_cwd, timeout=180)
+    return p.returncode, p.stdout, p.stderr
+
+
+_SCRIPT_REGISTRO = r'''
+import json, os, secrets, sys
+sys.path.insert(0, "__RADICE__")
+from plancia import config, store
+conn = store.connect(); store.init_db(conn)
+pid = conn.execute("SELECT id FROM projects WHERE key='faggio'").fetchone()[0]
+righe = []
+# il registro e' lungo: mille e cinquecento eventi del predefinito, con dati
+# abbastanza grossi da spingere gli eventi di alfa fuori dalla coda che si legge
+# per prima (256 KB)
+for i in range(1500):
+    righe.append({"schema": "plancia.evento/1", "id": secrets.token_hex(8),
+                  "ts": "2026-09-21T10:%02d:%02dZ" % (i // 60 % 60, i % 60),
+                  "tipo": "task.creato", "titolo": "FAGGIO evento %d" % i,
+                  "progetto": "faggio", "origine": "prova",
+                  "dati": {"nota": "x" * 250}})
+# un cambio di padre: il figlio e' di alfa, il padre e' del predefinito
+righe.append({"schema": "plancia.evento/1", "id": secrets.token_hex(8),
+              "ts": "2026-09-21T11:00:00Z", "tipo": "padre:lotto1",
+              "titolo": "QUERCIA progetto sotto FAGGIO progetto", "progetto": "quercia",
+              "origine": "prova",
+              "dati": {"batch": "lotto1", "figlio": "quercia", "prima": None, "dopo": pid}})
+# quello che alfa ha scritto per ultimo di tutti: sta in fondo? no, sta PRIMA
+# (le righe di alfa vengono dal fixture, in cima al file)
+with open(str(config.DATA_DIR / "eventi.jsonl"), "a", encoding="utf-8") as fh:
+    for r in righe[:-1]:
+        fh.write(json.dumps(r) + "\n")
+with open(str(config.DATA_DIR / "eventi.jsonl"), "a", encoding="utf-8") as fh:
+    fh.write(json.dumps(righe[-1]) + "\n")
+print(json.dumps({"ok": True}))
+'''
+
+
+def _prova_terzo_giro(prova, base: Path) -> None:
+    """Il terzo giro di E1-PLANCIA: chi lancia `plancia` da un terminale vede il
+    proprio compartimento (come l'MCP), jarvis e la voce usano la stessa vista
+    separata, un lancio e' del compartimento da cui parte, il registro eventi
+    lungo non nasconde i pochi eventi di un nominato, il nome del padre di un
+    altro compartimento non compare, le scritture della dashboard controllano il
+    bersaglio, `briefing.md` non separato non si scrive e si riscrive togliendo
+    i compartimenti."""
+    fix = _prepara(base / "giro3")
+    if not fix["fixture_ok"]:
+        prova("terzo giro: l'archivio finto si costruisce", False, fix["fixture_err"])
+        return
+    env, w, ids, dirs = fix["env"], fix["w"], fix["ids"], fix["dirs"]
+    dati = Path(env["PLANCIA_HOME"])
+    segnale = base / "giro3" / "claude-chiamato"
+
+    def altri(c):
+        return [x for x in MARCHI if x != c]
+
+    # ---- senza compartimenti il comando da terminale e' quello di sempre --------
+    for cfg in (None, {"predefinito": {}}):
+        _scrivi_config(env, comp=cfg)
+        for comp in ("alfa", "predefinito"):
+            code, out, err = _cli(fix, ["lavagna"], comp=comp)
+            code2, out2, err2 = _cli(fix, ["projects"], comp=comp)
+            prova("CLI senza compartimenti%s: una sessione di %s vede tutto (lavagna e progetti)"
+                  % (" (la sola voce predefinito)" if cfg else "", comp),
+                  code == 0 and code2 == 0 and all(m in out for m in MARCHI.values())
+                  and all(m in out2 for m in MARCHI.values()), (out + out2)[:300] + err[:200])
+        code, out, err = _cli(fix, ["task", "add", "senza compartimenti SENZACOMP",
+                                    "--project", "salice"], comp="alfa")
+        prova("CLI senza compartimenti: una scrittura da una sessione di alfa sul progetto di "
+              "beta passa come sempre", code == 0 and "SENZACOMP" in out, (out + err)[:300])
+    _scrivi_config(env, comp=_config_comp(w))
+
+    # ---- il comando `plancia` da terminale, nei due sensi --------------------
+    letture = [
+        ("lavagna", ["lavagna"], None),
+        ("lanci", ["lanci"], None),
+        ("briefing", ["briefing"], None),
+        ("sessioni", ["sessioni"], None),
+        ("projects", ["projects"], None),
+        ("task", ["task", "list", "--status", "tutti"], None),
+        ("cerca", ["cerca", "ciliegio"], None),
+        ("search", ["search", "ciliegio", "--project", "nessuno-qui"], None),
+    ]
+    for comp in ("alfa", "beta", "predefinito"):
+        for nome, args, _ in letture:
+            code, out, err = _cli(fix, args, comp=comp)
+            prova("CLI %s da una sessione di %s: esce senza errori" % (nome, comp),
+                  code == 0, (out + err)[:300])
+            prova("CLI %s da una sessione di %s: non contiene niente degli altri "
+                  "compartimenti" % (nome, comp), _senza(out + err, altri(comp)),
+                  (out + err)[:500])
+            if nome not in ("search",):
+                prova("CLI %s da una sessione di %s: vede il proprio lavoro" % (nome, comp),
+                      MARCHI[comp] in out, out[:400])
+
+    # ricorda: la memoria di un altro compartimento non si richiama da qui
+    code, out, err = _cli(fix, ["ricorda", "come si prepara il risotto allo %s" % PAROLA_ALFA_1],
+                          comp="predefinito")
+    prova("CLI ricorda da una sessione del predefinito: la memoria di alfa non c'e'",
+          code == 0 and "quercia" not in (out + err).lower(), (out + err)[:300])
+    code, out, err = _cli(fix, ["ricorda", "come si prepara il risotto allo %s" % PAROLA_ALFA_1],
+                          comp="alfa")
+    prova("CLI ricorda da una sessione di alfa: trova la memoria di alfa",
+          code == 0 and "quercia-ricetta" in out, (out + err)[:300])
+
+    # esporta: un file per compartimento, con dentro solo il compartimento
+    for comp in ("alfa", "predefinito"):
+        code, out, err = _cli(fix, ["esporta"], comp=comp)
+        cand = [f for f in dati.glob("memoria*.html")]
+        atteso = dati / ("memoria.%s.html" % comp)
+        prova("CLI esporta da una sessione di %s: scrive il file del proprio compartimento"
+              % comp, code == 0 and atteso.exists(), (out + err)[:300] + str(cand))
+        if atteso.exists():
+            testo = atteso.read_text("utf-8")
+            prova("CLI esporta da una sessione di %s: il file ha il proprio lavoro e niente "
+                  "degli altri" % comp,
+                  MARCHI[comp].lower() in testo.lower() and _senza(testo, altri(comp)),
+                  "manca il marcatore" if MARCHI[comp].lower() not in testo.lower()
+                  else "c'e' qualcosa degli altri")
+
+    # flusso: i conteggi sono quelli del compartimento (una sessione per compartimento)
+    code, out, err = _cli(fix, ["flusso"], comp="alfa")
+    m = re.search(r"sessioni Claude.*?(\d+)\s*$", out, re.M)
+    prova("CLI flusso da una sessione di alfa: conta le sole sessioni di alfa",
+          code == 0 and m is not None and m.group(1) == "1", out[:400] + err[:200])
+
+    # eventi (il registro): vedi sotto, dopo aver riempito il registro
+
+    # un terminale umano: senza id di sessione, fuori da ogni nominato e' il
+    # predefinito, dentro la cartella di un nominato e' quel nominato
+    code, out, err = _cli(fix, ["lavagna"], umano=True, cwd=w)
+    prova("CLI: un terminale umano senza id di sessione e fuori da ogni nominato vede il "
+          "predefinito (e niente dei nominati)",
+          code == 0 and "FAGGIO" in out and _senza(out, ["alfa", "beta"]), out[:300] + err[:200])
+    code, out, err = _cli(fix, ["lavagna"], comp="alfa", umano=True)
+    prova("CLI: un terminale umano con la cartella corrente dentro alfa vede alfa",
+          code == 0 and "QUERCIA" in out and _senza(out, ["beta", "predefinito"]),
+          out[:300] + err[:200])
+    # una sessione con segnali di due nominati non vede niente
+    code, out, err = _cli(fix, ["lavagna"], comp="alfa", sid=ids["beta"])
+    prova("CLI: una sessione con segnali di due nominati (id di beta, cartella di alfa) non "
+          "vede niente e il comando esce con un errore",
+          code != 0 and "compartimenti" in err and "QUERCIA" not in out + err
+          and "SALICE" not in out + err, (out + err)[:300])
+    code, out, err = _cli(fix, ["ask", "task"], comp="alfa", sid=ids["beta"])
+    prova("CLI: la voce (ask) di una sessione incerta non risponde", code != 0, (out + err)[:200])
+
+    # ask, recap, jarvis: il prompt al modello e' del compartimento
+    for comp in ("alfa", "beta", "predefinito"):
+        if segnale.exists():
+            segnale.unlink()
+        code, out, err = _cli(fix, ["ask", "task"], comp=comp)
+        passato = segnale.read_text("utf-8") if segnale.exists() else ""
+        prova("CLI ask da una sessione di %s: il prompt al modello ha il proprio lavoro e "
+              "niente degli altri compartimenti" % comp,
+              "Dati di oggi:" in passato and MARCHI[comp] in passato
+              and _senza(passato, altri(comp)), passato[:500] + err[:200])
+    code, out, err = _cli(fix, ["recap", "--day", "2026-09-20"], comp="alfa")
+    prova("CLI recap da una sessione di alfa: il riepilogo non nomina gli altri",
+          code == 0 and _senza(out + err, altri("alfa")), (out + err)[:400])
+    code, out, err = _cli(fix, ["recap", "--day", "2026-09-20"], comp="predefinito")
+    prova("CLI recap da una sessione del predefinito: il riepilogo non nomina i nominati",
+          code == 0 and _senza(out + err, ["alfa", "beta"]), (out + err)[:400])
+
+    # jarvis: da un nominato la risposta libera non passa dal processo caldo con
+    # i tool di Plancia (vedrebbe il predefinito): il prompt ha i soli dati del compartimento
+    if segnale.exists():
+        segnale.unlink()
+    code, out, err = _cli(fix, ["jarvis", "parlami di cose varie che non c'entrano niente"],
+                          comp="alfa")
+    passato = segnale.read_text("utf-8") if segnale.exists() else ""
+    prova("CLI jarvis da una sessione di alfa: la risposta libera si costruisce con i dati "
+          "del compartimento nel prompt, senza tool e senza processo caldo",
+          "Dati di oggi:" in passato and _senza(passato, altri("alfa"))
+          and "stream-json" not in passato and "allowedTools" not in passato,
+          passato[:500] + err[:200])
+    code, out, err = _cli(fix, ["jarvis", "aggiungi un task provare JARVISALFA"], comp="alfa")
+    con = _apri(env)
+    riga = con.execute("SELECT compartimento FROM tasks WHERE title LIKE '%JARVISALFA%'"
+                       ).fetchone()
+    con.close()
+    prova("CLI jarvis da una sessione di alfa: il task che crea e' di alfa",
+          code == 0 and riga is not None and riga[0] == "alfa", (out + err)[:300] + str(riga))
+    code, out, err = _cli(fix, ["task", "list", "--status", "tutti"], comp="predefinito")
+    prova("CLI: quel task non compare al predefinito", "JARVISALFA" not in out, out[:300])
+    code, out, err = _cli(fix, ["task", "list", "--status", "tutti"], comp="alfa")
+    prova("CLI: quel task compare ad alfa (jarvis lo scrive in minuscolo)",
+          "jarvisalfa" in out.lower(), out[:300])
+
+    # ---- le scritture da terminale: solo sul proprio compartimento -----------
+    con = _apri(env)
+    t_beta = con.execute("SELECT id FROM tasks WHERE title='task SALICE con progetto'").fetchone()[0]
+    t_alfa = con.execute("SELECT id FROM tasks WHERE title='task QUERCIA con progetto'").fetchone()[0]
+    con.close()
+    code, out, err = _cli(fix, ["task", "add", "intruso SALICEINTRUSO", "--project", "salice"],
+                          comp="alfa")
+    con = _apri(env)
+    n = con.execute("SELECT COUNT(*) FROM tasks WHERE title LIKE '%SALICEINTRUSO%'").fetchone()[0]
+    con.close()
+    prova("CLI task add da alfa su un progetto di beta e' rifiutato con un messaggio chiaro "
+          "e non crea niente", code != 0 and "compartimento" in err and n == 0,
+          (out + err)[:300] + str(n))
+    code, out, err = _cli(fix, ["task", "done", str(t_beta)], comp="alfa")
+    con = _apri(env)
+    stato = con.execute("SELECT status FROM tasks WHERE id=?", (t_beta,)).fetchone()[0]
+    con.close()
+    prova("CLI task done da alfa su un task di beta e' rifiutato e il task non cambia",
+          code != 0 and "compartimento" in err and stato != "fatto", (out + err)[:300] + stato)
+    code, out, err = _cli(fix, ["task", "add", "mio QUERCIAMIO", "--project", "quercia"],
+                          comp="alfa")
+    prova("CLI task add da alfa sul proprio progetto passa", code == 0 and "QUERCIAMIO" in out,
+          (out + err)[:300])
+    code, out, err = _cli(fix, ["manda", "intruso", "--progetto", "salice"], comp="alfa")
+    prova("CLI manda da alfa su un progetto di beta e' rifiutato", code != 0
+          and "compartimento" in err, (out + err)[:300])
+    code, out, err = _cli(fix, ["manda", "senza progetto"], comp="alfa")
+    prova("CLI manda da un nominato senza progetto e' rifiutato (partirebbe da una cartella "
+          "qualunque)", code != 0 and "progetto" in err, (out + err)[:300])
+    code, out, err = _cli(fix, ["riprendi", str(t_beta)], comp="alfa")
+    prova("CLI riprendi da alfa su un task di beta e' rifiutato", code != 0
+          and "compartimento" in err, (out + err)[:300])
+    code, out, err = _cli(fix, ["riprendi", str(t_alfa)], comp="alfa")
+    prova("CLI riprendi da alfa sul proprio task passa", code == 0 and "QUERCIA" in out,
+          (out + err)[:300])
+    for args in (["riprendi", "--backfill", "--secco"], ["riordina", "--applica", "x.json"],
+                 ["init", "--no-sync"]):
+        code, out, err = _cli(fix, args, comp="alfa")
+        prova("CLI %s da una sessione di un nominato e' rifiutato (amministra tutta Plancia)"
+              % args[0], code != 0 and "amministrazione" in err, (out + err)[:300])
+
+    # ---- un lancio e' del compartimento da cui parte -------------------------
+    # un progetto di alfa senza cartella: il lancio parte dalla HOME, che non dice
+    # di chi e'. E' il caso del tester.
+    srv = _Server(fix)
+    try:
+        c, d = srv.scrivi("POST", "/api/projects?compartimento=alfa",
+                          {"name": "progetto senza cartella QUERCIASC", "key": "querciasc"})
+        prova("terzo giro: un progetto senza cartella nasce nella vista di alfa", c == 200,
+              str((c, d)))
+        c, d = srv.scrivi("POST", "/api/cantiere?compartimento=alfa",
+                          {"titolo": "lancio QUERCIALANCIO", "progetto": "querciasc"})
+        prova("dashboard: il lancio dalla vista di alfa parte", c == 200 and "run" in d,
+              str((c, d))[:300])
+        run_dash = d.get("run")
+        _, in_alfa = srv.get("/api/runs?compartimento=alfa", testo=True)
+        _, in_pred = srv.get("/api/runs", testo=True)
+        _, in_beta = srv.get("/api/runs?compartimento=beta", testo=True)
+        prova("dashboard: il lancio fatto dalla vista di alfa compare in alfa",
+              "QUERCIALANCIO" in in_alfa, in_alfa[:300])
+        prova("dashboard: e non compare nel predefinito ne' in beta",
+              "QUERCIALANCIO" not in in_pred and "QUERCIALANCIO" not in in_beta
+              and "querciasc" not in in_pred.lower() and "querciasc" not in in_beta.lower(),
+              in_pred[:200])
+        c, d = srv.get("/api/runs/%s?compartimento=alfa" % run_dash)
+        c2, d2 = srv.get("/api/runs/%s" % run_dash)
+        prova("dashboard: il dettaglio del lancio e' di alfa (404 dal predefinito)",
+              c == 200 and c2 == 404, str((c, c2)))
+        _, ev_pred = srv.get("/api/eventi", testo=True)
+        _, ev_alfa = srv.get("/api/eventi?compartimento=alfa", testo=True)
+        prova("dashboard: l'evento `lavoro.avviato` del lancio e' di alfa",
+              "QUERCIALANCIO" in ev_alfa and "QUERCIALANCIO" not in ev_pred, ev_alfa[:200])
+    finally:
+        srv.chiudi()
+    code, out, err = _cli(fix, ["manda", "lancio da terminale QUERCIACLI", "--progetto",
+                                "querciasc"], comp="alfa")
+    prova("CLI manda da alfa su un suo progetto senza cartella parte", code == 0
+          and "lancio #" in out, (out + err)[:300])
+    m = re.search(r"lancio #(\d+)", out)
+    id_cli = m.group(1) if m else "?"
+    code, out, err = _cli(fix, ["lanci"], comp="alfa")
+    code2, out2, err2 = _cli(fix, ["lanci"], comp="predefinito")
+    code3, out3, err3 = _cli(fix, ["lanci", id_cli], comp="predefinito")
+    prova("CLI: il lancio fatto da alfa compare nei lanci di alfa e non in quelli del "
+          "predefinito (ne' come dettaglio)",
+          re.search(r"^#%s\s" % id_cli, out, re.M) is not None
+          and re.search(r"^#%s\s" % id_cli, out2, re.M) is None
+          and "inesistente" in out3, out[:300] + " | " + out2[:300] + " | " + out3[:100])
+    m1 = _mcp(fix, "alfa", [("plancia_manda", {"titolo": "lancio da MCP QUERCIAMCP",
+                                               "progetto": "querciasc"}),
+                            ("plancia_lanci", {})])
+    m2 = _mcp(fix, "predefinito", [("plancia_lanci", {})])
+    prova("MCP: il lancio fatto da alfa su un suo progetto senza cartella compare ai lanci "
+          "di alfa e non a quelli del predefinito",
+          not m1[0][0] and "QUERCIAMCP" in m1[1][1] and "QUERCIAMCP" not in m2[0][1]
+          and "QUERCIACLI" not in m2[0][1], str((m1, m2))[:400])
+    # il lancio di un progetto del predefinito, dalla vista del predefinito, e' suo
+    srv = _Server(fix)
+    try:
+        c, d = srv.scrivi("POST", "/api/cantiere",
+                          {"titolo": "lancio FAGGIOLANCIO", "progetto": "faggio"})
+    finally:
+        srv.chiudi()
+    con = _apri(env)
+    colonne = {r[1] for r in con.execute("PRAGMA table_info(runs)")}
+    riga = con.execute("SELECT %s FROM runs ORDER BY id DESC LIMIT 1"
+                       % ("compartimento" if "compartimento" in colonne else "''")).fetchone()
+    con.close()
+    prova("dashboard: un lancio dalla vista del predefinito non porta un compartimento "
+          "nominato, ma quello dalla vista di alfa si', nella colonna dei lanci",
+          c == 200 and riga is not None and not riga[0] and "compartimento" in colonne,
+          str((c, d, riga, sorted(colonne))))
+
+    # ---- il registro eventi lungo --------------------------------------------
+    r = subprocess.run([PYTHON, "-c", _SCRIPT_REGISTRO.replace("__RADICE__", str(RADICE))],
+                       env=_env_sub(env), capture_output=True, text=True, timeout=120)
+    prova("terzo giro: il registro lungo si costruisce", r.returncode == 0, r.stderr[-400:])
+    code, out, err = _cli(fix, ["eventi", "--limite", "20"], comp="alfa")
+    prova("CLI eventi da alfa: gli eventi di alfa si trovano anche con 1500 eventi del "
+          "predefinito in fondo al registro (il filtro sta prima del taglio)",
+          code == 0 and "QUERCIA" in out and "FAGGIO" not in out, out[:500] + err[:200])
+    m = _mcp(fix, "alfa", [("plancia_eventi", {"limite": 20})])
+    prova("MCP eventi da alfa: idem", not m[0][0] and "QUERCIA" in m[0][1]
+          and "FAGGIO" not in m[0][1], m[0][1][:400])
+    m = _mcp(fix, "predefinito", [("plancia_eventi", {"limite": 5})])
+    prova("MCP eventi dal predefinito: gli ultimi sono i suoi", not m[0][0]
+          and "FAGGIO evento" in m[0][1] and "QUERCIA" not in m[0][1], m[0][1][:300])
+    m = _mcp(fix, "beta", [("plancia_eventi", {"limite": 20})])
+    prova("MCP eventi da beta: i suoi eventi (pochi, in un registro lungo) si trovano",
+          not m[0][0] and "SALICE" in m[0][1] and "FAGGIO" not in m[0][1]
+          and "QUERCIA" not in m[0][1], m[0][1][:300])
+    srv = _Server(fix)
+    try:
+        c, corpo = srv.get("/api/eventi?compartimento=alfa&limite=20", testo=True)
+        prova("dashboard: /api/eventi di alfa trova i suoi eventi in un registro lungo",
+              c == 200 and "QUERCIA" in corpo and "FAGGIO" not in corpo, corpo[:400])
+        # il nome del padre del predefinito non compare nei titoli degli eventi di alfa
+        c, corpo_p = srv.get("/api/eventi?compartimento=alfa&tipo=padre:lotto1", testo=True)
+        prova("dashboard: l'evento di cambio di padre e' visibile ad alfa, ma senza il nome "
+              "del padre (che e' del predefinito)",
+              "cambio di padre" in corpo_p and "FAGGIO" not in corpo_p
+              and "faggio" not in corpo_p.lower(), corpo_p[:400])
+        m = _mcp(fix, "alfa", [("plancia_eventi", {"tipo": "padre:lotto1"})])
+        prova("MCP: l'evento di cambio di padre di alfa non nomina il padre",
+              not m[0][0] and "cambio di padre" in m[0][1] and "FAGGIO" not in m[0][1],
+              m[0][1][:300])
+        code, out, err = _cli(fix, ["eventi", "--tipo", "padre:lotto1"], comp="alfa")
+        prova("CLI: idem", code == 0 and "cambio di padre" in out and "FAGGIO" not in out,
+              out[:300])
+        # ---- le scritture della dashboard controllano il bersaglio -------------
+        con = _apri(env)
+        p_beta = con.execute("SELECT id FROM posts WHERE text LIKE '%SALICE%'").fetchone()[0]
+        con.close()
+        casi = [
+            ("PATCH", "/api/tasks/%d?compartimento=alfa" % t_beta, {"status": "fatto"}),
+            ("PATCH", "/api/tasks/%d" % t_alfa, {"status": "fatto"}),
+            ("DELETE", "/api/tasks/%d?compartimento=alfa" % t_beta, {}),
+            ("POST", "/api/tasks?compartimento=alfa", {"title": "x SALICEDASH", "project": "salice"}),
+            ("PATCH", "/api/tasks/%d?compartimento=alfa" % t_alfa, {"project": "salice"}),
+            ("PATCH", "/api/posts/%d?compartimento=alfa" % p_beta, {"status": "pubblicato"}),
+            ("POST", "/api/posts?compartimento=alfa", {"text": "post SALICEDASH", "project": "salice"}),
+            ("PATCH", "/api/projects/salice?compartimento=alfa", {"summary": "SALICEDASH"}),
+            ("POST", "/api/events?compartimento=alfa", {"title": "nota SALICEDASH", "project": "salice"}),
+            ("POST", "/api/cantiere?compartimento=alfa", {"titolo": "x", "progetto": "salice"}),
+            ("POST", "/api/cantiere?compartimento=alfa", {"titolo": "x", "task_id": t_beta}),
+            ("POST", "/api/riprendi/%d?compartimento=alfa" % t_beta, {"background": True}),
+        ]
+        for metodo, path, corpo_in in casi:
+            c, d = srv.scrivi(metodo, path, corpo_in)
+            prova("dashboard: %s %s e' rifiutato (il bersaglio e' di un altro compartimento)"
+                  % (metodo, path.split("?")[0] + ("" if "compartimento" in path
+                                                    else " dalla vista del predefinito")),
+                  c == 400 and "compartimento" in json.dumps(d).lower(), str((c, d))[:200])
+        con = _apri(env)
+        stati = dict(con.execute("SELECT title, status FROM tasks WHERE id IN (?, ?)",
+                                 (t_beta, t_alfa)).fetchall())
+        n = con.execute("SELECT COUNT(*) FROM tasks WHERE title LIKE '%SALICEDASH%'").fetchone()[0]
+        n2 = con.execute("SELECT COUNT(*) FROM posts WHERE text LIKE '%SALICEDASH%'").fetchone()[0]
+        s_beta = con.execute("SELECT summary FROM projects WHERE key='salice'").fetchone()[0]
+        n3 = con.execute("SELECT COUNT(*) FROM events WHERE title LIKE '%SALICEDASH%'").fetchone()[0]
+        n4 = con.execute("SELECT COUNT(*) FROM runs WHERE prompt LIKE '%SALICE%' AND stato != 'fallito'"
+                         ).fetchone()[0]
+        con.close()
+        prova("dashboard: dopo i tentativi incrociati nessun bersaglio e' cambiato",
+              "fatto" not in stati.values() and n == 0 and n2 == 0 and "SALICEDASH" not in s_beta
+              and n3 == 0 and n4 == 0, str((stati, n, n2, s_beta, n3, n4)))
+        c, d = srv.scrivi("PATCH", "/api/tasks/%d?compartimento=alfa" % t_alfa,
+                          {"priority": 1})
+        prova("dashboard: la stessa scrittura sul proprio compartimento passa", c == 200,
+              str((c, d))[:200])
+        c, d = srv.scrivi("POST", "/api/jarvis?compartimento=alfa",
+                          {"testo": "aggiungi un task provare JARVISDASH", "voce": False})
+        con = _apri(env)
+        riga = con.execute("SELECT compartimento FROM tasks WHERE title LIKE '%JARVISDASH%'"
+                           ).fetchone()
+        con.close()
+        prova("dashboard: jarvis dalla vista di alfa crea un task di alfa",
+              c == 200 and riga is not None and riga[0] == "alfa", str((c, d, riga))[:300])
+        if segnale.exists():
+            segnale.unlink()
+        c, d = srv.scrivi("POST", "/api/jarvis?compartimento=beta",
+                          {"testo": "parlami di cose varie che non c'entrano niente",
+                           "voce": False})
+        passato = segnale.read_text("utf-8") if segnale.exists() else ""
+        prova("dashboard: jarvis dalla vista di beta risponde con i dati di beta nel prompt e "
+              "niente degli altri", c == 200 and "Dati di oggi:" in passato
+              and _senza(passato, altri("beta")) and "stream-json" not in passato,
+              str((c, d))[:200] + passato[:300])
+        c, d = srv.scrivi("POST", "/api/jarvis?compartimento=alfa",
+                          {"testo": "ripeti", "voce": False})
+        prova("dashboard: `ripeti` in alfa ripete l'ultima risposta di alfa e non quella "
+              "di un'altra vista", c == 200 and "SALICE" not in json.dumps(d)
+              and "FAGGIO" not in json.dumps(d), str((c, d))[:300])
+    finally:
+        srv.chiudi()
+
+    # ---- `briefing.md` non separato -------------------------------------------
+    subprocess.run([PYTHON, str(RADICE / "bin" / "plancia"), "briefing"],
+                   env=_env_sub(env), capture_output=True, timeout=120)
+    prova("briefing: con i compartimenti attivi `briefing.md` non esiste e ci sono i file "
+          "per compartimento",
+          not (dati / "briefing.md").exists() and (dati / "briefing.alfa.md").exists()
+          and (dati / "briefing.predefinito.md").exists(),
+          str(sorted(f.name for f in dati.glob("briefing*"))))
+    _scrivi_config(env, comp={"predefinito": {}})
+    h = _hook(fix, "predefinito")
+    prova("briefing: togliendo i compartimenti la prima sessione riceve subito il briefing "
+          "completo (l'hook lo riscrive)",
+          "QUERCIA" in h["testo"] and "FAGGIO" in h["testo"] and "SALICE" in h["testo"],
+          h["testo"][:300] + h["err"][:200])
+    prova("briefing: e `briefing.md` e' tornato, senza i file dei compartimenti spenti",
+          (dati / "briefing.md").exists() and not (dati / "briefing.alfa.md").exists(),
+          str(sorted(f.name for f in dati.glob("briefing*"))))
+    _scrivi_config(env, comp=_config_comp(w))
+
+    # ---- la dashboard sul telefono e il drawer: il sorgente ---------------------
+    css = (RADICE / "web" / "style.css").read_text("utf-8")
+    app = (RADICE / "web" / "app.js").read_text("utf-8")
+    m = re.search(r"@media \(max-width: 500px\) \{(.*?)\n\}", css, re.S)
+    prova("front: sotto i 500 px il selettore di compartimento va a capo e prende la "
+          "riga intera (non esce dallo schermo)",
+          m is not None and "#sel-compartimento" in m.group(1) and "flex-wrap: wrap" in m.group(1)
+          and "min-width: 0" in m.group(1), (m.group(1) if m else "nessuna regola")[:200])
+    prova("front: il selettore non ha piu' una larghezza minima scritta in linea (batterebbe "
+          "la regola del CSS)", "sel.style.minWidth" not in app)
+    gestore = app.split("sel.addEventListener('change'", 1)[-1].split("});", 1)[0]
+    prova("front: cambiando compartimento il drawer aperto si chiude",
+          "$('#drawer').hidden = true" in gestore, gestore[:300])

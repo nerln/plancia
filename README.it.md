@@ -556,11 +556,27 @@ crei li' resta li'. `?compartimento=nome` nell'indirizzo la apre su uno.
 Una sessione con segni di due compartimenti non vede niente. Questo decide cosa
 mostra Plancia; non e' un confine di sicurezza, stesso utente e stesso disco.
 
-Limiti da sapere: il comando `plancia` da terminale e l'assistente vocale della
-dashboard sono la tua vista, non quella di un agente, e non sono filtrati. Le
-regole sulle cartelle confrontano percorsi POSIX (che iniziano con `/` o `~`): un
-percorso Windows con la lettera del disco non e' ancora riconosciuto, quindi su
-Windows ogni oggetto resta nel compartimento predefinito.
+Il comando `plancia` da terminale capisce il suo compartimento come il server
+MCP, da `CLAUDE_CODE_SESSION_ID` e dalla cartella corrente: un comando lanciato da
+una sessione di un compartimento nominato vede solo quel compartimento (lavagna,
+eventi, lanci, briefing, ricerca, sessioni, riepilogo, domande, jarvis, export e
+il resto), e una scrittura su un progetto o un task di un altro compartimento e'
+rifiutata. Un terminale umano senza id di sessione e con la cartella corrente
+fuori da ogni nominato e' il predefinito e vede il predefinito; dentro la cartella
+di un nominato vede quel nominato. L'assistente vocale della dashboard lavora dal
+compartimento scelto nel selettore, e da un nominato una domanda libera si
+risponde con i dati di quel compartimento nel prompt, non con il processo caldo e
+i tool di Plancia. Un lancio partito da un compartimento e' di quel compartimento,
+anche se il suo progetto non ha una cartella. I comandi che amministrano tutta
+Plancia (`init`, `riordina --applica`, `riprendi --backfill`) da un nominato sono
+rifiutati. Con i compartimenti attivi `briefing.md` non si scrive (c'e' un file
+per compartimento) e torna quando li si toglie.
+
+Limiti da sapere: le regole sulle cartelle confrontano percorsi POSIX (che
+iniziano con `/` o `~`): un percorso Windows con la lettera del disco non e' ancora
+riconosciuto, quindi su Windows ogni oggetto resta nel compartimento predefinito.
+Il riepilogo giornaliero lanciato da un pianificatore non ha una sessione, quindi
+e' quello del predefinito.
 
 ## Due scelte non ovvie
 
@@ -631,7 +647,7 @@ git config core.hooksPath .githooks
 ```
 
 Accende il gancio che fa girare `python3 tools/prova.py` prima di ogni push:
-2674 controlli in una ventina di secondi, su un archivio finto che non tocca
+2821 controlli in una ventina di secondi, su un archivio finto che non tocca
 il tuo.
 
 ## Licenza

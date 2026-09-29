@@ -246,16 +246,41 @@ def visore_mcp(ambito, sess):
     return visore_da_payload(ambito, payload)
 
 
-def file_briefing(data_dir, nome):
-    """Il file del briefing di un compartimento. Il nome del compartimento puo'
-    avere qualunque carattere: si riduce a uno sicuro e, se e' cambiato, si
-    aggiunge un pezzo di hash perche' due nomi diversi non finiscano nello
-    stesso file."""
+def visore_cli(ambito, sess=None):
+    """L'etichetta di chi lancia il comando `plancia` da un terminale.
+
+    Le stesse regole del server MCP (`visore_mcp`): l'id di sessione e la cwd
+    dell'ambiente del processo (`CLAUDE_CODE_SESSION_ID`, la cartella in cui si
+    e' lanciato il comando), piu' la cartella in cui la sessione e' stata
+    aperta se il suo transcript si trova. Un comando lanciato da una sessione di
+    un nominato vede il nominato. Un terminale umano, senza id di sessione e con
+    la cwd fuori da ogni nominato, e' il predefinito (e vede il predefinito: e'
+    dichiarato nei README); con la cwd dentro un nominato vede quel nominato.
+    `sess` e' per le prove: quello che tornerebbe `sessione.corrente()`."""
+    if sess is None:
+        try:
+            from . import sessione
+            sess = sessione.corrente(argv=[])
+        except Exception:  # noqa: BLE001 - nessun segnale: come un terminale umano
+            sess = {}
+    return visore_mcp(ambito, sess)
+
+
+def file_compartimento(data_dir, prefisso, nome, estensione="md"):
+    """Il file `<prefisso>.<nome>.<estensione>` di un compartimento. Il nome del
+    compartimento puo' avere qualunque carattere: si riduce a uno sicuro e, se e'
+    cambiato, si aggiunge un pezzo di hash perche' due nomi diversi non finiscano
+    nello stesso file."""
     pulito = re.sub(r"[^A-Za-z0-9_-]", "_", nome)[:40]
     if pulito != nome:
         import hashlib
         pulito += "-" + hashlib.sha1(nome.encode("utf-8")).hexdigest()[:6]
-    return os.path.join(data_dir, "briefing.%s.md" % pulito)
+    return os.path.join(data_dir, "%s.%s.%s" % (prefisso, pulito, estensione))
+
+
+def file_briefing(data_dir, nome):
+    """Il file del briefing di un compartimento (`briefing.<nome>.md`)."""
+    return file_compartimento(data_dir, "briefing", nome)
 
 
 # --------------------------------------------------------------------------
@@ -497,10 +522,15 @@ class Appartenenze:
                 prj.get(r["project_id"], VUOTO) | tsk.get(r["task_id"], VUOTO)
                 | self.sessione(r["sessione"]))
 
-        for r in _righe(conn, "runs", ("id", "task_id", "cwd", "sessione")):
+        # un lancio parte spesso da una cartella qualunque (la HOME, se il
+        # progetto non ha un percorso): il compartimento di chi lo ha lanciato
+        # dalla sua vista o dalla sua sessione sta nella colonna `compartimento`
+        # (`cantiere.avvia`), e si SOMMA al task, alla cartella e alla sessione
+        for r in _righe(conn, "runs", ("id", "task_id", "cwd", "sessione",
+                                       "compartimento")):
             nomi["runs"][r["id"]] = frozenset(
                 tsk.get(r["task_id"], VUOTO) | perc(r["cwd"]) | progetto_di(r["cwd"])
-                | self.sessione(r["sessione"]))
+                | self.sessione(r["sessione"]) | tag(r["compartimento"]))
 
         for r in _righe(conn, "events", ("id", "kind", "project_id", "ref",
                                          "compartimento")):
@@ -590,7 +620,40 @@ class Ombra:
         return self.vede(self.appart.nomi_evento_jsonl(e))
 
     def filtra_eventi(self, lista):
-        return [e for e in lista if isinstance(e, dict) and self.evento_jsonl_ok(e)]
+        return [self.pulisci_evento(e) for e in lista
+                if isinstance(e, dict) and self.evento_jsonl_ok(e)]
+
+    def pulisci_evento(self, e):
+        """L'evento com'e' per chi guarda. Un cambio di padre
+        (`padre:<batch>`, titolo `<figlio> sotto <padre>`) di un progetto il cui
+        padre e' di un altro compartimento non ne nomina il padre: il titolo dice
+        solo del figlio e i dati non portano gli id del padre (l'evento e' del
+        figlio, il padre no)."""
+        tipo = e.get("tipo") or ""
+        if not tipo.startswith("padre:"):
+            return e
+        d = e.get("dati") if isinstance(e.get("dati"), dict) else {}
+        for chiave in ("dopo", "prima"):
+            pid = d.get(chiave)
+            if isinstance(pid, int) and pid not in self.ok["projects"]:
+                break
+        else:
+            return e
+        figlio = d.get("figlio") if isinstance(d.get("figlio"), str) else ""
+        out = dict(e)
+        out["titolo"] = "%s (cambio di padre)" % (figlio or "progetto")
+        out["dati"] = {k: v for k, v in d.items() if k in ("batch", "figlio")}
+        return out
+
+    def leggi_eventi(self, dopo=None, tipo=None, limite=100):
+        """`eventi.leggi` per chi guarda: il filtro sta DENTRO la lettura, prima
+        del taglio agli ultimi `limite`, cosi' un compartimento con pochi eventi
+        in un registro lungo li trova tutti (filtrare dopo il taglio da' una
+        lista vuota)."""
+        from . import eventi
+        righe = eventi.leggi(dopo, tipo, limite,
+                             filtro=lambda e: isinstance(e, dict) and self.evento_jsonl_ok(e))
+        return [self.pulisci_evento(e) for e in righe]
 
 
 def _esiste(conn, nome):
@@ -825,3 +888,145 @@ def progetto_esatto(conn, ident):
     r = conn.execute("SELECT id FROM projects WHERE key=? OR lower(name)=lower(?)",
                      (str(ident), str(ident))).fetchone()
     return r
+
+
+def progetto_scrivibile(conn, lettura, ombra, ident, esiste=False, chiave=False):
+    """Il progetto da usare in una scrittura, senza uscire dal compartimento.
+
+    Senza compartimenti (`ombra` None) torna `ident` com'e' (comportamento di
+    sempre). Con i compartimenti torna l'id (o la chiave, con `chiave`) del
+    progetto SE chi scrive lo vede; se `ident` ne nomina esattamente uno di un
+    altro compartimento rifiuta con un messaggio chiaro (non nomina il
+    compartimento dell'altro: e' quello che non si deve sapere). Un progetto che
+    non c'e' resta come prima (nessuna scheda, o 'inesistente' se `esiste` dice
+    che ci deve essere): non si ripiega mai sulla ricerca per somiglianza
+    sull'intero archivio, che potrebbe pescare un progetto altrui.
+
+    `conn` e' la connessione di scrittura (vede tutto), `lettura` quella con le
+    viste. Vale per l'MCP, per il comando da terminale e per la dashboard."""
+    from . import actions, store
+    if ombra is None:
+        return ident
+    if ident in (None, "", 0):
+        if esiste:
+            raise actions.BadInput("serve il progetto")
+        return None
+    riga = store.get_project(lettura, ident)
+    if riga:
+        return riga["key"] if chiave else riga["id"]
+    if progetto_esatto(conn, ident):
+        raise actions.BadInput(MSG_ALTRO % ("il progetto '%s'" % ident))
+    if esiste:
+        raise actions.BadInput("progetto '%s' inesistente" % ident)
+    return None
+
+
+def oggetto_scrivibile(conn, lettura, ombra, leggi, chiave, nome):
+    """Rifiuta di toccare un task, un post o un lancio che chi scrive non vede:
+    la lettura con le viste (`leggi(lettura, chiave)`) non lo trova, quella
+    senza si'. Se non esiste in nessuno dei due la funzione che scrive dice da
+    se' 'inesistente'."""
+    from . import actions
+    if ombra is None:
+        return
+    if leggi(lettura, chiave):
+        return
+    if leggi(conn, chiave):
+        raise actions.BadInput(MSG_ALTRO % ("%s %s" % (nome, chiave)))
+
+
+MSG_INCERTO = ("questa sessione ha segnali di piu' compartimenti: Plancia non "
+               "mostra niente (e non scrive) finche' non e' chiaro di quale sia.")
+
+MSG_AMMINISTRAZIONE = ("comando di amministrazione di tutta Plancia: da una sessione di "
+                       "un compartimento nominato non si lancia.")
+
+
+class Vista:
+    """Cosa vede e cosa puo' scrivere chi lancia un comando: il comando `plancia`
+    da terminale, l'assistente vocale (`jarvis`), la dashboard quando scrive.
+
+    Due connessioni, come nel server MCP: `lettura` ha le viste temporanee che
+    nascondono gli altri compartimenti (sola lettura, salvo le cache di `meta`
+    che `chiudi` riporta sotto il nome giusto), `conn` e' quella di scrittura,
+    da usare solo DOPO aver controllato di che compartimento e' l'oggetto
+    (`progetto`, `oggetto`). Senza compartimenti nominati le due sono la stessa
+    connessione, `ombra` e' None e non cambia niente."""
+
+    def __init__(self, conn, lettura, ombra, visore):
+        self.conn, self.lettura, self.ombra, self.visore = conn, lettura, ombra, visore
+
+    @property
+    def attiva(self):
+        return self.ombra is not None
+
+    @property
+    def incerta(self):
+        return self.attiva and self.visore == INCERTO
+
+    @property
+    def nominato(self):
+        return self.attiva and self.visore not in (PREDEFINITO, INCERTO)
+
+    @property
+    def tag(self):
+        """Cosa mettere nella colonna `compartimento` di quello che si crea: il
+        nome, se chi scrive e' di un nominato (vale anche se la sessione non e'
+        nota al database); vuoto per il predefinito e senza compartimenti."""
+        return self.visore if self.nominato else ""
+
+    def progetto(self, ident, esiste=False, chiave=False):
+        return progetto_scrivibile(self.conn, self.lettura, self.ombra, ident,
+                                   esiste=esiste, chiave=chiave)
+
+    def oggetto(self, leggi, chiave, nome):
+        oggetto_scrivibile(self.conn, self.lettura, self.ombra, leggi, chiave, nome)
+
+    def chiudi(self):
+        """Riporta le cache scritte durante il comando e chiude tutto. Non
+        solleva mai."""
+        try:
+            if self.lettura is not self.conn:
+                chiudi(self.lettura, self.ombra)
+                self.lettura.close()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            self.conn.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def apri_vista(scelta=None, dashboard=False, sess=None):
+    """La `Vista` di chi lancia un comando.
+
+    Da un agente o da un terminale (`dashboard` falso): il compartimento e'
+    quello di chi lancia (`visore_cli`). Dalla dashboard (`dashboard` vero) e'
+    quello scelto (`scelta`, senza: il predefinito), con la regola della
+    persona; una scelta sconosciuta e' un errore, non il predefinito in
+    silenzio. Se la separazione non riesce (un'eccezione) il comando non parte:
+    niente lettura senza filtro."""
+    from . import actions, store
+    conn = store.connect()
+    lettura = None
+    try:
+        store.init_db(conn)
+        ambito = attivo()
+        if ambito is None:
+            return Vista(conn, conn, None, None)
+        lettura = store.connect()
+        if dashboard:
+            if scelta and scelta not in elenco(ambito):
+                raise actions.BadInput("compartimento sconosciuto: %s" % scelta)
+            visore = scelta or PREDEFINITO
+            ombra = applica(lettura, ambito, visore, dashboard=True,
+                            appart=appartenenze(lettura, ambito))
+        else:
+            visore = visore_cli(ambito, sess)
+            ombra = applica(lettura, ambito, visore)
+        return Vista(conn, lettura, ombra, visore)
+    except BaseException:
+        if lettura is not None:
+            lettura.close()
+        conn.close()
+        raise

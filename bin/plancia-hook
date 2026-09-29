@@ -407,6 +407,20 @@ def run():
                         pass
             else:
                 sorgente = BRIEFING
+                if not os.path.exists(sorgente) and os.path.exists(
+                        os.path.join(DATA, "plancia.db")):
+                    # Con dei compartimenti attivi `briefing.md` non si scrive
+                    # (e se c'era, si toglie): tolti i compartimenti dalla
+                    # config il file manca, e lo si riscrive qui, subito,
+                    # invece di aspettare il prossimo sync. Se non riesce,
+                    # silenzio (com'era con il file mancante).
+                    try:
+                        if viste is None:
+                            _carica_viste()
+                        from plancia import briefing as _briefing
+                        _briefing.write_cache()
+                    except Exception:
+                        pass
             if sorgente is None:
                 text = ""
             else:

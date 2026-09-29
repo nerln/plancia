@@ -2734,13 +2734,16 @@ function disegnaSelettore() {
   if (!sel) {
     sel = document.createElement('select');
     sel.id = 'sel-compartimento';
-    sel.style.width = 'auto';
-    sel.style.minWidth = '150px';
+    // larghezza e ingombro stanno in style.css (sotto i 500 px il selettore va
+    // a capo e non esce dallo schermo)
     sel.addEventListener('change', async () => {
       state.compartimento = sel.value;
       // quello che la pagina teneva a mente e' del compartimento di prima
       state.overview = null; state.progetti = null; state.lav = null;
       state.recap = null; state.filters = {};
+      // il drawer aperto mostra un progetto o un task del compartimento di
+      // prima: si chiude, la vista nuova si ridisegna senza
+      $('#drawer').hidden = true;
       await route();
     });
     $('.topbar-actions').prepend(sel);

@@ -109,30 +109,42 @@ def _righe(path, solo_coda=True) -> list:
     return fuori
 
 
-def leggi(dopo: str = None, tipo: str = None, limite: int = 100) -> list:
+def leggi(dopo: str = None, tipo: str = None, limite: int = 100, filtro=None) -> list:
     """Gli eventi dopo un certo id, in ordine. Senza `dopo` torna gli ultimi.
 
     `dopo` è l'id dell'ultimo evento già visto: è il segnalibro del consumatore.
-    """
+
+    `filtro` (una funzione evento -> bool) toglie gli eventi che non passano
+    PRIMA del taglio agli ultimi `limite`: chi guarda un registro lungo da dentro
+    un compartimento (vedi compartimenti_viste.py) trova i suoi anche se gli
+    ultimi mille sono di altri. Se nella coda letta ne passano meno di `limite`
+    si legge tutto, anche il file ruotato."""
+    def selezione(righe):
+        if dopo:
+            for i, e in enumerate(righe):
+                if e.get("id") == dopo:
+                    righe = righe[i + 1:]
+                    break
+        if tipo:
+            voluti = {t.strip() for t in tipo.split(",") if t.strip()}
+            righe = [e for e in righe if e.get("tipo") in voluti]
+        if filtro:
+            righe = [e for e in righe if filtro(e)]
+        if not dopo:
+            righe = righe[-limite:]
+        return righe[:limite]
+
     righe = _righe(FILE)
     trovato = any(e.get("id") == dopo for e in righe) if dopo else True
-    if not trovato or (not dopo and len(righe) < limite):
+    scelte = selezione(righe) if trovato else None
+    if not trovato or (not dopo and (len(righe) < limite or (
+            filtro and len(scelte) < limite))):
         # il segnalibro è più indietro della coda: si legge tutto, anche il
         # file ruotato
         righe = _righe(FILE.with_suffix(".1.jsonl"), solo_coda=False) + \
             _righe(FILE, solo_coda=False)
-
-    if dopo:
-        for i, e in enumerate(righe):
-            if e.get("id") == dopo:
-                righe = righe[i + 1:]
-                break
-    if tipo:
-        voluti = {t.strip() for t in tipo.split(",") if t.strip()}
-        righe = [e for e in righe if e.get("tipo") in voluti]
-    if not dopo:
-        righe = righe[-limite:]
-    return righe[:limite]
+        scelte = selezione(righe)
+    return scelte
 
 
 def ultimo_id() -> str:

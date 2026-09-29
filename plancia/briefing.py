@@ -370,13 +370,14 @@ def write_cache() -> str:
     Con dei compartimenti nominati in config.json (vedi
     plancia/compartimenti_viste.py) il file e' uno PER compartimento: la sessione
     di un nominato riceve solo il suo (`briefing.<nome>.md`), quella del
-    predefinito solo il proprio (`briefing.predefinito.md`, che e' anche
-    `briefing.md` per chi lo legge da fuori). L'hook sceglie il file dal
-    compartimento della sessione e, con i compartimenti attivi, non legge mai il
-    `briefing.md` non separato che un sync di prima poteva aver lasciato. Senza
-    compartimenti e' un file solo, com'e' sempre stato. Se i compartimenti ci
-    sono ma non si riesce a separare, non si scrive niente: meglio un briefing
-    vecchio che uno che mescola.
+    predefinito solo il proprio (`briefing.predefinito.md`). Il `briefing.md`
+    non separato NON si scrive piu' e, se c'e' (di prima dei compartimenti), si
+    toglie: un file con dentro il lavoro di tutti non deve restare a farsi
+    leggere. Togliendo i compartimenti dalla config il file torna a scriversi:
+    lo fa l'hook alla prima sessione (manca, quindi chiama questa funzione) o il
+    primo sync. Senza compartimenti e' un file solo, com'e' sempre stato. Se i
+    compartimenti ci sono ma non si riesce a separare, non si scrive niente:
+    meglio un briefing vecchio che uno che mescola.
     """
     from . import compartimenti_viste as viste
     config.ensure_dirs()
@@ -404,7 +405,10 @@ def write_cache() -> str:
                   encoding="utf-8") as fh:
             fh.write(testo)
     _togli_briefing_altrui(viste, [n for n in testi])
-    config.BRIEFING_FILE.write_text(testi[viste.PREDEFINITO], "utf-8")
+    try:
+        config.BRIEFING_FILE.unlink()
+    except OSError:
+        pass
     return testi[viste.PREDEFINITO]
 
 
