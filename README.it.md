@@ -47,6 +47,11 @@ cd ~/dev/plancia
 
 `plancia uninstall` rimette tutto com'era. I dati restano in `~/.plancia/`.
 
+Su Windows e Linux l'app nativa non c'è: apri http://127.0.0.1:7773 in Chrome o
+Edge e scegli Installa Plancia. Ha la sua finestra e la sua icona, e si apre
+anche con il server spento, con l'ultimo stato che aveva visto. Safari su macOS fa
+lo stesso con Aggiungi al Dock.
+
 ## Le tre porte
 
 **L'app.** Finestra nativa, voce nella barra dei menu, e tiene su il backend da
@@ -516,7 +521,7 @@ git config core.hooksPath .githooks
 ```
 
 Accende il gancio che fa girare `python3 tools/prova.py` prima di ogni push:
-1483 controlli in una ventina di secondi, su un archivio finto che non tocca
+1534 controlli in una ventina di secondi, su un archivio finto che non tocca
 il tuo.
 
 ## Licenza

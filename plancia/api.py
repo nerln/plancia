@@ -743,15 +743,25 @@ class Handler(BaseHTTPRequestHandler):
             html = (config.WEB_DIR / "index.html").read_text("utf-8")
             html = html.replace("__PLANCIA_TOKEN__", config.get_token())
             # marca css, js e i font con la loro data: un aggiornamento non
-            # lascia in giro la versione vecchia nella cache del browser. I
-            # woff2 sono piatti in WEB_DIR (niente sottocartelle, vedi sotto),
-            # quindi un glob basta a trovarli tutti senza elencarli per nome.
-            marcati = ["style.css", "app.js"] + sorted(
-                p.name for p in config.WEB_DIR.glob("*.woff2"))
-            stamp = int(max((config.WEB_DIR / n).stat().st_mtime
-                            for n in marcati))
-            html = html.replace("__PLANCIA_V__", str(stamp))
+            # lascia in giro la versione vecchia nella cache del browser. La
+            # stessa data e' il numero di versione del service worker (vedi
+            # _sw_js): se le due divergessero, la shell in cache e quella
+            # che la pagina chiede non sarebbero piu' la stessa.
+            html = html.replace("__PLANCIA_V__", str(_versione_shell()))
             return self._send(200, html, "text/html; charset=utf-8")
+        if path == "/sw.js":
+            # Il service worker sta alla radice (uno script controlla solo le
+            # pagine sotto il suo percorso: da /sw.js controlla tutto il sito,
+            # da /icone/ o /web/ non controllerebbe la dashboard). Service-
+            # Worker-Allowed lo dichiara esplicitamente. Non passa da
+            # mimetypes: serve un tipo JavaScript, e Python 3.9 dice
+            # application/javascript dove 3.12 dice text/javascript. Il
+            # numero di versione e l'elenco della shell li mette il server
+            # qui, non il browser: cosi' ogni cambio di versione cambia i
+            # byte dello script, ed e' l'unico segnale che fa scattare
+            # l'aggiornamento del worker.
+            return self._send(200, _sw_js(), "text/javascript; charset=utf-8",
+                              {"Service-Worker-Allowed": "/"})
         m = re.match(r"^/audio/([0-9a-f]{8,32}\.wav)$", path)
         if m:
             target = voice.AUDIO_DIR / m.group(1)
@@ -759,6 +769,15 @@ class Handler(BaseHTTPRequestHandler):
                 return self._error(404, "audio non trovato")
             return self._send(200, target.read_bytes(), "audio/wav")
         name = path.lstrip("/")
+        # Le icone del manifest stanno in web/icone/: l'unica sottocartella
+        # servita, e solo PNG (niente altro, niente altri livelli: il nome
+        # non ha barre, quindi non c'e' modo di salire di cartella).
+        m = re.match(r"^icone/([\w.-]+\.png)$", name)
+        if m:
+            target = config.WEB_DIR / "icone" / m.group(1)
+            if not target.is_file():
+                return self._error(404, "non trovato")
+            return self._send(200, target.read_bytes(), "image/png")
         if "/" in name or name.startswith("."):
             return self._error(404, "non trovato")
         target = config.WEB_DIR / name
@@ -769,9 +788,52 @@ class Handler(BaseHTTPRequestHandler):
             # mimetypes.guess_type torna None e il font arriverebbe come
             # application/octet-stream, che alcuni browser rifiutano.
             ctype = "font/woff2"
+        elif name.endswith(".webmanifest"):
+            # Nemmeno .webmanifest e' nella tabella di 3.9. Il tipo e' quello
+            # registrato per il Web App Manifest.
+            ctype = "application/manifest+json"
         else:
             ctype = mimetypes.guess_type(str(target))[0] or "application/octet-stream"
         return self._send(200, target.read_bytes(), ctype)
+
+
+def _file_shell():
+    """I file della shell della dashboard che il browser puo' tenersi, a
+    coppie (percorso servito, file su disco), senza versione: i css e il js
+    ricevono `?v=` da chi li elenca. E' la stessa lista che decide la
+    versione e che il service worker mette in cache."""
+    web = config.WEB_DIR
+    fissi = [("/style.css", web / "style.css"), ("/moto.css", web / "moto.css"),
+             ("/app.js", web / "app.js"),
+             ("/manifest.webmanifest", web / "manifest.webmanifest")]
+    # I woff2 sono piatti in WEB_DIR (niente sottocartelle, vedi _static),
+    # quindi un glob basta a trovarli tutti senza elencarli per nome.
+    font = [("/" + p.name, p) for p in sorted(web.glob("*.woff2"))]
+    icone = [("/icone/" + p.name, p) for p in sorted((web / "icone").glob("*.png"))]
+    return fissi + font + icone
+
+
+def _versione_shell() -> int:
+    """La data dell'ultimo file della shell: e' il `?v=` di css e js nella
+    pagina e il numero di versione del service worker. Un file toccato la
+    fa salire, e con lei cambiano la chiave della cache del worker e i byte
+    dello script. Le icone e il manifest ci sono dentro perche' il worker li
+    serve dalla cache e non hanno un `?v=` proprio (il browser li chiede
+    per il nome che sta nel manifest): senza, un'icona cambiata resterebbe
+    quella vecchia finche' non cambia un altro file."""
+    presenti = [f for _, f in _file_shell() if f.is_file()]
+    return int(max(f.stat().st_mtime for f in presenti)) if presenti else 0
+
+
+def _sw_js() -> str:
+    """web/sw.js con la versione e l'elenco della shell scritti dentro."""
+    v = _versione_shell()
+    elenco = ["/"]
+    for url, _ in _file_shell():
+        elenco.append(url + "?v=%d" % v if url.endswith((".css", ".js")) else url)
+    testo = (config.WEB_DIR / "sw.js").read_text("utf-8")
+    return (testo.replace("__PLANCIA_V__", str(v))
+                 .replace("__PLANCIA_SHELL__", json.dumps(elenco)))
 
 
 def serve(port=None, open_browser=False, sync_first=True) -> None:
