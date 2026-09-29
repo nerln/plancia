@@ -1,0 +1,156 @@
+{
+ "eventi": [
+  {
+   "schema": "plancia.evento/1",
+   "id": "c07bee07308ba4e3",
+   "ts": "2026-09-29T20:06:31Z",
+   "tipo": "padre:l2-demo-aree",
+   "titolo": "Lumen sotto Signalworks",
+   "progetto": "lumen",
+   "origine": "plancia",
+   "dati": {
+    "batch": "l2-demo-aree",
+    "figlio": "lumen",
+    "prima": null,
+    "dopo": 8
+   }
+  },
+  {
+   "schema": "plancia.evento/1",
+   "id": "ea66b9ecbd804209",
+   "ts": "2026-09-29T20:06:31Z",
+   "tipo": "padre:l2-demo-aree",
+   "titolo": "Apiary sotto Signalworks",
+   "progetto": "apiary",
+   "origine": "plancia",
+   "dati": {
+    "batch": "l2-demo-aree",
+    "figlio": "apiary",
+    "prima": null,
+    "dopo": 8
+   }
+  },
+  {
+   "schema": "plancia.evento/1",
+   "id": "340e93f34b73a56d",
+   "ts": "2026-09-29T20:06:31Z",
+   "tipo": "padre:l2-demo-aree",
+   "titolo": "Atlas sotto Signalworks",
+   "progetto": "atlas",
+   "origine": "plancia",
+   "dati": {
+    "batch": "l2-demo-aree",
+    "figlio": "atlas",
+    "prima": null,
+    "dopo": 8
+   }
+  },
+  {
+   "schema": "plancia.evento/1",
+   "id": "e1853b498cb56c4d",
+   "ts": "2026-09-29T20:06:31Z",
+   "tipo": "padre:l2-demo-aree",
+   "titolo": "Field notes sotto Fieldcraft",
+   "progetto": "field-notes",
+   "origine": "plancia",
+   "dati": {
+    "batch": "l2-demo-aree",
+    "figlio": "field-notes",
+    "prima": null,
+    "dopo": 9
+   }
+  },
+  {
+   "schema": "plancia.evento/1",
+   "id": "f8ab9a3e52406505",
+   "ts": "2026-09-29T20:06:31Z",
+   "tipo": "padre:l2-demo-aree",
+   "titolo": "Harbour sotto Fieldcraft",
+   "progetto": "harbour",
+   "origine": "plancia",
+   "dati": {
+    "batch": "l2-demo-aree",
+    "figlio": "harbour",
+    "prima": null,
+    "dopo": 9
+   }
+  },
+  {
+   "schema": "plancia.evento/1",
+   "id": "a5b9c21a8c36750c",
+   "ts": "2026-09-29T20:06:31Z",
+   "tipo": "padre:l2-demo-aree",
+   "titolo": "Inbox triage sotto Fieldcraft",
+   "progetto": "inbox-zero",
+   "origine": "plancia",
+   "dati": {
+    "batch": "l2-demo-aree",
+    "figlio": "inbox-zero",
+    "prima": null,
+    "dopo": 9
+   }
+  },
+  {
+   "schema": "plancia.evento/1",
+   "id": "9110402002dcb1b1",
+   "ts": "2026-09-29T20:06:31Z",
+   "tipo": "padre:l2-demo-aree",
+   "titolo": "Personal site sotto Backlot",
+   "progetto": "site",
+   "origine": "plancia",
+   "dati": {
+    "batch": "l2-demo-aree",
+    "figlio": "site",
+    "prima": null,
+    "dopo": 10
+   }
+  },
+  {
+   "schema": "plancia.evento/1",
+   "id": "36cbc944bc7717ec",
+   "ts": "2026-09-29T20:06:31Z",
+   "tipo": "padre:l2-demo-aree",
+   "titolo": "Postcard sotto Backlot",
+   "progetto": "postcard",
+   "origine": "plancia",
+   "dati": {
+    "batch": "l2-demo-aree",
+    "figlio": "postcard",
+    "prima": null,
+    "dopo": 10
+   }
+  },
+  {
+   "schema": "plancia.evento/1",
+   "id": "2e2bb319d13f5795",
+   "ts": "2026-09-29T20:06:31Z",
+   "tipo": "padre:l2-demo-aree",
+   "titolo": "Kiln sotto Backlot",
+   "progetto": "kiln",
+   "origine": "plancia",
+   "dati": {
+    "batch": "l2-demo-aree",
+    "figlio": "kiln",
+    "prima": null,
+    "dopo": 10
+   }
+  }
+ ],
+ "stato": {
+  "file": "eventi.jsonl",
+  "schema": "plancia.evento/1",
+  "eventi": 9,
+  "byte": 2537,
+  "tipi": [
+   "lavoro.avviato",
+   "lavoro.completato",
+   "lavoro.fallito",
+   "task.creato",
+   "task.chiuso",
+   "post.pubblicato",
+   "progetto.archiviato",
+   "progetto.aggiornato",
+   "riepilogo.pronto"
+  ]
+ }
+}

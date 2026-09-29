@@ -513,7 +513,7 @@ plancia/cantiere.py    dispatching work to an agent
 plancia/proposte.py    what is worth doing, from signals
 plancia/eventi.py      the append only event log
 site/                  the website, published on GitHub Pages
-mac/Sources/main.swift the macOS app
+mac/Sources/          the macOS app (SwiftUI, macOS 26 and later)
 web/                   dashboard, no framework, no build step
 ```
 
@@ -533,6 +533,9 @@ available under "Guide".
 
 macOS 13 or later (or Windows or Linux, see above), Python 3.9+, Claude Code. Xcode command line tools only if you
 want to build the app. `gh` is optional and only used to read your repos.
+
+The native Mac app 2.0 is SwiftUI and needs macOS 26 or later. On macOS 13 to 15 stay on the 1.1.0 app,
+or use the dashboard in the browser (it installs as a web app).
 
 ## Security
 
@@ -567,7 +570,7 @@ warning each time). The full list is in the docstring of `plancia/compartimenti.
 git config core.hooksPath .githooks
 ```
 
-Turns on the hook that runs `python3 tools/prova.py` before every push: 4037
+Turns on the hook that runs `python3 tools/prova.py` before every push: 4046
 checks in a few minutes, against a throwaway archive that never touches
 yours. They cover the schema, the board, the proposals, the search index, the
 recap, the MCP surface and its token budget, every read route of the HTTP API,

@@ -1,0 +1,6 @@
+[
+  {"id": "7", "key": null, "name": 42, "priority": "2", "pinned": true, "figli": "boh", "summary": {"a": 1}, "next_action": ["x"]},
+  "non un oggetto",
+  {},
+  {"key": "ok", "name": "Buono", "task_aperti": "3", "last_activity": 20260929}
+]

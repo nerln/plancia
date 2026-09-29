@@ -1,0 +1,46 @@
+[
+ {
+  "id": "lancio_fallito:3",
+  "testo": "Il lancio su Rerun the ablation with the larger split è fallito. Lo riprovo?",
+  "motivo": "lancio_fallito",
+  "urgenza": 0,
+  "azione": {
+   "tipo": "rilancia",
+   "run": 3
+  }
+ },
+ {
+  "id": "codex_bloccato:Score the third mode",
+  "testo": "Codex è fermo su Score the third model on the cleaned split: ha finito la quota. Ci mando Claude a vedere?",
+  "motivo": "codex_bloccato",
+  "urgenza": 1,
+  "azione": {
+   "tipo": "manda",
+   "titolo": "Score the third model on the cleaned split",
+   "progetto": "atlas",
+   "modo": "proposta"
+  }
+ },
+ {
+  "id": "non_committato:lumen",
+  "testo": "Su lumen ci sono 7 file modificati e non committati da ieri. Vuoi che guardi cosa sono?",
+  "motivo": "non_committato",
+  "urgenza": 2,
+  "azione": {
+   "tipo": "manda",
+   "titolo": "Guarda le modifiche non committate in lumen e dimmi cosa sono",
+   "progetto": "lumen",
+   "modo": "proposta"
+  }
+ },
+ {
+  "id": "post_fermo:2",
+  "testo": "C'è un post approvato e mai uscito su Apiary. Lo pubblichiamo?",
+  "motivo": "post_fermo",
+  "urgenza": 3,
+  "azione": {
+   "tipo": "vai",
+   "vista": "social"
+  }
+ }
+]

@@ -1,0 +1,52 @@
+[
+ {
+  "id": 3,
+  "name": "writing-style",
+  "description": "Short sentences. Concrete nouns. No em dash.",
+  "type": "feedback",
+  "updated_at": "2026-09-28T09:13:00Z",
+  "links": "[]",
+  "progetto": null,
+  "project_key": null
+ },
+ {
+  "id": 5,
+  "name": "machine-setup",
+  "description": "Where the models live and why the cache is on the external drive",
+  "type": "reference",
+  "updated_at": "2026-09-27T09:30:00Z",
+  "links": "[]",
+  "progetto": null,
+  "project_key": null
+ },
+ {
+  "id": 2,
+  "name": "apiary-budgets",
+  "description": "Budget ceilings are per project, enforced at the proxy, not the client",
+  "type": "project",
+  "updated_at": "2026-09-26T09:01:00Z",
+  "links": "[]",
+  "progetto": "Apiary",
+  "project_key": "apiary"
+ },
+ {
+  "id": 4,
+  "name": "thesis-scope",
+  "description": "Chapter three covers retrieval failure, not generation",
+  "type": "project",
+  "updated_at": "2026-09-22T09:59:00Z",
+  "links": "[]",
+  "progetto": "Field notes",
+  "project_key": "field-notes"
+ },
+ {
+  "id": 1,
+  "name": "lumen-architecture",
+  "description": "How Lumen is put together and why the index is a single file",
+  "type": "project",
+  "updated_at": "2026-09-19T09:24:00Z",
+  "links": "[]",
+  "progetto": "Lumen",
+  "project_key": "lumen"
+ }
+]

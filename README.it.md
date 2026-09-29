@@ -617,7 +617,7 @@ plancia/cantiere.py    mandare un lavoro a un agente
 plancia/proposte.py    cosa conviene fare, dai segnali
 plancia/eventi.py      il registro in append
 site/                  il sito, pubblicato su GitHub Pages
-mac/Sources/main.swift l'app macOS
+mac/Sources/          l'app macOS (SwiftUI, macOS 26 o più recente)
 web/                   dashboard, nessun framework, nessun build
 ```
 
@@ -638,6 +638,9 @@ da ⌘K. Al primo avvio una guida spiega le parti non ovvie, e resta lì sotto
 macOS 13 o più recente (o Windows o Linux, vedi sopra), Python 3.9+, Claude Code. Gli strumenti da riga di
 comando di Xcode solo per costruire l'app. `gh` è facoltativo e serve solo a
 leggere i tuoi repo.
+
+L'app nativa per Mac 2.0 è in SwiftUI e richiede macOS 26 o più recente. Su macOS 13-15 resta la 1.1.0, oppure
+la dashboard nel browser (si installa come app web).
 
 ## Sicurezza
 
@@ -675,7 +678,7 @@ git config core.hooksPath .githooks
 ```
 
 Accende il gancio che fa girare `python3 tools/prova.py` prima di ogni push:
-4037 controlli in pochi minuti, su un archivio finto che non tocca
+4046 controlli in pochi minuti, su un archivio finto che non tocca
 il tuo.
 
 ## Licenza
