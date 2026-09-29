@@ -32,6 +32,15 @@ due secondi) e la cattura di `BaseException` (un `sys.exit(0)` dentro il modulo,
 `guardiano-non-parte`, `systemMessage`. Non si prende `os._exit`, ne' un ciclo in
 codice C che non guarda i segnali (dichiarato).
 
+L'allarme che scatta MENTRE il guardiano decide (un comando troppo complesso da
+controllare in tempo, per esempio `$(` annidati) non e' un guasto: e' un comando che
+non si e' potuto controllare, e `compartimenti.uscita_tempo_scaduto` decide. Un
+nominato (o una sessione incerta) in `bloccante` e' NEGATO con il motivo "comando
+troppo complesso da controllare in tempo: spezzalo"; il predefinito e' ammesso ma con
+il `systemMessage` OGNI volta (nessun silenzio dopo la prima); in `solo-registro` non si
+nega mai. Solo un allarme scattato durante il caricamento del pacchetto (o prima di aver
+letto la config) resta il guasto di sempre.
+
 Non installato da questo file: si aggiunge a mano a `settings.json` (matcher
 `*`, evento PreToolUse), prima in `solo-registro`.
 """
@@ -161,6 +170,28 @@ def _carica():
     return compartimenti
 
 
+def _tempo_scaduto(exc):
+    """L'allarme e' scattato MENTRE il modulo decideva (non mentre si caricava): un
+    comando troppo complesso da controllare in tempo. Un nominato o una sessione incerta
+    in `bloccante` e' NEGATO (motivo: "spezzalo"); il predefinito e' ammesso ma con il
+    `systemMessage` ogni volta. Torna True se ha gestito il caso (il guardiano girava:
+    `compartimenti.uscita_tempo_scaduto`), False se no (allarme durante il caricamento,
+    config non ancora letta: e' il guasto di sempre, `_non_parte`)."""
+    try:
+        modulo = globals().get("compartimenti")
+        if modulo is None or not isinstance(exc, _Scaduto):
+            return False
+        uscita = modulo.uscita_tempo_scaduto(modulo.percorso_dati())
+        if uscita is None:
+            return False
+        if uscita:
+            sys.stdout.write(uscita)
+            sys.stdout.flush()
+        return True
+    except BaseException:  # noqa: BLE001 - un guasto qui e' il guasto di sempre
+        return False
+
+
 _sessione = ""
 try:
     testo = sys.stdin.read()
@@ -180,5 +211,6 @@ try:
         sys.stdout.flush()
 except BaseException as _exc:  # noqa: BLE001 - un hook globale non rompe una sessione
     _disarma()
-    _non_parte(_exc, _sessione)
+    if not _tempo_scaduto(_exc):
+        _non_parte(_exc, _sessione)
 sys.exit(0)

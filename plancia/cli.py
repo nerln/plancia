@@ -765,16 +765,12 @@ def cmd_config(args):
                     print("condivise: serve una lista di cartelle, per esempio "
                           "'[\"/percorso/della/cartella\"]'", file=sys.stderr)
                     return 2
-                dati = os.path.realpath(str(config.DATA_DIR))
+                from .compartimenti import cartella_claude, voce_condivisa_vietata
                 for x in value:
-                    r = os.path.realpath(os.path.expanduser(x))
-                    if not os.path.isabs(os.path.expanduser(x)):
-                        print("condivise: %r non e' una cartella assoluta" % x,
-                              file=sys.stderr)
-                        return 2
-                    if r == dati or r.startswith(dati + os.sep):
-                        print("condivise: la cartella dei dati di Plancia non e' "
-                              "mai condivisa (%r)" % x, file=sys.stderr)
+                    perche = voce_condivisa_vietata(x, str(config.DATA_DIR),
+                                                    cartella_claude())
+                    if perche:
+                        print("condivise: %r %s" % (x, perche), file=sys.stderr)
                         return 2
             cfg[args.chiave] = value
             config.save_config(cfg)
