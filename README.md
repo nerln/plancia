@@ -524,14 +524,35 @@ The server listens on loopback only. HTTP writes require the token in
 `~/.plancia/token`; the dashboard receives it from the server inside the page.
 Reads are open: it is your data, already on your disk.
 
+### The compartment guard, and what it cannot see
+
+`bin/plancia-guardiano` is an optional PreToolUse hook that keeps two groups of work
+apart on one machine (see `plancia/compartimenti.py`). It is a heuristic analyser of
+what a tool call says it will touch: a guard against incidents, and not a security boundary.
+It stops what an agent does without thinking, such as reading the other
+group's files, overwriting the guard's own config, or a recursive search that walks
+into a forbidden folder. It does not stop someone who is trying to get around it, and
+it does not claim to: a real boundary is a separate operating-system user or a
+container. Start it in `solo-registro` (log only), read the log, then decide.
+
+What it does not see, honestly: paths built at run time inside programs and scripts
+that already exist (a script written in one call and run in another, a build, a test
+that opens files); downloaded or generated code that is then executed; child
+processes that start themselves and outlive the command (a daemon, a scheduled job, a
+watcher); third-party MCP tools whose file arguments it does not know by name; paths
+that travel through another channel (the clipboard, the local network, a database); a
+command it cannot finish analysing in two seconds (a nominated session is denied with
+"too complex to check in time, split it", the default session is allowed with a
+warning each time). The full list is in the docstring of `plancia/compartimenti.py`.
+
 ## Contributing
 
 ```bash
 git config core.hooksPath .githooks
 ```
 
-Turns on the hook that runs `python3 tools/prova.py` before every push: 2977
-checks in about twenty seconds, against a throwaway archive that never touches
+Turns on the hook that runs `python3 tools/prova.py` before every push: 3804
+checks in a few minutes, against a throwaway archive that never touches
 yours. They cover the schema, the board, the proposals, the search index, the
 recap, the MCP surface and its token budget, every read route of the HTTP API,
 the hook, the skills and a full install and uninstall into a fake home.

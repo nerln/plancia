@@ -1333,11 +1333,25 @@ def _prove_errore_interno(prova):
                 "guardiano": modo, "compartimenti": {
                     "alfa": {"cartelle": [str(cartella)]}}}), "utf-8")
             nom = cm.hook(json.dumps(payload), str(dati))
-            prova(f"errore interno: {modo}, nominato: "
-                  + ("negato per prudenza" if atteso_nominato else "ammesso, nessuna uscita"),
-                  ("errore interno" in nom) if atteso_nominato else nom == "", nom[:150])
+            if modo == "spento":
+                attesa = nom == ""
+                cosa = "ammesso, nessuna uscita"
+            elif atteso_nominato:
+                attesa = "errore interno" in nom and "deny" in nom
+                cosa = "negato per prudenza"
+            else:
+                attesa = "errore interno" in nom and "systemMessage" in nom and "deny" not in nom
+                cosa = "ammesso ma con il systemMessage"
+            prova(f"errore interno: {modo}, nominato: {cosa}", attesa, nom[:150])
             pre = cm.hook(json.dumps(altro), str(dati))
-            prova(f"errore interno: {modo}, predefinito: ammesso, nessuna uscita", pre == "", pre[:150])
+            if modo == "spento":
+                prova(f"errore interno: {modo}, predefinito: ammesso, nessuna uscita", pre == "",
+                      pre[:150])
+            else:
+                prova(f"errore interno: {modo}, predefinito: ammesso ma con il systemMessage "
+                      "(sesto giro: non piu' in silenzio)",
+                      "systemMessage" in pre and "errore interno" in pre and "deny" not in pre,
+                      pre[:150])
     finally:
         cm.valuta = originale
         shutil.rmtree(dati, ignore_errors=True)
@@ -2030,9 +2044,12 @@ def _prove_cd_variabili(prova, a: Ambiente):
     prova("cd: alfa, `cd <comune> && cat nota.txt`: negato", r.negato, repr(r))
     r = alfa("cd .. && ls")
     prova("cd: alfa, `cd .. && ls`: negato", r.negato, repr(r))
-    r = alfa("cd - && ls")
-    prova("cd: alfa, `cd - && ls`: negato (cartella sconosciuta)",
+    r = alfa("cd - && ls sotto/")
+    prova("cd: alfa, `cd - && ls sotto/`: negato (cartella sconosciuta e un relativo con una barra)",
           r.negato and "non si sa determinare" in r.motivo, repr(r))
+    r = alfa("cd - && ls")
+    prova("cd: alfa, `cd - && ls`: ammesso (sesto giro: un nome semplice dopo una cartella "
+          "sconosciuta non nega)", r.ammesso, repr(r))
     r = alfa(f"cd {a.alfa1} && cat segreto.txt", aperta_in=a.comune, sid=S_ALFA)
     prova("cd: alfa aperta fuori, `cd <sua cartella> && cat segreto.txt`: ammesso "
           "(parte da dentro)", r.ammesso, repr(r))
@@ -2934,26 +2951,39 @@ def _prove_condivise(prova, a: Ambiente):
                         sid=S_COMUNE, aperta_in=a.progetto)).ammesso)
     # cartelle di un nominato dentro una condivisa: vince il piu' specifico
     a.togli_config()
-    a.scrivi_config(a.config("bloccante", condivise=[str(a.radice)]))
-    prova("condivise: una condivisa che contiene tutto: alfa legge il comune",
-          alfa(f"cat {a.comune}/nota.txt").ammesso)
-    r = alfa(f"cat {a.beta1}/b.txt")
+    zona = a.radice / "zona-condivisa"
+    (zona / "beta-in-zona").mkdir(parents=True, exist_ok=True)
+    (zona / "beta-in-zona" / "b.txt").write_text("dentro beta", "utf-8")
+    (zona / "nota.txt").write_text("nota della zona", "utf-8")
+    cfg_z = a.config("bloccante", condivise=[str(zona)])
+    cfg_z["compartimenti"]["beta"]["cartelle"].append(str(zona / "beta-in-zona"))
+    a.scrivi_config(cfg_z)
+    prova("condivise: una condivisa che ha dentro una cartella di beta: alfa legge il resto",
+          alfa(f"cat {zona}/nota.txt").ammesso)
+    r = alfa(f"cat {zona}/beta-in-zona/b.txt")
     prova("condivise: ...ma non la cartella di beta (piu' specifica): negato, appartiene a beta",
           r.negato and "beta" in r.motivo, repr(r))
-    r = alfa(f"grep -rn x {a.radice}")
+    r = alfa(f"grep -rn x {zona}")
     prova("condivise: ...e una ricerca dalla radice condivisa che include beta e' negata",
           r.negato, repr(r))
     prova("condivise: ...scrivere nella propria cartella dentro la condivisa e' ammesso",
           alfa(f"echo x > {a.alfa1}/n2.txt").ammesso)
-    prova("condivise: ...scrivere nel comune (condiviso) no",
-          alfa(f"echo x > {a.comune}/n2.txt").negato)
-    # la cartella dei dati non e' mai condivisa, anche se ci sta dentro
+    prova("condivise: ...scrivere nella condivisa (fuori dai propri permessi) no",
+          alfa(f"echo x > {zona}/n2.txt").negato)
+    # la cartella dei dati non e' mai condivisa: una voce che la contiene e' ignorata
+    # (vedi `_prove_condivise_6`)
+    a.togli_config()
+    a.scrivi_config(a.config("bloccante", condivise=[str(a.radice)]))
     for chi, tgt in (("dentro una condivisa", f"cat {a.dati}/config.json"),
                      ("le trascrizioni", f"cat {a.claude}/projects/x.jsonl")):
         r = alfa(tgt)
-        prova(f"condivise: {chi} (la radice e' condivisa): i dati/le trascrizioni restano "
-              "fuori dai permessi", r.negato, repr(r))
+        prova(f"condivise: {chi} (la voce che li contiene e' ignorata): i dati/le trascrizioni "
+              "restano fuori dai permessi", r.negato, repr(r))
     a.togli_config()
+    try:
+        (a.dati / "guardiano.condivise-nota").unlink()      # la nota e' limitata nel tempo
+    except OSError:
+        pass
     a.scrivi_config(a.config("bloccante", condivise=[str(a.dati), str(a.dati / "sotto"), X]))
     r = alfa(f"cat {a.dati}/config.json")
     righe = [x for x in a.registro() if x.get("esito") == "nota"]
@@ -3403,8 +3433,8 @@ def _prove_minori_5(prova, a: Ambiente):
                 "cd \"$(pwd)/progetto\" && cat p.txt"):
         r = pred(cmd, aperta_in=a.comune, cwd=a.comune)
         prova(f"minori5: predefinito, `{cmd}` (cartella senza divieti): ammesso", r.ammesso, repr(r))
-    r = alfa(f"cd {a.alfa1}{{,/sotto}} && cat f.txt")
-    prova("minori5: alfa, `cd <sua>{,/sotto} && cat f.txt`: cartella sconosciuta, negato "
+    r = alfa(f"cd {a.alfa1}{{,/sotto}} && cat sotto/f.txt")
+    prova("minori5: alfa, `cd <sua>{,/sotto} && cat sotto/f.txt`: cartella sconosciuta, negato "
           "(scrivi il percorso)", r.negato, repr(r))
     # il tetto: non e' silenzioso, e non e' un modo di nascondere un percorso
     padding = "true; " * 400 + f"cat {fuori_alfa}"
@@ -3501,6 +3531,827 @@ def _prove_minori_5(prova, a: Ambiente):
     r = _corri_copia(a, hook, seg)
     prova("minori5: riparata, la copia torna a negare", r is not None and r.negato, repr(r))
     a.togli_config()
+
+
+def _alfa_pulita(a: Ambiente):
+    """Una cartella di alfa tutta nuova (un repository finto, con qualche file), e
+    la config `bloccante` che la include. Le altre prove lasciano collegamenti e
+    sottocartelle in `alfa-uno` che un comando ricorsivo seguirebbe fuori dai permessi
+    (a ragione)."""
+    pulita = a.radice / "alfa-pulita-6"
+    (pulita / ".git").mkdir(parents=True, exist_ok=True)
+    (pulita / "src").mkdir(exist_ok=True)
+    for f in ("body.md", "list.txt", "src/f.txt", "f", "sotto.txt"):
+        (pulita / f).write_text("x\n", "utf-8")
+    cfg = a.config("bloccante")
+    cfg["compartimenti"]["alfa"]["cartelle"].append(str(pulita))
+    a.scrivi_config(cfg)
+    return pulita
+
+
+def _prove_regressioni_6(prova, a: Ambiente):
+    """Sesto giro, punto 1: le tre regressioni del quinto giro (gli argomenti che il
+    comando LEGGE come file tornano percorsi: `gh -F`, `gh api -F k=@file`, `grep -rf`,
+    `git -c include.path=`, `curl -d @file`) e i falsi positivi nuovi (`cd` con una
+    sostituzione di comando o con graffe, `echo $PATH` verso un altro comando)."""
+    a.togli_config()
+    pulita = _alfa_pulita(a)
+    (a.comune / "bin").mkdir(exist_ok=True)
+    nota = str(a.comune / "nota.txt")
+    segreto = str(a.alfa1 / "segreto.txt")
+
+    def alfa(cmd, env=None):
+        return a.chiama(a.pl("Bash", {"command": cmd}, sid=S_ALFA_LIBERA, aperta_in=pulita),
+                        env=env)
+
+    def pred(cmd):
+        return a.chiama(a.pl("Bash", {"command": cmd}, sid=S_COMUNE, aperta_in=a.progetto))
+
+    leggono = [
+        f"gh issue create -F {{}}", f"gh pr create -F {{}} -t x", f"gh issue comment 3 -F {{}}",
+        f"gh api repos/x/y/issues -F body=@{{}}", f"gh api repos/x/y/issues --field body=@{{}}",
+        f"gh api repos/x/y/issues --field=body=@{{}}", f"gh api repos/x/y --input {{}}",
+        f"gh pr create --body-file {{}}", f"grep -rf {{}} .", f"grep -nf {{}} f",
+        f"grep -f {{}} f", f"grep -e x -f {{}} f", f"grep -rif {{}} .", f"rg -f {{}} .",
+        f"git -c include.path={{}} status", f"git -c core.excludesFile={{}} status",
+        f"git -c core.hooksPath={{}} status", f"curl -d @{{}} http://localhost/x",
+        f"curl --data-binary @{{}} http://localhost/x", f"curl -F f=@{{}} http://localhost/x",
+        f"sed -nf {{}} f", f"sed -f {{}} f", f"awk -f {{}} f", f"jq --slurpfile a {{}} . f",
+    ]
+    for c in leggono:
+        cmd = c.format(nota)
+        r = alfa(cmd)
+        prova(f"reg6: alfa, `{cmd[:60].replace(str(a.radice), '<R>')}`: negato (il file letto "
+              "e' di fuori)", r.negato, repr(r))
+        cmd = c.format(segreto)
+        r = pred(cmd)
+        prova(f"reg6: predefinito, `{cmd[:60].replace(str(a.radice), '<R>')}`: negato (il file "
+              "letto e' di alfa)", r.negato, repr(r))
+    onesti = [
+        "gh api repos/x/y/issues -F title=ciao -f body=testo", "gh api /repos/x/y/pulls",
+        "gh api repos/x/y/issues -F n=5", "gh issue create -F body.md",
+        "gh pr create --body-file body.md", "gh api repos/x/y --input body.md",
+        "gh issue create -t titolo -b 'un corpo con /path/x'", "grep -rf list.txt .",
+        "grep -nf list.txt f", "git -c user.name=x status", "git -c core.pager=cat log -1",
+        "curl -d @body.md http://localhost/x", "sed -nf list.txt f",
+        "jq --arg f /opt/x . f", "find . -path /opt/x/y -name z",
+        "gh workflow run x.yml -f a=b", "grep -rn foo .",
+    ]
+    for c in onesti:
+        r = alfa(c)
+        prova(f"reg6: alfa, `{c[:60]}`: ammesso", r.ammesso, repr(r))
+    # `cd` con una sostituzione di comando o con graffe
+    cd_ok = [
+        "cd $(git rev-parse --show-toplevel) && git status", "cd $(git rev-parse --show-toplevel) && ls",
+        f"cd \"$(dirname {pulita}/f)\" && ls", "cd $(dirname $0) && ls", "cd $(realpath src) && ls",
+        "cd $(readlink -f .) && ls", "cd $(echo src) && ls", "cd {src,tests} && ls",
+        "cd src{,} && ls", "cd \"$(mktemp -d)\" && ls", "cd $(pwd) && ls", "cd $PWD && ls",
+        "cd `pwd` && ls", "cd \"$(cd src && pwd)\" && ls", "cd $(dirname $(realpath f)) && git status",
+        "cd \"$(dirname \"$0\")\" && pwd", "cd - && ls", "cd $(git rev-parse --show-toplevel)/src && cat f.txt",
+        "cd $(git rev-parse --show-toplevel) && cat src/f.txt",
+        "cd \"$(dirname \"$(realpath f)\")\" && ls src/",
+    ]
+    for c in cd_ok:
+        r = alfa(c)
+        prova(f"reg6: alfa, `{c}`: ammesso (la cartella si risolve, o e' sconosciuta e non nega "
+              "un nome semplice)", r.ammesso, repr(r))
+    cd_no = [
+        f"cd $(dirname {nota}) && ls", f"cd $(echo {a.comune}) && cat nota.txt",
+        f"cd \"$(dirname {nota})\" && cat nota.txt", f"cd $(realpath {a.comune}) && ls",
+        f"cd $(readlink -f {a.comune}) && ls", "cd $(git rev-parse --show-toplevel)/.. && ls",
+        f"cd \"$(cd {a.comune} && pwd)\" && ls", "cd $(dirname $0) && cat src/f.txt",
+        "cd - && cat src/f.txt", "cd {src,tests} && cat src/f.txt", "cd $(mktemp -d) && ls ../x",
+        f"cd $(dirname $0) && cat {nota}",
+    ]
+    for c in cd_no:
+        r = alfa(c)
+        prova(f"reg6: alfa, `{c[:66].replace(str(a.radice), '<R>')}`: negato (la cartella e' fuori, o "
+              "un relativo con una barra dopo una cartella sconosciuta)", r.negato, repr(r))
+    r = alfa("cd - && ls src/")
+    prova("reg6: alfa, `cd - && ls src/`: negato, il motivo dice che la cartella non si sa "
+          "determinare", r.negato and "non si sa determinare" in r.motivo, repr(r))
+    # predefinito: la cartella si risolve e il divieto sotto resta
+    r = a.chiama(a.pl("Bash", {"command": f"cd $(dirname {segreto}) && cat segreto.txt"},
+                      sid=S_COMUNE, aperta_in=a.progetto))
+    prova("reg6: predefinito, `cd $(dirname <file di alfa>) && cat segreto.txt`: negato",
+          r.negato, repr(r))
+    r = a.chiama(a.pl("Bash", {"command": f"cd $(dirname {a.progetto}/p.txt) && cat p.txt"},
+                      sid=S_COMUNE, aperta_in=a.progetto))
+    prova("reg6: predefinito, `cd $(dirname <file del progetto>) && cat p.txt`: ammesso",
+          r.ammesso, repr(r))
+    # `echo $PATH` verso un altro comando: non produce percorsi dai due punti
+    env = dict(a.env())
+    env["PATH"] = f"/usr/bin:{a.comune}/bin:{a.beta1}:/bin"
+    for c in ("echo $PATH | tr : '\\n'", "echo $PATH | wc -c", "echo $PATH | cut -d: -f1",
+              "echo $PATH | grep -c bin", "echo $PATH | awk -F: '{print $1}'",
+              "echo $PATH | sed 's/:/ /g'", "echo $PATH | xargs -n1", "echo $PATH | head -c 20",
+              "printf %s $PATH | tr : '\\n'", "echo $PATH", "echo \"$PATH\" | tr : '\\n' | sort",
+              "PATH=/opt/x:$PATH python3 -V", "export PATH=$HOME/bin:$PATH", "env PATH=$PATH:/opt/x ls",
+              "echo $PATH | tr ':' '\\n' | while read d; do ls -d \"$d\" > /dev/null; done"):
+        r = alfa(c, env=env)
+        prova(f"reg6: alfa, `{c[:60]}`, PATH con cartelle fuori dai permessi: ammesso "
+              "(un elenco da una variabile non e' un percorso)", r.ammesso, repr(r))
+    r = alfa(f"docker run -v {a.comune}:/app x ls /app")
+    prova("reg6: alfa, `docker -v <fuori>:/app`: negato (i due punti scritti nel comando "
+          "dividono ancora)", r.negato, repr(r))
+    r = alfa(f"cat {nota}:{pulita}/f")
+    prova("reg6: alfa, `cat <fuori>:<dentro>`: negato", r.negato, repr(r))
+    a.togli_config()
+
+
+CASI_G6_COMMENTI = [
+    "# nota: usa <<EOF per il testo\ncat @@\nEOF",
+    "# nota: usa <<EOF per il testo\ncat @@",
+    "# <<-EOF\ncat @@", "echo hi # <<EOF\ncat @@", "[[ 1 == 1 ]] # <<EOF\ncat @@",
+    "if false; then # <<EOF\ncat @@\nfi", "x=${x:-<<EOF}\ncat @@", "echo $((1 << b))\ncat @@",
+    "# non e' un heredoc, e non apre virgolette\ncat @@", "echo x # <<'EOF'\ncat @@\nEOF",
+    "true # <<EOF\ntrue # <<EOF\ncat @@", "echo ${#PATH}\ncat @@",
+    "echo a#b\ncat @@", "# un `apice inverso\ncat @@", "# usa <<EOF\necho ok\n# <<EOF\ncat @@\nEOF",
+]
+CASI_G6_COMMENTI_ONESTI = [
+    "ls # vedi @F@", "ls # vedi @F@\n# e anche <<EOF", "true # cat @F@",
+    "# cat @F@\nls", "git status # @F@", "echo ok # <<EOF\nls",
+    "cat <<EOF\n# non e' un commento, e' testo\nEOF", "cat > f <<'EOF'\n# x <<EOF\nEOF",
+]
+
+
+def _prove_commenti_6(prova, a: Ambiente):
+    """Sesto giro, punto 3: un commento con `<<` non nasconde il resto (i commenti
+    si tolgono prima di cercare gli heredoc), e un percorso dentro un commento non e'
+    un percorso."""
+    a.togli_config()
+    pulita = _alfa_pulita(a)
+    nota = str(a.comune / "nota.txt")
+    segreto = str(a.alfa1 / "segreto.txt")
+    for c in CASI_G6_COMMENTI:
+        cmd = c.replace("@@", segreto)
+        r = a.chiama(a.pl("Bash", {"command": cmd}, sid=S_COMUNE, aperta_in=a.progetto))
+        prova(f"commenti6: predefinito, `{cmd[:50].splitlines()[0]}...`: negato (il resto non e' "
+              "nascosto)", r.negato, repr(r))
+        cmd = c.replace("@@", nota)
+        r = a.chiama(a.pl("Bash", {"command": cmd}, sid=S_ALFA_LIBERA, aperta_in=pulita))
+        prova(f"commenti6: alfa, `{cmd[:50].splitlines()[0]}...`: negato", r.negato, repr(r))
+    for c in CASI_G6_COMMENTI_ONESTI:
+        cmd = c.replace("@F@", nota)
+        r = a.chiama(a.pl("Bash", {"command": cmd}, sid=S_ALFA_LIBERA, aperta_in=pulita))
+        prova(f"commenti6: alfa, `{cmd[:50].splitlines()[0]}...`: ammesso (un commento non e' "
+              "codice)", r.ammesso, repr(r))
+    # il commento non si scambia per un `#` dentro una parola o dentro virgolette
+    for cmd in (f"cat {segreto}#x", f"echo '# <<EOF'\ncat {segreto}", f"echo \"a # b\"; cat {segreto}",
+                f"echo a\\ #b; cat {segreto}"):
+        r = a.chiama(a.pl("Bash", {"command": cmd}, sid=S_COMUNE, aperta_in=a.progetto))
+        prova(f"commenti6: predefinito, `{cmd[:50].splitlines()[0]}...`: negato (`#` che non "
+              "e' un commento)", r.negato, repr(r))
+    a.togli_config()
+
+
+def _prove_prefissi_6(prova, a: Ambiente):
+    """Sesto giro, punto 4: i prefissi di comando si svolgono (`timeout 5`, `nice -n 5`,
+    `sudo -u X`, `caffeinate`, `stdbuf -o0`, `arch -arm64`, `time`, `command`,
+    `builtin`, `exec`, `nohup`, `env` con opzioni e `VAR=`, `xargs -I {}`): il comando
+    vero e' quello dopo."""
+    a.togli_config()
+    pulita = _alfa_pulita(a)
+    dati_cfg = str(a.dati / "config.json")
+    segreto = str(a.alfa1 / "segreto.txt")
+    prefissi = [
+        "timeout 5 {}", "gtimeout 5 {}", "timeout -s KILL 5 {}", "timeout --signal=KILL 5s {}",
+        "nice -n 5 {}", "nice -5 {}", "nice {}", "ionice -c 3 {}", "ionice -c 2 -n 5 {}",
+        "sudo -u root {}", "sudo -E {}", "sudo -n -u root -H {}", "sudo -- {}", "doas -u root {}",
+        "caffeinate {}", "caffeinate -i {}", "caffeinate -t 60 {}", "stdbuf -o0 {}",
+        "stdbuf -o 0 -e L {}", "arch -arm64 {}", "arch -x86_64 {}", "time {}", "time -p {}",
+        "command {}", "builtin {}", "exec {}", "nohup {}", "env {}", "env -i {}",
+        "env -i A=1 {}", "env -u X A=b {}", "env A=1 B=2 {}", "/usr/bin/env A=1 {}",
+        "setsid {}", "flock /tmp/l {}", "nohup nice -n 5 timeout 5 {}",
+        "sudo -E timeout 5 nice -n 1 {}", "A=1 {}", "A=1 nice -n 5 {}",
+    ]
+    for p in prefissi:
+        for chi, kw, bersaglio in (("predefinito", dict(sid=S_COMUNE, aperta_in=a.progetto),
+                                    f"rm {dati_cfg}"),
+                                   ("alfa", dict(sid=S_ALFA_LIBERA, aperta_in=pulita),
+                                    f"rm {dati_cfg}")):
+            cmd = p.format(bersaglio)
+            r = a.chiama(a.pl("Bash", {"command": cmd}, **kw))
+            prova(f"pref6: {chi}, `{cmd[:60].replace(str(a.radice), '<R>')}`: negato (il file "
+                  "del guardiano)", r.negato, repr(r))
+    for cmd in (f"timeout 5 sh -c 'rm {dati_cfg}'", f"nice -n 5 sh -c \"echo x > {dati_cfg}\"",
+                f"trap 'rm {dati_cfg}' EXIT", f"timeout 5 sed -i '' s/a/b/ {dati_cfg}",
+                f"sudo -u root truncate -s0 {dati_cfg}", f"nice -n 5 tee {dati_cfg} < /dev/null",
+                f"echo 'rm {dati_cfg}' > s.sh; nice -n 5 bash s.sh",
+                f"echo 'plancia config guardiano spento' > s.sh; caffeinate -i sh s.sh",
+                f"timeout 5 plancia config guardiano spento", f"nice -n 1 plancia config guardiano spento",
+                f"sudo -u root python3 -m plancia.cli config guardiano spento",
+                f"echo {dati_cfg} | xargs -I {{}} rm {{}}", f"echo {dati_cfg} | xargs -n 1 rm",
+                f"echo {dati_cfg} | timeout 5 xargs rm"):
+        for chi, kw in (("predefinito", dict(sid=S_COMUNE, aperta_in=a.progetto)),
+                        ("alfa", dict(sid=S_ALFA_LIBERA, aperta_in=pulita))):
+            r = a.chiama(a.pl("Bash", {"command": cmd}, **kw))
+            prova(f"pref6: {chi}, `{cmd[:60].replace(str(a.radice), '<R>')}`: negato", r.negato,
+                  repr(r))
+    r = a.chiama(a.pl("Bash", {"command": f"echo 'cat {segreto}' > s.sh; timeout 5 sh s.sh"},
+                      sid=S_COMUNE, aperta_in=a.progetto))
+    prova("pref6: predefinito, uno script scritto e lanciato con `timeout 5 sh s.sh`: negato",
+          r.negato, repr(r))
+    for p in ("timeout 10 {}", "nice -n 5 {}", "sudo -u root {}", "caffeinate -i {}",
+              "env -i A=1 {}", "xargs -I {{}} {}", "time -p {}"):
+        cmd = p.format(f"cat {segreto}")
+        r = a.chiama(a.pl("Bash", {"command": cmd}, sid=S_COMUNE, aperta_in=a.progetto))
+        prova(f"pref6: predefinito, `{cmd[:60].replace(str(a.radice), '<R>')}`: la lettura di un "
+              "file di alfa resta negata", r.negato, repr(r))
+    for cmd in ("timeout 5 ls", "nice -n 5 make", "sudo -u x ls .", "env -i FOO=1 ls",
+                "time -p ls", "caffeinate -i ls", "stdbuf -o0 cat f", "arch -arm64 ls",
+                "nohup ls", "timeout 5 grep -rn x src", "nice -n 19 python3 -c 'print(1)'",
+                "xargs -I {} echo {} < list.txt", f"timeout 5 cat {pulita}/f", "ionice -c 3 ls src",
+                f"echo x > {dati_cfg}.non-e-vero".replace(str(a.dati), str(pulita))):
+        r = a.chiama(a.pl("Bash", {"command": cmd}, sid=S_ALFA_LIBERA, aperta_in=pulita))
+        prova(f"pref6: alfa, `{cmd[:60]}`: ammesso (un prefisso non nega niente)", r.ammesso,
+              repr(r))
+    a.togli_config()
+
+
+def _prove_sed_awk_6(prova, a: Ambiente):
+    """Sesto giro, punto 5: sed e awk che scrivono (`w`, `W`, `s///w`, `print > "f"`,
+    `printf >> "f"`), leggono (`r`, `R`, `getline < "f"`) o lanciano (`e`, `system()`,
+    `print | "cmd"`, `"cmd" | getline`) sono scritture, letture, esecuzioni dei file e
+    dei comandi indicati."""
+    a.togli_config()
+    pulita = _alfa_pulita(a)
+    D = str(a.dati / "config.json")
+    nota = str(a.comune / "nota.txt")
+    segreto = str(a.alfa1 / "segreto.txt")
+    scrivono = [
+        "sed -n 'w @@' f", "sed 's/a/b/w @@' f", "sed -n 'W @@' f", "sed -e 'w @@' f",
+        "sed -n '1w @@' f", "sed -n '/x/w @@' f", "sed -n '$!w @@' f", "sed -n 'p;w @@' f",
+        "sed --expression='w @@' f", "sed -n -e p -e 'w @@' f", "gsed -n 'w @@' f",
+        "sed -n \"s/a/b/gw @@\" f", "sed '1{p;w @@\n}' f",
+        "awk 'BEGIN{print \"{}\" > \"@@\"}'", "awk '{print > \"@@\"}' f",
+        "awk '{printf \"x\" >> \"@@\"}' f", "awk 'BEGIN{printf(\"{}\") > \"@@\"}'",
+        "awk 'BEGIN{system(\"rm @@\")}'", "awk 'BEGIN{printf \"{}\" | \"tee @@\"}'",
+        "awk 'BEGIN{\"rm @@\" | getline}'", "sed 'e rm @@' f", "sed -n '1e rm @@' f",
+        "awk -v x=@@ 'BEGIN{print \"x\" > x}'", "awk -v x=@@ '{print >> x}' f",
+        "gawk '{print > \"@@\"}' f", "awk 'BEGIN{system(\"echo x > @@\")}'",
+    ]
+    for c in scrivono:
+        cmd = c.replace("@@", D)
+        for chi, kw in (("predefinito", dict(sid=S_COMUNE, aperta_in=a.progetto)),
+                        ("alfa", dict(sid=S_ALFA_LIBERA, aperta_in=pulita))):
+            r = a.chiama(a.pl("Bash", {"command": cmd}, **kw))
+            prova(f"sedawk6: {chi}, `{cmd[:58].splitlines()[0].replace(str(a.radice), '<R>')}`: "
+                  "negato (scrive il file del guardiano)", r.negato, repr(r))
+    leggono = [
+        "sed 'r @@' f", "sed -n 'R @@' f", "sed 'e cat @@' f", "sed -n '/x/r @@' f",
+        "awk 'BEGIN{while((getline l < \"@@\")>0) print l}'",
+        "awk -v x=@@ 'BEGIN{while((getline l<x)>0)print l}'",
+        "awk 'BEGIN{\"cat @@\" | getline l; print l}'", "awk 'BEGIN{system(\"cat @@\")}'",
+        "awk 'BEGIN{print | \"cat @@\"}'",
+    ]
+    for c in leggono:
+        cmd = c.replace("@@", segreto)
+        r = a.chiama(a.pl("Bash", {"command": cmd}, sid=S_COMUNE, aperta_in=a.progetto))
+        prova(f"sedawk6: predefinito, `{cmd[:58].replace(str(a.radice), '<R>')}`: negato (legge "
+              "un file di alfa)", r.negato, repr(r))
+        cmd = c.replace("@@", nota)
+        r = a.chiama(a.pl("Bash", {"command": cmd}, sid=S_ALFA_LIBERA, aperta_in=pulita))
+        prova(f"sedawk6: alfa, `{cmd[:58].replace(str(a.radice), '<R>')}`: negato (legge un file "
+              "di fuori)", r.negato, repr(r))
+    onesti = [
+        "sed 's/a/b/' f", "sed -n '/x/p' f", "sed 's/w/x/g' f", "sed 's/a/w b/' f",
+        "sed -n '2{p;q}' f", "sed 'y/abc/xyz/' f", "sed '1!G;h;$!d' f", "sed -n 'p;p' f",
+        "sed -i '' 's/a/b/' f", "sed 's/[wr]/x/' f", "sed '/^$/d' f", "sed -E 's/(a|b)+/x/' f",
+        "sed 'a\\\ntesto con w e r' f", "sed 's/a/b/;s/c/d/' f", "sed -n '/start/,/end/p' f",
+        "awk '$1 > 5' f", "awk '{print $1 > \"/dev/stderr\"}' f", "awk '{print > \"out.txt\"}' f",
+        "sed -n 'w out.txt' f", "awk 'BEGIN{system(\"ls\")}'", "awk '{print}' f",
+        "awk '$1 > \"m\"' f", "awk 'BEGIN{print \"a\" | \"sort\"}'", "awk -v n=3 '$1 > n' f",
+        "awk '{print > \"src/out.txt\"}' f", "sed -n 'w src/o.txt' f", "awk '{print > \"/dev/null\"}' f",
+        "awk 'BEGIN{\"date\" | getline d; print d}'", "awk 'BEGIN{while((getline l < \"list.txt\")>0) n++}'",
+        "sed 'r list.txt' f",
+    ]
+    for c in onesti:
+        r = a.chiama(a.pl("Bash", {"command": c}, sid=S_ALFA_LIBERA, aperta_in=pulita))
+        prova(f"sedawk6: alfa, `{c[:58].splitlines()[0]}`: ammesso", r.ammesso, repr(r))
+    # in una cartella condivisa
+    cod = a.radice / "codice-condiviso-6"
+    cod.mkdir(exist_ok=True)
+    X = str(cod)
+    a.togli_config()
+    pulita = _alfa_pulita(a)
+    cfg = _testo(a.dati / "config.json")
+    a.scrivi_config(dict(json.loads(cfg), condivise=[X]))
+    for c in ("sed -n 'w @@/f' f", "awk '{print > \"@@/f\"}' f", "sed 's/a/b/w @@/f' f",
+              "awk 'BEGIN{system(\"touch @@/f\")}'", "sed 'e touch @@/f' f"):
+        cmd = c.replace("@@", X)
+        r = a.chiama(a.pl("Bash", {"command": cmd}, sid=S_ALFA_LIBERA, aperta_in=pulita))
+        prova(f"sedawk6: alfa, condivisa, `{cmd[:58].replace(str(a.radice), '<R>')}`: negato "
+              "(la cartella condivisa non si scrive)", r.negato and "condivisa" in r.motivo, repr(r))
+    for c in ("sed 'r @@/f' f", "awk 'BEGIN{while((getline l < \"@@/f\")>0) print l}'"):
+        cmd = c.replace("@@", X)
+        r = a.chiama(a.pl("Bash", {"command": cmd}, sid=S_ALFA_LIBERA, aperta_in=pulita))
+        prova(f"sedawk6: alfa, condivisa, `{cmd[:58].replace(str(a.radice), '<R>')}`: ammesso "
+              "(lettura)", r.ammesso, repr(r))
+    a.togli_config()
+
+
+def _prove_condivise_6(prova, a: Ambiente):
+    """Sesto giro, punto 2: condivise sicure. Una voce che e' la home, un antenato della
+    cartella dei dati, di `<claude>/projects` o di `<claude>` (o sta dentro projects) e'
+    ignorata con una nota (`plancia config condivise` la rifiuta); la ricerca che parte
+    da una condivisa non entra mai nei dati ne' in projects; le scritture via git
+    (`commit`, `add`, `fetch`, `branch`, `tag`, `config`, `gc`, `clone` dentro...), via
+    `-t DIR`, `--target-directory`, `-o`, `--output` e un collegamento simbolico creato nello
+    stesso comando sono scritture."""
+    cod = a.radice / "codice-condiviso-6b"
+    (cod / "sub").mkdir(parents=True, exist_ok=True)
+    (cod / "README").write_text("x\n", "utf-8")
+    (a.claude / "skills").mkdir(parents=True, exist_ok=True)
+    (a.claude / "skills" / "s.md").write_text("una skill\n", "utf-8")
+    X = str(cod)
+    nota = str(a.comune / "nota.txt")
+    a.togli_config()
+    pulita = _alfa_pulita(a)
+    base = json.loads(_testo(a.dati / "config.json"))
+
+    def alfa(cmd, tool="Bash", ti=None):
+        return a.chiama(a.pl(tool, ti or {"command": cmd}, sid=S_ALFA_LIBERA, aperta_in=pulita))
+
+    def con(*voci):
+        a.togli_config()
+        try:
+            (a.dati / "guardiano.condivise-nota").unlink()
+        except OSError:
+            pass
+        a.scrivi_config(dict(base, condivise=list(voci)))
+
+    # le voci che contengono i dati, projects o <claude>
+    voci = {
+        "la home": str(a.home), "la cartella di configurazione di Claude": str(a.claude),
+        "<claude>/projects": str(a.claude / "projects"),
+        "un antenato dei dati (e di tutto)": str(a.radice),
+        "dentro projects": str(a.claude / "projects" / "x"),
+        "la cartella dei dati": str(a.dati), "dentro i dati": str(a.dati / "sotto"),
+    }
+    for chi, voce in voci.items():
+        con(voce, X)
+        r = alfa(f"cat {nota}")
+        righe = [x for x in a.registro() if x.get("esito") == "nota"]
+        prova(f"cond6: la voce `{chi}` e' ignorata: il comune resta fuori dai permessi (negato)",
+              r.negato, repr(r))
+        prova(f"cond6: ...con una nota nel registro, e l'altra voce vale ({chi})",
+              len(righe) == 1 and "condivise" in righe[0].get("motivo", "")
+              and alfa(f"cat {X}/README").ammesso, str(righe))
+    con(str(a.claude / "skills"))
+    r = alfa(f"cat {a.claude}/skills/s.md")
+    prova("cond6: una voce DENTRO <claude> ma non projects (le skill) e' accettata: si legge",
+          r.ammesso and not [x for x in a.registro() if x.get("esito") == "nota"], repr(r))
+    for cmd in (f"grep -rn x {a.radice}", f"rg x {a.home}", f"find {a.claude} -name x",
+                f"ls -R {a.claude}/projects", f"grep -r x {a.dati}", f"tree {a.radice}"):
+        con(str(a.radice), str(a.home), str(a.claude), X)
+        r = alfa(cmd)
+        prova(f"cond6: con voci antenate, `{cmd[:50].replace(str(a.radice), '<R>')}`: la ricerca "
+              "non entra nei dati ne' in projects (negata)", r.negato, repr(r))
+    for tool, ti in (("Grep", {"pattern": "x", "path": str(a.radice)}),
+                     ("Glob", {"pattern": "**/*.json", "path": str(a.radice)}),
+                     ("Grep", {"pattern": "x", "path": str(a.home)}),
+                     ("Grep", {"pattern": "x", "path": str(a.dati)})):
+        r = alfa("", tool, ti)
+        prova(f"cond6: con voci antenate, {tool} da {ti['path'][-14:]}: negato", r.negato, repr(r))
+    # il controllo non e' solo in caricamento: una condivisa che contenesse i dati (a mano,
+    # fuori dal caricamento) non fa entrare una ricerca
+    C = _importa_compartimenti()
+    if C is not None:
+        try:
+            con(X)
+            cfg = C.leggi_config(str(a.dati))
+            finti = a.comune / "dati-finti"
+            finti.mkdir(exist_ok=True)
+            payload = a.pl("Bash", {"command": "ls"}, sid=S_ALFA_LIBERA, aperta_in=pulita)
+            casi = []
+            for nome, dati_dir, voce, cerca in (
+                    ("una voce che contiene projects", str(a.dati), str(a.claude), str(a.claude)),
+                    ("una voce che contiene i dati", str(finti), str(a.comune), str(a.comune))):
+                amb = C.Ambito(cfg["compartimenti"], [], home=str(a.home), data_dir=dati_dir,
+                               claude_dir=str(a.claude), condivise=[X])
+                amb.condivise.append(voce)        # a mano, fuori dal controllo del caricamento
+                chi = C.chiamante(payload, amb)
+                v = C._percorso_nominato(cerca, chi, amb, "alfa", True, False)
+                casi.append(bool(v))
+                v2 = C._percorso_nominato(cerca, chi, amb, "alfa", None, False)
+                casi.append(not v2)           # senza ricerca (non ricorsivo) una lettura si puo'
+            prova("cond6: in-process, una condivisa (aggiunta a mano) che contiene projects o i "
+                  "dati: la ricerca ricorsiva che parte da li' e' negata, un accesso semplice no",
+                  all(casi), str(casi))
+        except Exception as e:  # noqa: BLE001
+            prova("cond6: in-process, una condivisa che contiene i dati: la ricerca e' negata",
+                  False, repr(e))
+    else:
+        prova("cond6: in-process, una condivisa che contiene i dati: la ricerca e' negata",
+              False, "compartimenti non si importa")
+    # la CLI rifiuta le stesse voci
+    env = dict(a.env())
+    env["PYTHONPATH"] = str(RADICE)
+
+    def plancia(*args):
+        p = subprocess.run([sys.executable, str(RADICE / "bin" / "plancia"), *args], env=env,
+                           cwd=str(RADICE), capture_output=True, timeout=120)
+        return p.returncode, p.stdout.decode("utf-8", "replace") + p.stderr.decode("utf-8", "replace")
+
+    a.togli_config()
+    rc, out = plancia("config", "condivise", json.dumps([X]))
+    prova("cond6: `plancia config condivise` accetta una cartella di codice", rc == 0 and X in out, out)
+    for chi, voce in (("la home", str(a.home)), ("~", "~"), ("<claude>", str(a.claude)),
+                      ("<claude>/projects", str(a.claude / "projects")),
+                      ("un antenato dei dati", str(a.radice)), ("la radice /", "/"),
+                      ("dentro projects", str(a.claude / "projects" / "x"))):
+        rc, out = plancia("config", "condivise", json.dumps([voce]))
+        prova(f"cond6: `plancia config condivise` rifiuta {chi} (uscita 2, config invariata)",
+              rc == 2 and X in _testo(a.dati / "config.json")
+              and voce not in json.loads(_testo(a.dati / "config.json")).get("condivise", []),
+              out)
+    rc, out = plancia("config", "condivise", json.dumps([str(a.claude / "skills")]))
+    prova("cond6: ...e accetta una cartella dentro <claude> che non e' projects", rc == 0, out)
+    # git, -t, -o, symlink
+    a.togli_config()
+    a.scrivi_config(dict(base, condivise=[X]))
+    scrivono = [
+        f"git -C {X} commit -m x", f"git -C {X} add .", f"git -C {X} fetch", f"git -C {X} branch newb",
+        f"git -C {X} tag v1", f"git -C {X} config a b", f"git -C {X} gc", f"git -C {X} update-ref refs/x HEAD",
+        f"git -C {X} remote add o u", f"git -C {X} init", f"git -C {X} notes add -m x",
+        f"cd {X} && git add .", f"cd {X} && git commit -m x", f"cd {X} && git fetch",
+        f"cd {X} && git tag v1", f"cd {X} && git config a b", f"cd {X} && git gc",
+        f"git clone . {X}/new", f"git clone http://localhost/r.git {X}/r", f"git -C {X} push",
+        f"git -C {X} stash", f"git -C {X} reset --hard", f"git -C {X} checkout -b nuovo",
+        f"git -C {X} pull", f"git -C {X} branch -D x", f"git -C {X} tag -d v1",
+        f"git -C {X} config --unset a", f"git -C {X} remote remove o", f"git -C {X} commit --amend",
+        f"cp -t {X} f", f"cp -t {X} {pulita}/f", f"install -t {X} f", f"ln -t {X} f",
+        f"cp --target-directory={X} f", f"mv -t {X} f", f"cp -rt {X} f", f"cp -t{X} f",
+        f"cp -a -t {X} src", f"ln -s -t {X} f", f"mv --target-directory {X} f",
+        f"gcc -o {X}/a.out x.c", f"pandoc -o {X}/o.pdf i.md", f"mytool --output {X}/o",
+        f"mytool --output={X}/o", f"zip {X}/o.zip f", f"split f {X}/p", f"mktemp -p {X}",
+        f"mkfifo {X}/p", f"xattr -w a b {X}/README", f"find . -fprint {X}/f",
+        f"ffmpeg -i in.mp4 {X}/o.mp4", f"rsync --remove-source-files {X}/README dest/",
+        f"sort -o {X}/f g", f"curl -o {X}/f http://localhost/x",
+        f"ln -s {X} l && touch l/f", f"ln -s {X} {pulita}/l && touch {pulita}/l/f",
+        f"ln -s {X} {pulita}/l && echo x > {pulita}/l/f", f"ln -s {X} l; cp f l/g",
+        f"ln -sf {X} {pulita}/l && rm {pulita}/l/README", f"ln -s {X}/sub {pulita}/l && mkdir {pulita}/l/n",
+        f"cd {pulita} && ln -s {X} l && touch l/f", f"ln -s ../codice-condiviso-6b {pulita}/l2 && touch {pulita}/l2/f",
+    ]
+    for c in scrivono:
+        r = alfa(c)
+        prova(f"cond6: alfa, `{c[:60].replace(str(a.radice), '<R>')}`: negato (scrive nella "
+              "cartella condivisa)", r.negato and "condivisa" in r.motivo, repr(r))
+    leggono = [
+        f"git -C {X} log", f"git -C {X} status", f"git -C {X} branch", f"git -C {X} tag",
+        f"git -C {X} config --get user.name", f"git -C {X} config user.name", f"git -C {X} remote -v",
+        f"git -C {X} diff", f"git -C {X} show HEAD", f"git -C {X} rev-parse HEAD",
+        f"git -C {X} config --list", f"git -C {X} branch -a", f"git -C {X} tag -l",
+        f"git clone {X} {pulita}/copia", f"cd {X} && git log", f"cd {X} && git status",
+        f"git -C {pulita} commit -m x", f"cd {pulita} && git add .", f"cd {pulita} && git fetch",
+        f"git -C {pulita} branch nuovo", f"git -C {pulita} tag v1",
+        f"cp {X}/README {pulita}/copia", f"cp -t {pulita}/src f", f"install -t {pulita} f",
+        f"gcc -o {pulita}/a.out x.c", f"pandoc -o out.pdf in.md", f"mytool --output out.txt",
+        f"zip out.zip f", f"split f p", f"grep -o foo f", "ssh -o StrictHostKeyChecking=no h true",
+        "unzip -o a.zip", "tar -o -xf a.tar", "ls -o", f"ln -s {X} {pulita}/l && cat {pulita}/l/README",
+        f"ln -s {X} {pulita}/l && ls {pulita}/l", f"ln -s {X}/README {pulita}/l3",
+        f"ln -s {pulita}/src {pulita}/l5 && touch {pulita}/l5/n", f"ffmpeg -i {X}/a.mp4",
+        f"rsync -a {X}/ {pulita}/copia2/", f"xattr -l {X}/README",
+    ]
+    for c in leggono:
+        r = alfa(c)
+        prova(f"cond6: alfa, `{c[:60].replace(str(a.radice), '<R>')}`: ammesso (lettura, o "
+              "scrittura nei propri permessi)", r.ammesso, repr(r))
+    # un collegamento a un file protetto, creato e scritto nello stesso comando
+    D = str(a.dati)
+    for chi, kw in (("predefinito", dict(sid=S_COMUNE, aperta_in=a.progetto)),
+                    ("alfa", dict(sid=S_ALFA_LIBERA, aperta_in=pulita))):
+        for c in (f"ln -s {D} {pulita}/ld && rm {pulita}/ld/config.json",
+                  f"ln -s {D} {pulita}/ld && echo x > {pulita}/ld/config.json",
+                  f"ln -s {D} {pulita}/ld && truncate -s0 {pulita}/ld/config.json"):
+            r = a.chiama(a.pl("Bash", {"command": c}, **kw))
+            prova(f"cond6: {chi}, `{c[:56].replace(str(a.radice), '<R>')}`: negato (il collegamento "
+                  "porta ai dati)", r.negato, repr(r))
+    a.togli_config()
+
+
+def _prove_allarme_6(prova, a: Ambiente):
+    """Sesto giro, punto 6: l'allarme dei due secondi. Per un nominato (o una sessione
+    incerta) in `bloccante` l'hook NEGA con un motivo chiaro; per il predefinito ammette
+    ma con il `systemMessage` OGNI volta; in `solo-registro` non nega. Anche il ramo
+    dell'eccezione ordinaria avvisa per il predefinito."""
+    a.togli_config()
+    pulita = _alfa_pulita(a)
+    seg_alfa = a.pl("Bash", {"command": f"cat {a.comune}/nota.txt"}, sid=S_ALFA_LIBERA, aperta_in=pulita)
+    seg_pred = a.pl("Bash", {"command": f"cat {a.alfa1}/segreto.txt"}, sid=S_COMUNE, aperta_in=a.progetto)
+    base = a.radice / "copia-hook-6"
+    hook = _copia_checkout(a, base)
+    wrapper = base / "bin" / "plancia-guardiano"
+    testo = wrapper.read_text("utf-8")
+    prova("allarme6: il wrapper ha `_TEMPO_MAX = 2.0` (la prova lo accorcia solo nella copia)",
+          "_TEMPO_MAX = 2.0" in testo)
+    wrapper.write_text(testo.replace("_TEMPO_MAX = 2.0", "_TEMPO_MAX = 1.0"), "utf-8")
+    comp = base / "plancia" / "compartimenti.py"
+    originale = comp.read_text("utf-8")
+    comp.write_text(originale + "\n\ndef valuta(*args, **kw):\n    import time as _t\n"
+                    "    _t.sleep(30)\n", "utf-8")
+    cfg = _testo(a.dati / "config.json")
+
+    def corri(payload):
+        return _corri_copia(a, hook, payload, timeout=30)
+
+    def messaggio(r):
+        try:
+            return json.loads(r.out).get("systemMessage", "")
+        except (ValueError, AttributeError):
+            return ""
+
+    for modo in ("bloccante", "solo-registro"):
+        a.scrivi_config(dict(json.loads(cfg), guardiano=modo))
+        n0 = len(a.registro())
+        r = corri(seg_alfa)
+        nuove = a.registro()[n0:]
+        if modo == "bloccante":
+            prova("allarme6: bloccante, un NOMINATO al tempo scaduto: negato, con un motivo chiaro",
+                  r is not None and r.negato and "troppo complesso" in r.motivo
+                  and "spezzalo" in r.motivo, repr(r))
+            prova("allarme6: ...e una riga `negato` nel registro",
+                  len(nuove) == 1 and nuove[0]["esito"] == "negato"
+                  and nuove[0]["compartimento"] == "alfa", str(nuove))
+        else:
+            prova("allarme6: solo-registro, un nominato al tempo scaduto: ammesso, con il "
+                  "`systemMessage`, e una riga `avrebbe-negato`",
+                  r is not None and r.rc == 0 and not r.negato and "troppo complesso" in messaggio(r)
+                  and len(nuove) == 1 and nuove[0]["esito"] == "avrebbe-negato", f"{r!r} {nuove}")
+        for volta in (1, 2, 3):
+            n0 = len(a.registro())
+            r = corri(seg_pred)
+            nuove = a.registro()[n0:]
+            prova(f"allarme6: {modo}, il PREDEFINITO al tempo scaduto (chiamata {volta}): ammesso "
+                  "ma con il `systemMessage` ogni volta, e una riga nel registro",
+                  r is not None and r.rc == 0 and not r.negato
+                  and "troppo complesso" in messaggio(r) and len(nuove) == 1
+                  and nuove[0]["esito"] == "tempo-scaduto", f"{r!r} {nuove}")
+    # spento: niente
+    a.scrivi_config(dict(json.loads(cfg), guardiano="spento"))
+    n0 = len(a.registro())
+    r = corri(seg_alfa)
+    prova("allarme6: spento, al tempo scaduto: niente uscita, niente riga",
+          r is not None and r.ammesso and len(a.registro()) == n0, repr(r))
+    # settimo giro: l'allarme che scatta mentre il chiamante e' ANCORA DA STABILIRE (non si sa
+    # a che compartimento appartiene la sessione) non e' "incerto": non nega nessuno, ammette
+    # con il `systemMessage` e la riga `tempo-scaduto`, come per il predefinito. Il diniego
+    # "spezzalo" resta per chi e' GIA' stabilito come nominato o incerto (segnali discordanti).
+    comp.write_text(originale + "\n\ndef chiamante(*args, **kw):\n    import time as _t\n"
+                    "    _t.sleep(30)\n", "utf-8")
+    for modo in ("bloccante", "solo-registro"):
+        a.scrivi_config(dict(json.loads(cfg), guardiano=modo))
+        for chi_, seg_ in (("nominato", seg_alfa), ("predefinito", seg_pred)):
+            for volta in (1, 2):
+                n0 = len(a.registro())
+                r = corri(seg_)
+                nuove = a.registro()[n0:]
+                prova(f"allarme7: {modo}, allarme con il chiamante ancora da stabilire, sessione "
+                      f"{chi_} (chiamata {volta}): ammesso, con il `systemMessage`, senza nessun "
+                      "diniego",
+                      r is not None and r.rc == 0 and not r.negato and "deny" not in r.out
+                      and "spezzalo" in messaggio(r), repr(r))
+                prova(f"allarme7: ...e una riga `tempo-scaduto` senza compartimento nel registro "
+                      f"({modo}, {chi_}, chiamata {volta})",
+                      len(nuove) == 1 and nuove[0]["esito"] == "tempo-scaduto"
+                      and nuove[0]["compartimento"] == "" and nuove[0]["modalita"] == modo,
+                      str(nuove))
+    a.scrivi_config(dict(json.loads(cfg), guardiano="spento"))
+    n0 = len(a.registro())
+    r = corri(seg_alfa)
+    prova("allarme7: spento, allarme con il chiamante da stabilire: niente uscita, niente riga",
+          r is not None and r.ammesso and len(a.registro()) == n0, repr(r))
+    # ...mentre un chiamante GIA' stabilito come incerto (la stessa cartella data a due
+    # nominati) al tempo scaduto in `bloccante` e' ancora negato con "spezzalo"
+    comp.write_text(originale + "\n\ndef valuta(*args, **kw):\n    import time as _t\n"
+                    "    _t.sleep(30)\n", "utf-8")
+    cfg2 = json.loads(cfg)
+    cfg2["compartimenti"]["beta"]["cartelle"].append(str(pulita))
+    for modo in ("bloccante", "solo-registro"):
+        a.scrivi_config(dict(cfg2, guardiano=modo))
+        n0 = len(a.registro())
+        r = corri(seg_alfa)
+        nuove = a.registro()[n0:]
+        if modo == "bloccante":
+            prova("allarme7: bloccante, un chiamante gia' stabilito come INCERTO (due nominati "
+                  "sulla stessa cartella) al tempo scaduto: negato con `spezzalo`",
+                  r is not None and r.negato and "spezzalo" in r.motivo
+                  and "alfa,beta" in r.motivo, repr(r))
+            prova("allarme7: ...e una riga `negato` nel registro",
+                  len(nuove) == 1 and nuove[0]["esito"] == "negato", str(nuove))
+        else:
+            prova("allarme7: solo-registro, l'INCERTO al tempo scaduto: ammesso, con la riga "
+                  "`avrebbe-negato`",
+                  r is not None and r.rc == 0 and not r.negato and "spezzalo" in messaggio(r)
+                  and len(nuove) == 1 and nuove[0]["esito"] == "avrebbe-negato", f"{r!r} {nuove}")
+    a.scrivi_config(dict(json.loads(cfg), guardiano="bloccante"))
+    comp.write_text(originale + "\n\nimport time as _t2\n_t2.sleep(30)\n", "utf-8")
+    # un allarme che scatta mentre il modulo si carica resta il guasto di prima (fail-open)
+    a.scrivi_config(dict(json.loads(cfg), guardiano="bloccante"))
+    marca = a.dati / "guardiano.non-parte"
+    if marca.exists():
+        marca.unlink()
+    n0 = len(a.registro())
+    r = corri(seg_alfa)
+    nuove = [x for x in a.registro()[n0:] if x.get("esito") == "guardiano-non-parte"]
+    prova("allarme6: un modulo che non si carica in tempo: `guardiano-non-parte`, ammesso, "
+          "per tutti (il guasto e' un altro)",
+          r is not None and r.rc == 0 and not r.negato and len(nuove) == 1, f"{r!r} {nuove}")
+    comp.write_text(originale, "utf-8")
+    if marca.exists():
+        marca.unlink()
+    # il caso vero: 32 `$(` annidati, circa 300 caratteri, fanno superare i due secondi
+    a.scrivi_config(dict(json.loads(cfg), guardiano="bloccante"))
+    pad = "echo " + "$(echo " * 34 + "x" + ")" * 34
+    for chi, kw, ber in (("alfa", dict(sid=S_ALFA_LIBERA, aperta_in=pulita), f"{a.comune}/nota.txt"),
+                         ("predefinito", dict(sid=S_COMUNE, aperta_in=a.progetto),
+                          f"{a.alfa1}/segreto.txt")):
+        pl = a.pl("Bash", {"command": f"cat {ber} ; {pad}"}, **kw)
+        r1 = a.chiama(pl)
+        r2 = a.chiama(pl)
+        if chi == "alfa":
+            prova("allarme6: il padding di 34 `$(` da un nominato: negato (prima passava)",
+                  r1.negato and r2.negato, f"{r1!r} {r2!r}")
+        else:
+            prova("allarme6: il padding di 34 `$(` dal predefinito: ammesso con il `systemMessage` "
+                  "la prima volta E la seconda",
+                  all(x.rc == 0 and not x.negato and "troppo complesso" in messaggio(x)
+                      for x in (r1, r2)), f"{r1!r} {r2!r}")
+    # il ramo dell'eccezione ordinaria, in-process
+    try:
+        cm = importlib.import_module("plancia.compartimenti")
+    except ImportError as e:
+        prova("allarme6: plancia.compartimenti si importa", False, str(e))
+        a.togli_config()
+        return
+    dati = Path(tempfile.mkdtemp(prefix="plancia-prova-guardiano-int6-"))
+    orig = cm.valuta
+    try:
+        def guasta(*args, **kw):
+            raise RuntimeError("guasto simulato")
+        cm.valuta = guasta
+        payload = {"session_id": "s9", "cwd": "/", "hook_event_name": "PreToolUse",
+                   "transcript_path": str(dati / "p" / "-altra" / "s9.jsonl"),
+                   "tool_name": "Read", "tool_input": {"file_path": "/etc/hosts"}}
+        for modo in ("bloccante", "solo-registro"):
+            (dati / "config.json").write_text(json.dumps({
+                "guardiano": modo, "compartimenti": {"alfa": {"cartelle": [str(pulita)]}}}), "utf-8")
+            out = cm.hook(json.dumps(payload), str(dati))
+            prova(f"allarme6: errore interno, {modo}, predefinito: ammesso ma con il "
+                  "`systemMessage` (non piu' in silenzio)",
+                  "systemMessage" in out and "errore interno" in out and "deny" not in out, out[:200])
+            righe = [json.loads(x) for x in (dati / "guardiano.log").read_text("utf-8").splitlines()
+                     if x.strip()]
+            prova(f"allarme6: ...e una riga `errore-interno` nel registro ({modo})",
+                  righe and righe[-1].get("esito") == "errore-interno", str(righe[-1:]))
+        (dati / "config.json").write_text(json.dumps({"guardiano": "spento"}), "utf-8")
+        prova("allarme6: errore interno, spento: nessuna uscita",
+              cm.hook(json.dumps(payload), str(dati)) == "")
+    finally:
+        cm.valuta = orig
+        shutil.rmtree(dati, ignore_errors=True)
+    a.togli_config()
+
+
+def _prove_cd_scritture_7(prova, a: Ambiente):
+    """Settimo giro, punto 2: dopo un `cd` con una destinazione che non si sa valutare
+    (`cd $(mktemp -d)`, `cd -`) una scrittura con un NOME SEMPLICE (senza barra: `git init`,
+    `git commit`, `git add .`, `touch f`, `echo x > f`, `mkdir x`, `tar xzf a.tgz`) e' ammessa
+    per il PREDEFINITO, come dice il docstring (non si puo' dire dove porta, e negarla sarebbe
+    il falso positivo di ogni script); una con una barra (`touch sub/f`) o il nome di un file
+    del guardiano (`rm config.json`) resta negata. Il NOMINATO resta com'e': negato."""
+    a.togli_config()
+    pulita = _alfa_pulita(a)
+
+    def pred(cmd):
+        return a.chiama(a.pl("Bash", {"command": cmd}, sid=S_COMUNE, aperta_in=a.progetto))
+
+    def alfa(cmd):
+        return a.chiama(a.pl("Bash", {"command": cmd}, sid=S_ALFA_LIBERA, aperta_in=pulita))
+
+    semplici = [
+        "cd $(mktemp -d) && git init", "cd $(mktemp -d) && git commit -m x",
+        "cd $(mktemp -d) && git clone https://example.org/x/y",
+        "d=$(mktemp -d); cd $d && git init", "cd - && git add .",
+        "cd $(mktemp -d) && touch f", "cd $(mktemp -d) && echo x > f",
+        "cd $(mktemp -d) && mkdir x", "cd - && cp a b", "cd - && mv a b",
+        "cd - && tee out.txt < in.txt", "cd $(cat lista) && rm nota.txt",
+        "cd \"$X\" && git commit -am x", "cd - && touch *.txt", "cd - && git add . && git commit -m x",
+    ]
+    for c in semplici:
+        r = pred(c)
+        prova(f"cd7: predefinito, `{c}`: ammesso (un nome semplice dopo una cartella "
+              "sconosciuta, come dice il docstring)", r.ammesso, repr(r))
+        r = alfa(c)
+        prova(f"cd7: alfa, `{c}`: negato (per il nominato non cambia)", r.negato, repr(r))
+    con_barra = [
+        "cd $(mktemp -d) && touch sub/f", "cd - && cp x sub/y", "cd - && echo x > sub/f",
+        "cd $(mktemp -d) && mkdir ../x", "cd - && git clone https://example.org/x/y sub/y",
+        "cd $(mktemp -d) && touch ..", "cd - && cp -r . ../x",
+    ]
+    for c in con_barra:
+        r = pred(c)
+        prova(f"cd7: predefinito, `{c}`: negato (un percorso relativo con una barra, o `..`, "
+              "dopo una cartella sconosciuta)", r.negato and "non si sa dove porta" in r.motivo,
+              repr(r))
+    # una ricerca o una copia RICORSIVA da una cartella che non si sa resta negata (legge
+    # tutto l'albero, che potrebbe essere di un nominato)
+    for c in ("cd - && grep -r x .", "cd $(mktemp -d) && cp -r . x", "cd - && find . -name x",
+              "cd - && rg x"):
+        r = pred(c)
+        prova(f"cd7: predefinito, `{c}`: negato (ricorsivo da una cartella sconosciuta)",
+              r.negato, repr(r))
+    # il nome di un file del guardiano resta negato anche senza barra
+    for c in ("cd $(mktemp -d) && rm config.json", "cd - && tee guardiano.log < x",
+              "cd $(cat lista) && truncate -s0 compartimenti.ultima-valida.json",
+              "cd - && sed -i s/x/y/ config.json", "cd - && echo x > settings.json"):
+        r = pred(c)
+        prova(f"cd7: predefinito, `{c}`: negato (e' il nome di un file del guardiano)",
+              r.negato and "non si sa dove porta" in r.motivo, repr(r))
+    # le letture non cambiano, e una scrittura con un percorso assoluto si valuta per quello
+    for c in ("cd $(mktemp -d) && ls", "cd - && cat nota.txt", "cd - && git status"):
+        r = pred(c)
+        prova(f"cd7: predefinito, `{c}`: ammesso", r.ammesso, repr(r))
+    r = pred(f"cd - && touch {a.alfa1}/x")
+    prova("cd7: predefinito, `cd - && touch <cartella di alfa>/x`: negato (il percorso assoluto "
+          "vale)", r.negato, repr(r))
+    a.togli_config()
+
+
+def _prove_git_letture_7(prova, a: Ambiente):
+    """Settimo giro, punto 3: in una cartella di codice CONDIVISA un nominato puo' LEGGERE
+    con git (`log`, `show`, `diff`, `status`, `blame`, `rev-parse`, `branch` senza operandi o
+    con `--contains`, `tag -l MODELLO`, `config --get`, `reflog`, `notes list`, `notes show`,
+    `fetch --dry-run`, `stash list`, `worktree list`, `submodule status`): non sono scritture.
+    Le scritture di git restano negate."""
+    cod = a.radice / "codice-condiviso-7"
+    cod.mkdir(parents=True, exist_ok=True)
+    (cod / "README").write_text("x\n", "utf-8")
+    X = str(cod)
+    a.togli_config()
+    pulita = _alfa_pulita(a)
+    base = json.loads(_testo(a.dati / "config.json"))
+    a.scrivi_config(dict(base, condivise=[X]))
+
+    def alfa(cmd):
+        return a.chiama(a.pl("Bash", {"command": cmd}, sid=S_ALFA_LIBERA, aperta_in=pulita))
+
+    letture = [
+        "log", "log --oneline -5", "show HEAD", "diff", "diff HEAD~1", "status", "blame README",
+        "rev-parse HEAD", "branch", "branch -a", "branch -vv", "branch --list", "branch --list 'x*'",
+        "branch --show-current", "branch --contains abc", "branch --no-contains abc",
+        "branch --merged main", "branch --no-merged main", "branch --points-at HEAD",
+        "branch -r --contains abc", "tag", "tag -l", "tag -l \"v*\"", "tag --list 'v*'", "tag -n",
+        "tag -n5 -l 'v*'", "tag --contains abc", "tag --points-at HEAD", "tag --merged main",
+        "tag -v v1", "config --get user.name", "config --list", "reflog", "reflog show",
+        "reflog HEAD", "reflog -n 5", "reflog exists refs/heads/x", "notes", "notes list",
+        "notes show HEAD", "notes --ref x list", "notes get-ref", "fetch --dry-run",
+        "fetch --dry-run origin", "stash list", "stash show", "stash show -p",
+        "worktree list", "submodule", "submodule status", "submodule summary", "remote -v",
+        "ls-files", "ls-remote origin",
+    ]
+    for g in letture:
+        for cmd in (f"git -C {X} {g}", f"cd {X} && git {g}"):
+            r = alfa(cmd)
+            prova(f"git7: alfa, `{cmd.replace(X, '<X>')}`: ammesso (una lettura in una cartella "
+                  "condivisa)", r.ammesso, repr(r))
+    scritture = [
+        "commit -m x", "add .", "fetch", "fetch origin", "push", "branch nuovo", "branch -d x",
+        "branch -D x", "branch -m a b", "branch nuovo abc", "tag v1", "tag -a v1 -m m",
+        "tag -d v1", "tag -f v1", "tag -s v1", "notes add -m x", "notes append -m x",
+        "notes remove", "notes edit", "notes merge x", "notes prune", "reflog expire --all",
+        "reflog delete HEAD@{1}", "stash", "stash push", "stash pop", "stash drop", "stash apply",
+        "worktree add ../x", "worktree remove x", "submodule update", "submodule add u p",
+        "remote add o u", "config a b", "gc", "init", "checkout x", "reset --hard",
+    ]
+    for g in scritture:
+        for cmd in (f"git -C {X} {g}", f"cd {X} && git {g}"):
+            r = alfa(cmd)
+            prova(f"git7: alfa, `{cmd.replace(X, '<X>')}`: negato (una scrittura in una cartella "
+                  "condivisa)", r.negato, repr(r))
+    a.togli_config()
+
+
+def _prove_limiti_6(prova):
+    """Sesto giro, punto 7: i limiti dichiarati, nel docstring del modulo e nel README
+    (inglese e italiano): l'elenco onesto di cio' che il guardiano non vede e la frase
+    che e' un guardiano di incidenti, non un confine di sicurezza."""
+    C = _importa_compartimenti()
+    doc = (C.__doc__ or "") if C is not None else ""
+    prova("limiti6: il docstring di compartimenti.py ha la sezione LIMITI DICHIARATI",
+          "LIMITI DICHIARATI" in doc, "manca la sezione")
+    for voce in ("costruiti a runtime", "scaricato", "figli che si lanciano da soli", "MCP di terzi",
+                 "non un confine di sicurezza"):
+        prova(f"limiti6: il docstring elenca `{voce}`", voce in doc, "manca")
+    for nome, frase in (("README.md", "not a security boundary"),
+                        ("README.it.md", "non un confine di sicurezza")):
+        testo = (RADICE / nome).read_text("utf-8")
+        prova(f"limiti6: {nome} dice che e' un guardiano di incidenti e `{frase}`",
+              frase in testo and ("incident" in testo.lower()), "manca")
+        for voce in (("built at run time", "downloaded", "MCP") if nome == "README.md"
+                     else ("costruiti a runtime", "scaricato", "MCP")):
+            prova(f"limiti6: {nome} elenca `{voce}`", voce in testo, "manca")
 
 
 def _prove_forma(prova):
@@ -3601,5 +4452,14 @@ def esegui(prova):
         _prove_gravi_5(prova, a)
         _prove_settings_5(prova, a)
         _prove_minori_5(prova, a)
+        _prove_regressioni_6(prova, a)
+        _prove_commenti_6(prova, a)
+        _prove_prefissi_6(prova, a)
+        _prove_sed_awk_6(prova, a)
+        _prove_condivise_6(prova, a)
+        _prove_allarme_6(prova, a)
+        _prove_cd_scritture_7(prova, a)
+        _prove_git_letture_7(prova, a)
+        _prove_limiti_6(prova)
     finally:
         a.chiudi()

@@ -629,6 +629,29 @@ Il server ascolta solo su loopback. Le scritture via HTTP chiedono il token in
 `~/.plancia/token`, che la dashboard riceve dal server dentro la pagina. Le
 letture sono libere: sono dati tuoi, già sul tuo disco.
 
+### Il guardiano dei compartimenti, e cosa non vede
+
+`bin/plancia-guardiano` è un hook PreToolUse facoltativo che tiene separati due gruppi
+di lavoro sulla stessa macchina (vedi `plancia/compartimenti.py`). È un analizzatore
+euristico di ciò che una chiamata di strumento dice di voler toccare: un guardiano di
+incidenti, non un confine di sicurezza. Ferma quello che un agente fa senza pensarci:
+leggere i file dell'altro gruppo, riscrivere la config del guardiano stesso, una
+ricerca ricorsiva che attraversa una cartella vietata. Non ferma chi lo aggira apposta,
+e non lo pretende: un confine vero è un utente del sistema operativo separato, o un
+contenitore. Si accende in `solo-registro` (scrive soltanto), si legge il registro, poi
+si decide.
+
+Cosa non vede, onestamente: i percorsi costruiti a runtime dentro programmi e script
+già esistenti (uno script scritto in una chiamata e lanciato in un'altra, una
+compilazione, un test che apre file); il codice scaricato o generato e poi eseguito; i
+processi figli che si lanciano da soli e vivono oltre il comando (un demone, un lavoro
+pianificato, un watcher); gli strumenti MCP di terzi con argomenti di file che non
+conosce per nome; i percorsi che passano per un altro canale (gli appunti, la rete
+locale, un database); un comando che non finisce di analizzare in due secondi (una
+sessione di un nominato è negata con "comando troppo complesso da controllare in
+tempo: spezzalo", quella del predefinito è ammessa con un avviso ogni volta). L'elenco
+completo sta nel docstring di `plancia/compartimenti.py`.
+
 ## Contribuire
 
 ```bash
@@ -636,7 +659,7 @@ git config core.hooksPath .githooks
 ```
 
 Accende il gancio che fa girare `python3 tools/prova.py` prima di ogni push:
-2977 controlli in una ventina di secondi, su un archivio finto che non tocca
+3804 controlli in pochi minuti, su un archivio finto che non tocca
 il tuo.
 
 ## Licenza
