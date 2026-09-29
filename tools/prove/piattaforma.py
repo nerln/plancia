@@ -1111,12 +1111,17 @@ def _prove_installazione(prova):
           and "SetOutputToWaveFile('<CASA>/o.wav')" in vw[0][-1]
           and len(_popen(dati["windows"], "voce_riproduci")) == 1
           and "SoundPlayer" in _popen(dati["windows"], "voce_riproduci")[0][-1]
-          and _run(dati["windows"], "voci_sistema") == [], str(vw)[:200])
+          # le voci di sistema ora si elencano anche fuori dal Mac: un PowerShell con
+          # GetInstalledVoices (era: nessun comando e l'elenco vuoto)
+          and len(_run(dati["windows"], "voci_sistema")) == 1
+          and _run(dati["windows"], "voci_sistema")[0][0] == "powershell"
+          and "GetInstalledVoices" in _run(dati["windows"], "voci_sistema")[0][-1], str(vw)[:200])
     prova("[linux] voce: espeak-ng verso un wav, poi paplay; niente say ne' afplay",
           _run(dati["linux"], "voce_sintesi") == [
               ["espeak-ng", "-v", "it", "-s", "185", "-w", "<CASA>/o.wav", "--", "Ciao mondo"]]
           and _popen(dati["linux"], "voce_riproduci") == [["paplay", "<CASA>/o.wav"]]
-          and _run(dati["linux"], "voci_sistema") == [])
+          # `espeak-ng --voices` per l'elenco delle voci (era: nessun comando)
+          and _run(dati["linux"], "voci_sistema") == [["espeak-ng", "--voices"]])
 
     # ---- PowerShell e gli altri processi di contorno non ereditano lo stdin del server MCP
     ps = [c for k, v in dati["windows"].items() if isinstance(v, dict) for c in v.get("comandi", [])

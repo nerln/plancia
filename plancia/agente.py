@@ -14,7 +14,7 @@ import subprocess
 import threading
 import time
 
-from . import config, recap
+from . import config, piattaforma, recap
 
 # Dopo tanti turni la conversazione è lunga e costosa: si ricomincia.
 MAX_TURNI = 20
@@ -82,7 +82,8 @@ class Agente:
             self.proc = subprocess.Popen(
                 cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL, text=True, bufsize=1,
-                cwd=str(config.DATA_DIR), env=dict(os.environ))
+                cwd=str(config.DATA_DIR), env=dict(os.environ),
+                **piattaforma.opzioni_figlio())
         except Exception:
             self.proc = None
             return False

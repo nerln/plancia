@@ -17,11 +17,13 @@ Due livelli, tenuti separati apposta:
   processo o si cerca un programma nel PATH per tutto quello che cambia da
   sistema a sistema. Chi usa questo modulo passa da qui, e le prove li
   sostituiscono: nessuna prova lancia mai `launchctl`, `schtasks`, `systemctl`,
-  `osascript`, `claude` o `codex` veri. Restano fuori, perche' non dipendono dal
-  sistema operativo (o sono soltanto macOS), tre chiamate dirette a subprocess
-  in voice.py: la riproduzione (`riproduci`, che pero' prende le stesse opzioni
-  di `opzioni_processo`), `voicebox_avvia` (`open -a`, solo macOS) e
-  `trascrivi`.
+  `osascript`, `claude` o `codex` veri. Ogni altro `subprocess` di `plancia/`
+  (git e gh del sync, il `claude` del riepilogo, di Jarvis, dell'agente caldo e
+  dei lanci in background, la riproduzione, la trascrizione) passa comunque da
+  `opzioni_figlio()`: su Windows aggiunge `CREATE_NO_WINDOW`, perche' il server
+  parte con `pythonw` e senza il flag ogni figlio aprirebbe una finestra nera;
+  su macOS e Linux torna `{}` e la chiamata resta identica. Restano senza il
+  flag solo i lanci in una console visibile (Riprendi, `opzioni_distacco`).
 
 `nome()` dice dove si e': "mac", "windows" o "linux", da `sys.platform`,
 sovrascrivibile con `PLANCIA_PIATTAFORMA` (un valore che non sia uno dei tre
@@ -36,6 +38,7 @@ import base64
 import csv
 import ntpath
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -98,6 +101,22 @@ def _su_windows_vero(piatt=None, nt=None) -> bool:
     return _p(piatt) == WINDOWS and (os.name == "nt" if nt is None else nt)
 
 
+def opzioni_figlio(piatt=None, nt=None) -> dict:
+    """Le opzioni di `subprocess` comuni a OGNI processo che Plancia lancia e non
+    mostra: su Windows `CREATE_NO_WINDOW`, perche' il server gira con `pythonw`
+    (nessuna console) e un programma console avviato da un processo senza console
+    apre una finestra nera per ogni `git`, `gh` o `claude`. Su macOS e Linux torna
+    `{}`: la chiamata resta identica a quella di sempre.
+
+    Unica eccezione voluta, un terminale visibile per l'utente (Riprendi):
+    passa da `opzioni_distacco`, che sceglie da sola le sue opzioni. Chi lancia
+    un processo dentro `plancia/` lo fa con `**opzioni_figlio()` (o da
+    `esegui`)."""
+    if _su_windows_vero(piatt, nt):
+        return {"creationflags": _NO_WINDOW}
+    return {}
+
+
 def opzioni_processo(piatt=None, nt=None) -> dict:
     """Le opzioni di `subprocess` per un processo di contorno (PowerShell per la
     voce, la notifica, la riproduzione): senza stdin, che sarebbe quello del
@@ -105,15 +124,14 @@ def opzioni_processo(piatt=None, nt=None) -> dict:
     Windows PowerShell lo legge finche' non si chiude), e su Windows senza la
     console nera che il server, girando con pythonw, aprirebbe a ogni chiamata."""
     opzioni = {"stdin": subprocess.DEVNULL}
-    if _su_windows_vero(piatt, nt):
-        opzioni["creationflags"] = _NO_WINDOW
+    opzioni.update(opzioni_figlio(piatt, nt))
     return opzioni
 
 
 def esegui(argv, **kwargs):
     """`subprocess.run`, senza finestra nera su Windows. Sostituibile dalle prove."""
-    if _su_windows_vero():
-        kwargs.setdefault("creationflags", _NO_WINDOW)
+    for nome, valore in opzioni_figlio().items():
+        kwargs.setdefault(nome, valore)
     return subprocess.run(argv, **kwargs)
 
 
@@ -121,9 +139,15 @@ def opzioni_distacco(piatt=None, cwd=None, nuova_console=False, nt=None) -> dict
     """Le opzioni con cui `avvia_distaccato` lancia il processo. Con
     `nuova_console` (Windows, il terminale quando manca `wt`) il processo ha una
     console sua e visibile: `DETACHED_PROCESS` e `CREATE_NEW_CONSOLE` non stanno
-    insieme."""
-    opzioni = dict(stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                   stderr=subprocess.DEVNULL)
+    insieme, e stdin, stdout e stderr NON si passano. In CPython su Windows basta
+    una sola maniglia rediretta perche' si imposti `STARTF_USESTDHANDLES`: il
+    figlio riceverebbe `NUL` al posto della console nuova e non potrebbe leggere
+    i tasti (claude uscirebbe subito). Senza redirezioni la console e' la sua."""
+    if nuova_console and _p(piatt) == WINDOWS:
+        opzioni = {}
+    else:
+        opzioni = dict(stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                       stderr=subprocess.DEVNULL)
     if cwd is not None:
         opzioni["cwd"] = str(cwd)
     if _p(piatt) == WINDOWS:
@@ -275,6 +299,11 @@ def toml_str(testo) -> str:
 UTF8_WINDOWS = ["-X", "utf8"]
 
 
+# I caratteri che una shell POSIX interpreta dentro un percorso: solo per questi
+# `riga_script` mette le virgolette. Gli accenti e `~`, `+`, `=`, `%` non servono.
+_CARATTERI_SHELL = re.compile(r"[\s'\"\\$`&|;<>()*?\[\]{}!#]")
+
+
 def _riga_python(python, script, *argomenti) -> str:
     """`"<python>" -X utf8 "<script>" <argomenti>` come riga per cmd.exe, per il
     Task Scheduler e per un hook."""
@@ -309,13 +338,17 @@ def argv_script(script, python=None, piatt=None) -> list:
 def riga_script(script, python=None, piatt=None) -> str:
     """Come `argv_script`, ma come una riga sola (i settings.json degli hook).
 
-    macOS e Linux: il percorso nudo, com'e' sempre stato. Windows:
-    `"<python>" -X utf8 "<script>"`, con le virgolette perche' un percorso di
-    Windows ha spesso degli spazi.
+    macOS e Linux: il percorso nudo, com'e' sempre stato, SE non ha niente che la
+    shell interpreti (uno spazio, un apice, una parentesi, `&`, `$`...): le
+    installazioni esistenti restano identiche. Con uno spazio o un carattere della
+    shell il percorso e' quotato (`shlex.quote`), o `sh -c` lo spezzerebbe e
+    l'hook non partirebbe (codice 127). Windows: `"<python>" -X utf8 "<script>"`,
+    con le virgolette perche' un percorso di Windows ha spesso degli spazi.
     """
     if _p(piatt) == WINDOWS:
         return _riga_python(python or sys.executable, script)
-    return str(script)
+    percorso = str(script)
+    return shlex.quote(percorso) if _CARATTERI_SHELL.search(percorso) else percorso
 
 
 def percorso_comando(casa, piatt=None, ambiente=None) -> Path:
@@ -617,6 +650,66 @@ def voce_mancante(piatt=None, cerca_fn=None):
     return None
 
 
+def nome_motore_voce(argv, piatt=None) -> str:
+    """Il nome vero del motore che ha detto o scritto la frase (`argv` e' quello di
+    `comando_sintesi`): `say` su macOS, `System.Speech` su Windows (PowerShell e'
+    solo il modo di arrivarci), `espeak-ng` o `espeak` su Linux."""
+    piatt = _p(piatt)
+    if piatt == MAC:
+        return "say"
+    if piatt == WINDOWS:
+        return "System.Speech"
+    return os.path.basename(str(argv[0])) if argv else "sistema"
+
+
+def motore_sistema(piatt=None, cerca_fn=None):
+    """Il nome del motore di sistema che c'e' su questa macchina, o None."""
+    argv = comando_sintesi("x", "it", "", 185, "x.wav", piatt, cerca_fn)
+    return nome_motore_voce(argv, piatt) if argv else None
+
+
+def comando_elenco_voci(piatt=None, cerca_fn=None):
+    """L'argv che elenca le voci installate, o None: `say -v ?` su macOS, le voci
+    di System.Speech su Windows, `espeak-ng --voices` su Linux."""
+    piatt = _p(piatt)
+    if piatt == MAC:
+        return ["say", "-v", "?"]
+    if piatt == WINDOWS:
+        exe = _powershell(cerca_fn)
+        if exe is None:
+            return None
+        return _ps_comando(exe, "; ".join([
+            "Add-Type -AssemblyName System.Speech",
+            "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer",
+            "$s.GetInstalledVoices() | ForEach-Object "
+            "{ $_.VoiceInfo.Name + '|' + $_.VoiceInfo.Culture.Name }",
+            "$s.Dispose()"]))
+    for motore in ("espeak-ng", "espeak"):
+        if (cerca_fn or cerca)(motore):
+            return [motore, "--voices"]
+    return None
+
+
+def voci_da_elenco(testo, piatt=None) -> list:
+    """`[(nome, "it_IT")]` dall'uscita di `comando_elenco_voci` (solo Windows e
+    Linux: quella di macOS la legge `voice.voci_sistema`)."""
+    fuori = []
+    for riga in (testo or "").splitlines():
+        riga = riga.strip()
+        if _p(piatt) == WINDOWS:
+            nome, _, cultura = riga.partition("|")
+            if nome.strip() and cultura.strip():
+                fuori.append((nome.strip(), cultura.strip().replace("-", "_")))
+            continue
+        # espeak: "Pty Language Age/Gender VoiceName File Other"
+        campi = riga.split()
+        if len(campi) < 4 or not campi[0].isdigit():
+            continue
+        lingua, _, regione = campi[1].partition("-")
+        fuori.append((campi[3], "%s_%s" % (lingua, (regione or lingua).upper())))
+    return fuori
+
+
 def motore_voce_assente(piatt=None) -> str:
     """La frase che dice, chiaro, perche' non si sente niente e cosa fare."""
     piatt = _p(piatt)
@@ -626,6 +719,47 @@ def motore_voce_assente(piatt=None) -> str:
         return ("nessun motore vocale di sistema: installa espeak-ng "
                 "(o espeak) e un lettore audio come paplay o aplay")
     return "nessun motore vocale di sistema"
+
+
+# --------------------------------------------------------------------------
+# mostrare un file all'utente
+# --------------------------------------------------------------------------
+
+def comando_apri(percorso, piatt=None, cerca_fn=None):
+    """L'argv che mostra `percorso` all'utente, o None: macOS lo rivela nel
+    Finder (`open -R`, com'e' sempre stato), Linux lo apre con `xdg-open`.
+    Windows non ha un argv: si apre con `os.startfile` (vedi `apri_file`)."""
+    piatt = _p(piatt)
+    if piatt == MAC:
+        return ["open", "-R", str(percorso)]
+    if piatt == LINUX and (cerca_fn or cerca)("xdg-open"):
+        return ["xdg-open", str(percorso)]
+    return None
+
+
+def _startfile(percorso):
+    """`os.startfile`, che c'e' solo su Windows. Sostituibile dalle prove."""
+    if not hasattr(os, "startfile"):
+        raise OSError("os.startfile non c'e' su questo sistema")
+    os.startfile(str(percorso))
+
+
+def apri_file(percorso, piatt=None, cerca_fn=None):
+    """Mostra `percorso` con il lanciatore del sistema. Torna `(True, "")` o
+    `(False, perche')`: non solleva mai, chi l'ha chiesto ha comunque il file."""
+    piatt = _p(piatt)
+    try:
+        if piatt == WINDOWS:
+            _startfile(percorso)
+            return True, ""
+        argv = comando_apri(percorso, piatt, cerca_fn)
+        if argv is None:
+            return False, ("manca xdg-open: apri il file a mano" if piatt == LINUX
+                           else "non so come aprire un file su questo sistema")
+        esegui(argv, capture_output=True, timeout=15, stdin=subprocess.DEVNULL)
+        return True, ""
+    except Exception as exc:
+        return False, str(exc) or type(exc).__name__
 
 
 # --------------------------------------------------------------------------

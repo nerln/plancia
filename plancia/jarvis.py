@@ -360,14 +360,15 @@ def chiedi_a_claude(frase: str, lang: str, parole=55) -> str:
         return ""
     import os
     import subprocess
-    from . import config
+    from . import config, piattaforma
     prompt = PROMPT.format(lingua=recap.NOMI_LINGUA.get(lang, "English"),
                            parole=parole, frase=frase)
     cmd = [exe, "-p", "--model", config.load_config().get("modello_voce", "sonnet"),
            "--allowedTools"] + TOOL_CONSENTITI
     try:
         res = subprocess.run(cmd, input=prompt, capture_output=True, text=True,
-                             timeout=180, cwd=str(config.DATA_DIR), env=dict(os.environ))
+                             timeout=180, cwd=str(config.DATA_DIR), env=dict(os.environ),
+                             **piattaforma.opzioni_figlio())
     except Exception:
         return ""
     return (res.stdout or "").strip() if res.returncode == 0 else ""

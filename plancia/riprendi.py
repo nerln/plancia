@@ -163,7 +163,8 @@ def _claude_vivo(session_id):
         return False
     try:
         out = subprocess.run([exe, "agents", "--json"], capture_output=True, text=True,
-                             stdin=subprocess.DEVNULL, timeout=25)
+                             stdin=subprocess.DEVNULL, timeout=25,
+                             **piattaforma.opzioni_figlio())
         dati = json.loads(out.stdout or "[]")
     except Exception:
         return None

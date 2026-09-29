@@ -56,8 +56,9 @@ def _hook_entry(comando: str, timeout: int = 5) -> dict:
 def _e_nostro(comando, basename: str) -> bool:
     """Il comando di un hook e' uno dei nostri? Si guarda come finisce; su
     Windows il comando e' `"<python>" "<script>"` e finisce con una virgoletta,
-    che qui si toglie (su macOS e Linux non c'e' e non cambia niente)."""
-    return (comando or "").rstrip().rstrip('"').endswith(basename)
+    e su macOS e Linux, con un percorso che ha spazi, con un apice (`shlex.quote`):
+    qui si tolgono (un percorso senza spazi non le ha e non cambia niente)."""
+    return (comando or "").rstrip().rstrip('"\'').endswith(basename)
 
 
 def _senza(entries: list, basename: str) -> list:
@@ -866,6 +867,28 @@ def autostart_installed() -> bool:
     return _installato(_piano_server())
 
 
+def autostart_meccanismo() -> str:
+    """Il nome del meccanismo che fa ripartire il server DAVVERO ora: quello
+    principale del sistema (launchd, Task Scheduler, systemd) se e' lui a esserci,
+    altrimenti il ripiego che `_attiva` ha usato (la cartella Esecuzione
+    automatica, `~/.config/autostart`). Senza niente installato, il nome di quello
+    che si userebbe."""
+    piano = _piano_server()
+    candidati = []
+    while piano:
+        candidati.append(piano)
+        piano = piano.get("ripiego")
+    for c in candidati:
+        # un meccanismo con file si riconosce dal suo file; uno senza (il Task
+        # Scheduler) chiedendo al sistema
+        if c["file"]:
+            if any(p.exists() for p, _t in c["file"]):
+                return c["nome"]
+        elif c["query"] and _lancia(c["query"]).returncode == 0:
+            return c["nome"]
+    return candidati[0]["nome"]
+
+
 # --------------------------------------------------------------------------
 # riepilogo automatico
 # --------------------------------------------------------------------------
@@ -1016,7 +1039,7 @@ def doctor() -> list:
     lines.append(f"{ok(cx['installato'])}Codex trovato ({cx['sessioni']} sessioni)")
     lines.append(f"{ok(cx['mcp'])}server MCP registrato anche in Codex")
     lines.append(f"{ok((SKILL_DIR / 'SKILL.md').exists())}skill plancia")
-    lines.append(f"{ok(autostart_installed())}avvio automatico ({piattaforma.nome_avvio()})")
+    lines.append(f"{ok(autostart_installed())}avvio automatico ({autostart_meccanismo()})")
     ora = config.load_config().get("riepilogo_ora")
     lines.append(f"{ok(recap_daily_installed())}riepilogo automatico"
                  + (f" alle {ora}" if ora else "  (`plancia daily on 08:45`)"))
@@ -1027,7 +1050,10 @@ def doctor() -> list:
         if manca and not (v["voicebox_vivo"] or voice.pocket_vivo()):
             lines.append(f"no  voce: {manca} (il testo funziona lo stesso, senza la voce)")
         else:
-            lines.append(f"ok  voce: {v['motore']} · {v['voce_attuale'] or 'voce predefinita del sistema'} · "
+            motore = v["motore"]
+            if v.get("motore_sistema"):
+                motore = f"{motore} ({v['motore_sistema']})"
+            lines.append(f"ok  voce: {motore} · {v['voce_attuale'] or 'voce predefinita del sistema'} · "
                          f"{'Voicebox attivo' if v['voicebox_vivo'] else 'voci di sistema'}")
     except Exception as exc:
         lines.append(f"no  voce: {exc}")

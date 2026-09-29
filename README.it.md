@@ -102,16 +102,25 @@ azioni `plancia://` e il pannello vocale a mani libere. `plancia jarvis "..."` d
 terminale funziona comunque. Se sulla tua macchina manca un pezzo il resto va
 avanti: senza strumento per le notifiche niente notifica, senza strumento per gli
 appunti niente copia. Senza un motore vocale, `plancia say`, `plancia voice prova`
-e `plancia recap --speak` lo dicono e dicono cosa installare, l'azione MCP `speak`
+e `plancia recap --speak`, `plancia ask --speak` e `plancia jarvis --speak` lo dicono e
+dicono cosa installare, l'azione MCP `speak`
 risponde `letto: false` con il motivo e `plancia doctor` segnala la voce come
 mancante. Anche la dashboard continua a funzionare: il riepilogo, "Chiedi" e Jarvis
 rispondono col testo e con un campo `voce: null` più una `nota_voce` che spiega che
-manca il motore vocale, e si salta solo l'ascolto. Su Windows Riprendi ha bisogno di
+manca il motore vocale, e si salta solo l'ascolto («Ascolta» mostra quella nota invece
+di un errore generico). Fuori da macOS il motore vocale ha il suo nome vero
+(`System.Speech`, `espeak-ng`) e l'elenco delle voci lo chiede a lui. Su Windows Riprendi ha bisogno di
 Windows Terminal per un task perso quando `claude` è un file `.cmd` (installazione
 con npm): il suo prompt su più righe non si può passare a `cmd.exe` in sicurezza, e
 Riprendi lo dice invece di aprire un comando rotto. Su Windows il server parte all'accesso ma non riparte dopo un
 crash, e i suoi errori non finiscono in un log (su macOS lo riavvia launchd, su
-Linux systemd). I comandi che Plancia costruisce per ogni sistema sono coperti
+Linux systemd). Un secondo `plancia serve` mentre gira quello dell'accesso lo dice (e
+con `--open` apre il browser su quello) invece di cadere sulla porta occupata.
+`plancia esporta --apri` apre il file con l'apritore del sistema (`open -R`,
+`os.startfile`, `xdg-open`). Le cartelle che contengono progetti senza esserlo (un disco
+esterno, un'altra cartella dei progetti) si scrivono in `config.json` alla chiave
+`contenitori`, una lista di percorsi, accanto a quelle che Plancia riconosce da sola
+(`~/dev`, `~/Siti`, le cartelle di Google Drive). I comandi che Plancia costruisce per ogni sistema sono coperti
 dalla suite, ma Windows e Linux hanno avuto molto meno uso reale di macOS: `plancia doctor`
 dice cosa è collegato.
 
@@ -584,7 +593,7 @@ git config core.hooksPath .githooks
 ```
 
 Accende il gancio che fa girare `python3 tools/prova.py` prima di ogni push:
-1303 controlli in una ventina di secondi, su un archivio finto che non tocca
+1393 controlli in una ventina di secondi, su un archivio finto che non tocca
 il tuo.
 
 ## Licenza

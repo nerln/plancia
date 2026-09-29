@@ -104,15 +104,24 @@ What does not exist outside macOS: the native app, its menu bar item, the
 from a terminal still works. If a piece is missing on your machine the rest
 carries on: no notification tool means no notification, and no clipboard tool
 means nothing is copied. With no speech engine, `plancia say`, `plancia voice
-prova` and `plancia recap --speak` say so and what to install, the MCP `speak`
+prova`, `plancia recap --speak`, `plancia ask --speak` and `plancia jarvis --speak`
+say so and what to install, the MCP `speak`
 action answers `letto: false` with the reason, and `plancia doctor` reports the
 voice as missing. The dashboard keeps working too: the recap, "Ask" and Jarvis
 answer with the text and a `voce: null` field plus a `nota_voce` explaining that
-there is no speech engine, and only the playback is skipped. On Windows,
+there is no speech engine, and only the playback is skipped ("Listen" shows
+that note instead of a generic error). Outside macOS the voice engine is reported by
+its real name (`System.Speech`, `espeak-ng`) and the voice list comes from it. On Windows,
 Resume needs Windows Terminal for a lost task when `claude` is a `.cmd` file (an
 npm install): its multi-line prompt cannot be handed to `cmd.exe` safely, and
 Resume says so instead of opening a broken command. On Windows the server starts at login but is not restarted after a crash, and
 its errors are not logged (launchd on macOS and systemd on Linux do restart it).
+A second `plancia serve` while the login one is running says so (and with `--open`
+opens the browser on it) instead of failing on the busy port. `plancia esporta --apri`
+opens the file with the system's own opener (`open -R`, `os.startfile`, `xdg-open`).
+Folders that hold projects without being one (an external disk, another projects
+folder) go in `config.json` under `contenitori`, a list of paths, next to the ones
+Plancia recognises by itself (`~/dev`, `~/Siti`, the Google Drive folders).
 The commands Plancia builds for each system are covered by the suite, but Windows and
 Linux have had far less real use than macOS: `plancia doctor` tells you what is
 connected.
@@ -479,7 +488,7 @@ Reads are open: it is your data, already on your disk.
 git config core.hooksPath .githooks
 ```
 
-Turns on the hook that runs `python3 tools/prova.py` before every push: 1303
+Turns on the hook that runs `python3 tools/prova.py` before every push: 1393
 checks in about twenty seconds, against a throwaway archive that never touches
 yours. They cover the schema, the board, the proposals, the search index, the
 recap, the MCP surface and its token budget, every read route of the HTTP API,

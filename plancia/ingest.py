@@ -12,7 +12,7 @@ import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import attribuzione, config, esclusi, slot, store
+from . import attribuzione, config, esclusi, piattaforma, slot, store
 
 # Oltre questa soglia una riga è quasi sempre un tool_result enorme: leggerla
 # con json.loads costa più di quello che vale. Se ne ricava il minimo a byte.
@@ -917,7 +917,8 @@ def riattribuisci(conn, progress=None) -> dict:
 
 def run(cmd, timeout=30, cwd=None):
     try:
-        res = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, cwd=cwd)
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, cwd=cwd,
+                             **piattaforma.opzioni_figlio())
         return res.stdout.strip() if res.returncode == 0 else None
     except Exception:
         return None

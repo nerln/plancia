@@ -48,6 +48,11 @@ DEFAULTS = {
     # non cambia di un byte.
     "cartelle_escluse": [],
     "sessioni_escluse": [],
+    # Cartelle che contengono progetti ma non sono progetti (un disco esterno,
+    # un'altra cartella dei progetti), oltre a quelle che Plancia riconosce da
+    # sola (`~/dev`, `~/Siti`, il Drive). Le legge `attribuzione.contenitori()`
+    # e, per l'avviso di sessione, `bin/plancia-hook`.
+    "contenitori": [],
 }
 
 

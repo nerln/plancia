@@ -78,9 +78,17 @@ def _testo(msg: dict) -> str:
     return "\n".join(p for p in pezzi if p.strip())
 
 
-#: La home scritta come la scrive Claude Code nei nomi cartella: gli slash
-#: diventano trattini.
-CASA = str(Path.home()).replace("/", "-")
+def casa_codificata(casa) -> str:
+    """La home scritta come la scrive Claude Code nei nomi cartella. E' la stessa
+    codifica di `esclusi._codifica` (misurata sui nomi veri di
+    `~/.claude/projects`): ogni carattere che non e' `[A-Za-z0-9]` diventa un
+    trattino, uno per uno. Su macOS e Linux `/Users/x` da' `-Users-x`; su Windows
+    `C:\\Users\\x` da' `C--Users-x` (i due punti e la barra sono due trattini)."""
+    return esclusi._codifica(str(casa))
+
+
+#: La home scritta come la scrive Claude Code nei nomi cartella.
+CASA = casa_codificata(Path.home())
 
 
 def _etichetta(nome: str) -> str:

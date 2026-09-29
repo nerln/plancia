@@ -59,11 +59,24 @@ def voci_sistema() -> list:
     global _voci
     if _voci is None:
         _voci = []
+        if not piattaforma.voce_sistema_presente():
+            # fuori da macOS non c'e' `say -v ?`: si chiede al motore che c'e'
+            # (System.Speech su Windows, espeak su Linux). Se non risponde
+            # l'elenco resta vuoto e `stato()` dice perche'.
+            try:
+                argv = piattaforma.comando_elenco_voci()
+                if argv:
+                    res = piattaforma.esegui(argv, capture_output=True, text=True,
+                                             timeout=20, stdin=subprocess.DEVNULL)
+                    if res.returncode == 0:
+                        _voci.extend(piattaforma.voci_da_elenco(res.stdout))
+            except Exception:
+                pass
+            return _voci
         try:
             # le voci si elencano con `say -v ?`: c'è solo su macOS
-            out = (piattaforma.esegui(["say", "-v", "?"], capture_output=True, text=True,
-                                      timeout=10).stdout
-                   if piattaforma.voce_sistema_presente() else "")
+            out = piattaforma.esegui(["say", "-v", "?"], capture_output=True, text=True,
+                                     timeout=10).stdout
         except Exception:
             out = ""
         for line in out.splitlines():
@@ -198,7 +211,8 @@ def voicebox_avvia(attesa=25) -> bool:
     if voicebox_vivo():
         return True
     try:
-        subprocess.run(["open", "-a", "Voicebox"], capture_output=True, timeout=15)
+        subprocess.run(["open", "-a", "Voicebox"], capture_output=True, timeout=15,
+                       **piattaforma.opzioni_figlio())
     except Exception:
         return False
     scaduto = time.time() + attesa
@@ -297,7 +311,8 @@ def sintesi(testo: str, lang: str = "it", motore: str = None, cache=True,
         if motore == "voicebox":
             raise RuntimeError("Voicebox non risponde su 127.0.0.1:17493")
         sintesi_say(testo, lang, out)
-        usato = "say"
+        # il nome vero del motore: `say` su macOS, System.Speech o espeak fuori
+        usato = piattaforma.motore_sistema() or "say"
     return {"file": str(out), "motore": usato, "lingua": lang}
 
 
@@ -378,7 +393,8 @@ def trascrivi(path, lang: str = "it") -> str:
         try:
             res = subprocess.run([exe, path, "--language", lang, "--output_format", "txt",
                                   "--output_dir", str(AUDIO_DIR)],
-                                 capture_output=True, text=True, timeout=300)
+                                 capture_output=True, text=True, timeout=300,
+                                 **piattaforma.opzioni_figlio())
             if res.returncode == 0:
                 txt = AUDIO_DIR / (Path(path).stem + ".txt")
                 if txt.exists():
@@ -410,7 +426,7 @@ def _multipart_transcribe(path: str) -> str:
 
 def stato() -> dict:
     cfg = config.load_config()
-    return {
+    fuori = {
         "motore": motore_scelto(),
         "lingua": cfg.get("lingua", "it"),
         "voce_attuale": voce_per(cfg.get("lingua", "it")),
@@ -419,3 +435,16 @@ def stato() -> dict:
         "voci_sistema": len(voci_sistema()),
         "lingue_disponibili": sorted({loc[:2] for _, loc in voci_sistema()}),
     }
+    if piattaforma.nome() != piattaforma.MAC:
+        # Windows e Linux: il motore col suo nome vero, e se l'elenco delle voci
+        # e' vuoto il perche' (senza, il pannello delle voci sembra rotto)
+        fuori["motore_sistema"] = piattaforma.motore_sistema()
+        if fuori["voci_sistema"]:
+            fuori["nota_voci"] = None
+        elif fuori["motore_sistema"] is None:
+            fuori["nota_voci"] = piattaforma.motore_voce_assente()
+        else:
+            fuori["nota_voci"] = ("il motore %s non ha dato un elenco di voci: si usa "
+                                  "la voce predefinita del sistema"
+                                  % fuori["motore_sistema"])
+    return fuori
