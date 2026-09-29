@@ -1367,9 +1367,19 @@ def _prove_mcp_in_utf8(prova, pf):
           registrato[1:3] == ["-X", "utf8"] and titoli == [titolo] and titolo in risposta
           and '"isError": false' in risposta, "%r %s" % (titoli, risposta[:200]))
     titoli0, risposta0 = lancia([sys.executable, str(script)])
-    prova("controllo della simulazione: lo stesso server SENZA -X utf8 su uno stdio non-UTF-8 il titolo "
-          "non lo rilegge identico (se no la prova sopra non prova niente); da Python 3.15 UTF-8 e' il predefinito",
-          sys.version_info >= (3, 15) or titoli0 != [titolo], "%r %s" % (titoli0, risposta0[:200]))
+    if os.name == "nt":
+        # Sul Windows vero il server si mette da solo in UTF-8 (piattaforma.stdio_utf8),
+        # quindi anche SENZA -X utf8 il titolo deve arrivare intatto: e' la difesa per
+        # chi ha una configurazione scritta prima o lo lancia a mano.
+        prova("su Windows anche lo stesso server SENZA -X utf8 rilegge il titolo identico "
+              "(stdio_utf8 lo rimette in UTF-8)",
+              titoli0 == [titolo], "%r %s" % (titoli0, risposta0[:200]))
+    else:
+        # Fuori da Windows stdio_utf8 non fa niente: senza -X utf8 su uno stdio ASCII il
+        # titolo si rovina, e questo dimostra che la simulazione della prova sopra morde.
+        prova("controllo della simulazione: lo stesso server SENZA -X utf8 su uno stdio non-UTF-8 il titolo "
+              "non lo rilegge identico (se no la prova sopra non prova niente); da Python 3.15 UTF-8 e' il predefinito",
+              sys.version_info >= (3, 15) or titoli0 != [titolo], "%r %s" % (titoli0, risposta0[:200]))
 
 
 def _prove_simulazione_windows(prova):
