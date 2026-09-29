@@ -62,14 +62,70 @@ Each view now appears at once with the last state it had, saved locally, and
 stays usable while fresh data arrives. When it arrives, cards that moved slide
 to their new place with a small turn instead of vanishing and reappearing. A pill
 at the top says "updated at 08:39", or "from memory, 08:39, server unreachable"
-when the server does not answer. A reload with the server down still shows
-nothing: the page itself comes from the server.
+when the server does not answer. A real reload with the server down works too:
+the dashboard keeps its own shell in the browser, so the page opens from there
+and shows what it last saw. Data calls never go through that cache, so nothing
+stale is ever passed off as fresh.
+
+## A new icon, from the bridge
+
+Plancia is Italian for a ship's bridge, so the icon is a piece of one: a brass
+engine order telegraph on mahogany deck boards, with the lever on the one amber
+sector. It is an Icon Composer document made of layers, so macOS 26 and later
+put their own glass and light on the brass and on the dial. On a Mac without the
+new tools the build uses a ready rendering of the same icon, so the two cannot
+drift apart. The favicon, the mark in the dashboard and the website use it too.
+
+## Windows and Linux
+
+macOS comes first, and the native app stays macOS only. Everything else in
+Plancia is Python and a local web server, and it now installs and runs on
+Windows and Linux as well: `python bin/plancia install` sets up the command, the
+MCP server, the hooks, the skills and the start at login with what each system
+has (Task Scheduler or the Startup folder, systemd `--user` or autostart).
+Resume opens Windows Terminal or the first terminal Linux has, the recap speaks
+with the system voice when there is one, and when a piece is missing Plancia
+says what to install instead of failing. The README has the exact commands.
+
+In Chrome or Edge, open the dashboard and choose **Install Plancia**: it gets
+its own window and icon, like an app. Safari on macOS does the same with Add to
+Dock.
+
+## Compartments
+
+Some work on a machine is shared with other people and must not mix with the
+rest. `compartimenti` in `~/.plancia/config.json` names those groups by their
+folders and sessions; everything else is the default compartment. With it, each
+session, task, project, memory note and run gets a compartment from the data it
+already has, and every surface shows only its own: the session briefing, the
+recall of notes from other folders, the MCP tools, the `plancia` command run
+from a session, the voice assistant. Writes on another compartment's project or
+task are refused with a plain message. The dashboard is your view, so it shows
+everything, separated by a selector at the top. Without the key, Plancia does
+what it always did.
+
+Next to it there is an optional guard for Claude Code, `bin/plancia-guardiano`:
+a PreToolUse hook that looks at what a tool call says it will touch and stops a
+session from reading the other group's files, from searching its way into them,
+or from switching the guard off. It starts in log-only mode (`solo-registro`), so
+you can read what it would have denied before letting it deny anything. It is a
+guard against incidents, not a security boundary: the README says plainly what
+it does not see, and a real boundary is a separate user or a container.
+
+## Private folders and sessions
+
+Two new keys in `config.json`, `cartelle_escluse` and `sessioni_escluse`, keep
+folders and sessions out of Plancia entirely: no transcripts, no memory, no
+search index, no hook queue, no Codex sessions from there. `plancia esclusi`
+lists what the rules match, and cleans out what had already come in before you
+wrote them (`--prova` counts without touching anything).
 
 ## Tested
 
-953 checks for the program and 339 for the dashboard, green on Python 3.9 and
-3.12, plus a pass that opens every view in a headless browser and fails on an
-empty view or a script error. Every check added in this cycle was seen failing
+4001 checks for the program and 442 for the dashboard, green on Python
+3.9 and 3.12, plus a pass that opens every view in a headless browser and fails
+on an empty view or a script error. The continuous integration now runs them on
+macOS, Windows and Linux. Every check added in this cycle was seen failing
 without its fix first.
 
 The website no longer publishes on every push to main: only by hand or when a
@@ -86,10 +142,12 @@ cd ~/dev/plancia
 ```
 
 Python 3.9+ and macOS 13 or later. No dependencies, no account, no server.
-Everything lives in `~/.plancia/`.
+Everything lives in `~/.plancia/`. On Windows and Linux, clone the same way and
+run `python bin/plancia install`, `python bin/plancia init` and `python
+bin/plancia serve --open`; the README has the details for each system.
 
-Upgrading from 1.0: pull, then `./bin/plancia install` again, so the skill and
-the Codex registration learn about resuming. The new columns are added to your
+Upgrading from 1.0: pull, then `./bin/plancia install` again, so the skills,
+the hooks and the Codex registration learn about resuming and compartments. The new columns are added to your
 archive on the first start. Tasks created before this version have no session
 attached; `plancia riprendi --backfill --secco` shows which ones it can match to
 a session by time and project, and without `--secco` it writes them, in a batch
