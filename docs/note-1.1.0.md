@@ -122,7 +122,7 @@ wrote them (`--prova` counts without touching anything).
 
 ## Tested
 
-4002 checks for the program and 442 for the dashboard, green on Python
+4001 checks for the program and 442 for the dashboard, green on Python
 3.9 and 3.12, plus a pass that opens every view in a headless browser and fails
 on an empty view or a script error. The continuous integration now runs them on
 macOS, Windows and Linux. Every check added in this cycle was seen failing

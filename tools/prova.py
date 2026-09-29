@@ -593,6 +593,12 @@ def main():
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sonda:
         sonda.bind(("127.0.0.1", 0))
         porta = sonda.getsockname()[1]
+    # Lo stesso finto resta al suo posto mentre parte il server vero di questa
+    # prova: la classe senza DNS inverso non basta se serve() non la usa (un
+    # merge che rimette ThreadingHTTPServer in serve() lascerebbe verde il
+    # controllo qui sopra). Si toglie appena il server risponde.
+    chiamate_serve = []
+    socket.getfqdn = lambda *a, **k: (chiamate_serve.append(a), "lento.invalid")[1]
     filo = threading.Thread(target=api.serve, kwargs={"port": porta,
                                                       "sync_first": False},
                             daemon=True)
@@ -616,6 +622,10 @@ def main():
             ultimo_errore[0] = f"{type(errore).__name__}: {errore}"
             time.sleep(0.25)
     attesa_server = time.time() - partenza
+    socket.getfqdn = vero_getfqdn
+    prova("serve() mette in ascolto il server senza il DNS inverso (getfqdn)",
+          not ultimo_errore[0] and not chiamate_serve,
+          f"getfqdn chiamato {len(chiamate_serve)} volte; {ultimo_errore[0]}")
     if ultimo_errore[0]:
         # non ha mai risposto: dove sta ferma la macchina lo dicono le pile dei fili
         import faulthandler
