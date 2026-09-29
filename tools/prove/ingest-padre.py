@@ -68,6 +68,7 @@ fresca prima che `cartelle-viste` esista, esercita invece la guardia
 `padre_id != trovato` per la scheda che diventerebbe padre di se stessa.
 """
 
+import os
 import sqlite3
 
 
@@ -332,11 +333,11 @@ def _prova_lumen_cartella_incidentale(prova):
     prova("project_links NON ha (lumen, path, /altrove/lumen)",
           conn.execute(
               "SELECT 1 FROM project_links WHERE project_id=? AND kind='path' AND value=?",
-              (lumen, "/altrove/lumen")).fetchone() is None, "")
+              (lumen, os.path.normpath("/altrove/lumen"))).fetchone() is None, "")
     prova("project_links HA (lumen-2, path, /altrove/lumen)",
           pid1 != lumen and conn.execute(
               "SELECT 1 FROM project_links WHERE project_id=? AND kind='path' AND value=?",
-              (pid1, "/altrove/lumen")).fetchone() is not None, "")
+              (pid1, os.path.normpath("/altrove/lumen"))).fetchone() is not None, "")
 
     # una sessione sotto la stessa cartella incidentale: lumen-2 ha ORA un
     # link path che la copre, quindi resolve_path_project la trova prima e
@@ -367,7 +368,9 @@ def _prova_caso_gia_coperto_non_crea_schede(prova):
     from plancia import ingest
 
     conn = _conn()
-    lumen = _manuale(conn, "lumen", path="/casa/lumen")
+    # il link e' scritto come lo scrive il sistema (su Windows `\\casa\\lumen`): il codice lo confronta
+    # con la cwd normalizzata
+    lumen = _manuale(conn, "lumen", path=os.path.normpath("/casa/lumen"))
 
     prima = conn.execute("SELECT COUNT(*) FROM projects").fetchone()[0]
     pid = ingest.progetto_per_cartella(conn, "/casa/lumen/sotto", {})

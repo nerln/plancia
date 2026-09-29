@@ -48,6 +48,11 @@ dei dati), i settings che neutralizzano il guardiano (`_prove_settings_5`) e i m
 (`_prove_minori_5`: ANSI-C, `cd` con graffe, il tetto dei percorsi, BaseException,
 hang, PYTHONPATH).
 
+Su Windows il guardiano non c'e': `bin/plancia-guardiano` esce subito senza negare niente
+e lo dice una volta per sessione (vedi `windows-hook.py`), e tutte le prove di questo file,
+che ragionano su percorsi e comandi POSIX, si segnano "saltato: non supportato su Windows"
+controllo per controllo, con lo stesso totale di macOS e Linux (vedi `_saltati.py`).
+
 Gli strumenti di sessione si provano con gli id che l'app manda davvero
 (`local_<uuid>`, nomi, `self`, `main`), risolti da un registro dell'app finto
 nella HOME temporanea (`claude-code-sessions/*/*/local_<uuid>.json`), con l'id
@@ -88,6 +93,21 @@ def _carica_finti():
 
 
 _finti = _carica_finti()
+
+
+def _carica_saltati():
+    """`_saltati.py` (materiale di supporto, non una prova) sta accanto a questo file."""
+    if "_saltati" not in sys.modules:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "_saltati", Path(__file__).resolve().parent / "_saltati.py")
+        modulo = importlib.util.module_from_spec(spec)
+        sys.modules["_saltati"] = modulo
+        spec.loader.exec_module(modulo)
+    return sys.modules["_saltati"]
+
+
+_saltati = _carica_saltati()
 GUARDIANO = RADICE / "bin" / "plancia-guardiano"
 PYTHON = "/usr/bin/python3" if os.path.exists("/usr/bin/python3") else sys.executable
 
@@ -4465,6 +4485,15 @@ def _prove_forma(prova):
 
 
 def esegui(prova):
+    # Su Windows il guardiano non c'e' (bin/plancia-guardiano esce subito e lo dice, vedi
+    # windows-hook.py): tutte le prove qui sotto ragionano su percorsi e comandi POSIX e si
+    # segnano saltate, controllo per controllo (vedi _saltati.py).
+    reale = prova
+    prova = _saltati.Contatore(reale)
+    if _saltati.WIN:
+        _saltati.salta_il_resto("guardiano", prova)
+        _saltati.chiudi("guardiano", prova, reale)
+        return
     _prove_forma(prova)
     _prove_errore_interno(prova)
     a = Ambiente()
@@ -4513,3 +4542,4 @@ def esegui(prova):
         _prove_limiti_6(prova)
     finally:
         a.chiudi()
+    _saltati.chiudi("guardiano", prova, reale)

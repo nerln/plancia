@@ -124,12 +124,13 @@ def _prove_pid_vivo(prova):
         prova("pid_vivo: pid non valido (0, -1, None, 'x') e' False senza toccare niente",
               [pf.pid_vivo(p, "linux") for p in (0, -1, None, "x")] == [False] * 4)
 
-    # Windows: mai os.kill. Prima tasklist (un host non Windows), poi ctypes.
+    # Windows: mai os.kill. Prima tasklist (un host non Windows: `nt=False`, anche quando la prova gira
+    # davvero su Windows, dove altrimenti si userebbe ctypes e non il tasklist finto), poi ctypes.
     del chiamate_kill[:]
     del comandi[:]
     with _Finto(os, kill=kill_finto), _Finto(pf, esegui=esegui_finto(_csv_tasklist(4242))):
-        vivo = pf.pid_vivo(4242, "windows")
-        altro_pid = pf.pid_vivo(4243, "windows")
+        vivo = pf.pid_vivo(4242, "windows", nt=False)
+        altro_pid = pf.pid_vivo(4243, "windows", nt=False)
     prova("[windows] pid_vivo non chiama mai os.kill", chiamate_kill == [], str(chiamate_kill))
     prova("[windows] pid_vivo passa da tasklist con il filtro sul pid",
           comandi and comandi[0][0][:3] == ["tasklist", "/FI", "PID eq 4242"], str(comandi[:1]))
@@ -137,14 +138,14 @@ def _prove_pid_vivo(prova):
           (vivo, altro_pid) == (True, False), str((vivo, altro_pid)))
     with _Finto(os, kill=kill_finto), _Finto(pf, esegui=esegui_finto(
             "INFORMAZIONI: nessuna attivita' in esecuzione corrisponde ai criteri.\r\n")):
-        nessuno = pf.pid_vivo(4242, "windows")
+        nessuno = pf.pid_vivo(4242, "windows", nt=False)
     with _Finto(os, kill=kill_finto), _Finto(pf, esegui=esegui_finto("", OSError("no tasklist"))):
-        rotto = pf.pid_vivo(4242, "windows")
+        rotto = pf.pid_vivo(4242, "windows", nt=False)
     prova("[windows] tasklist senza risultati, o che non parte: non vivo, nessuna eccezione",
           (nessuno, rotto) == (False, False))
     del comandi[:]
     with _Finto(os, kill=kill_finto), _Finto(pf, esegui=esegui_finto("")):
-        [pf.pid_vivo(p, "windows") for p in (0, -5, None, "abc")]
+        [pf.pid_vivo(p, "windows", nt=False) for p in (0, -5, None, "abc")]
     prova("[windows] un pid non valido non lancia nemmeno tasklist", comandi == [], str(comandi))
 
     # Windows su un host Windows: ctypes (kernel32 finto)
@@ -227,8 +228,11 @@ def _prove_punti_del_codice(prova):
 
     # i due punti del codice che lo usavano (riprendi e cantiere)
     del chiamate_kill[:]
+    def _senza_kernel32():
+        raise OSError("niente kernel32: si ripiega su tasklist, anche su un Windows vero")
+
     with _ambiente(PLANCIA_PIATTAFORMA="windows"), _Finto(os, kill=kill_finto), \
-            _Finto(pf, esegui=esegui_finto(_csv_tasklist(4242))):
+            _Finto(pf, esegui=esegui_finto(_csv_tasklist(4242)), _kernel32=_senza_kernel32):
         r_vivo, r_altro = riprendi._pid_vivo(4242), riprendi._pid_vivo(4243)
         c_vivo, c_altro, c_vuoto = cantiere._vivo(4242), cantiere._vivo(4243), cantiere._vivo(None)
     prova("[windows] riprendi._pid_vivo e cantiere._vivo non chiamano os.kill",

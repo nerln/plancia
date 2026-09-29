@@ -77,6 +77,29 @@ def _p(piatt):
     return piatt or nome()
 
 
+def compartimenti_supportati(piatt=None) -> bool:
+    """I compartimenti e il guardiano funzionano su questa piattaforma?
+
+    No su Windows. Le regole di appartenenza (`plancia/compartimenti.py`) ragionano
+    su percorsi POSIX: la cartella di un compartimento, lo specchio delle memorie in
+    `<claude>/projects/<percorso con i trattini>`, i comandi di shell che il guardiano
+    legge (`cd`, `cat`, `rm`, le redirezioni). Su Windows, con le lettere di unita' e
+    la barra rovesciata, non danno un risultato di cui ci si possa fidare, e un
+    confine di privacy che sbaglia in silenzio e' peggio di uno spento e dichiarato.
+    Quindi su Windows sono spenti: `compartimenti_viste.attivo()` torna None (Plancia
+    mostra tutto a tutti, com'e' senza compartimenti), il guardiano esce subito senza
+    negare niente e lo dice una volta per sessione, `plancia doctor` lo scrive se
+    config.json ne ha. Su macOS e Linux e' sempre vero: non cambia niente."""
+    return _p(piatt) != WINDOWS
+
+
+#: Cosa si dice a chi ha compartimenti o guardiano in config.json su Windows.
+NOTA_COMPARTIMENTI_WINDOWS = (
+    "compartimenti e guardiano non sono supportati su Windows (ragionano su percorsi "
+    "POSIX): qui sono spenti, il guardiano non nega niente e Plancia mostra tutto a "
+    "tutte le sessioni")
+
+
 # --------------------------------------------------------------------------
 # l'unico punto in cui si lancia qualcosa
 # --------------------------------------------------------------------------
@@ -148,6 +171,25 @@ def uscita_utf8(nt=None, flussi=None) -> None:
     if not (os.name == "nt" if nt is None else nt):
         return
     for flusso in (flussi if flussi is not None else (sys.stdout, sys.stderr)):
+        try:
+            flusso.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
+
+
+def stdio_utf8(nt=None, flussi=None) -> None:
+    """Su Windows fa leggere e scrivere UTF-8 allo stdin e allo stdout di un
+    processo che parla JSON con Claude Code o Codex (il server MCP).
+
+    L'installazione lo lancia gia' con `-X utf8` (vedi `argv_script`); questo copre chi
+    lo lancia a mano o da una configurazione scritta prima: con lo stdin in una pipe
+    Python su Windows usa cp1252, e un titolo con gli accenti finiva nel db come
+    mojibake. Un flusso assente (pythonw) o senza `reconfigure` non si tocca. Su macOS
+    e Linux non fa nulla."""
+    if not (os.name == "nt" if nt is None else nt):
+        return
+    for flusso in (flussi if flussi is not None
+                   else (sys.stdin, sys.stdout, sys.stderr)):
         try:
             flusso.reconfigure(encoding="utf-8", errors="replace")
         except (AttributeError, ValueError):

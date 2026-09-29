@@ -475,9 +475,13 @@ compartments on, `briefing.md` is not written (one file per compartment instead)
 and it comes back when they are removed.
 
 Limits worth knowing: folder rules compare POSIX paths (starting with `/` or
-`~`): a Windows drive-letter path is not recognised yet, so on Windows every
-object still falls in the default compartment. The daily recap that a scheduler
-runs has no session, so it is the default compartment's.
+`~`), so compartments and the guard below are for macOS and Linux only. On Windows
+they are switched off, on purpose and in the code: a `compartimenti` or `guardiano`
+entry in `config.json` is ignored, every session sees everything (the briefing is the
+plain one), the guard exits at once without denying anything and says "not supported
+on Windows" once per session, and `plancia doctor` and `plancia guardiano` say so.
+The daily recap that a scheduler runs has no session, so it is the default
+compartment's.
 
 ## Two decisions worth knowing about
 
@@ -543,7 +547,8 @@ Reads are open: it is your data, already on your disk.
 ### The compartment guard, and what it cannot see
 
 `bin/plancia-guardiano` is an optional PreToolUse hook that keeps two groups of work
-apart on one machine (see `plancia/compartimenti.py`). It is a heuristic analyser of
+apart on one machine (see `plancia/compartimenti.py`). It reads POSIX paths and shell
+commands, so it does nothing on Windows (see the limits above). It is a heuristic analyser of
 what a tool call says it will touch: a guard against incidents, and not a security boundary.
 It stops what an agent does without thinking, such as reading the other
 group's files, overwriting the guard's own config, or a recursive search that walks
@@ -567,7 +572,7 @@ warning each time). The full list is in the docstring of `plancia/compartimenti.
 git config core.hooksPath .githooks
 ```
 
-Turns on the hook that runs `python3 tools/prova.py` before every push: 4037
+Turns on the hook that runs `python3 tools/prova.py` before every push: 4090
 checks in a few minutes, against a throwaway archive that never touches
 yours. They cover the schema, the board, the proposals, the search index, the
 recap, the MCP surface and its token budget, every read route of the HTTP API,

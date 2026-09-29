@@ -155,11 +155,25 @@ def _cartelle_e_sessioni_escluse():
     return cartelle, sessioni, True
 
 
+def _su_windows():
+    """Si e' su Windows? Stessa regola di plancia/piattaforma.nome(): `os.name` (o la
+    variabile `PLANCIA_PIATTAFORMA=windows` che le prove usano per fingere). Qui non si
+    importa il pacchetto, quindi la regola vive in due posti."""
+    return os.name == "nt" or (
+        os.environ.get("PLANCIA_PIATTAFORMA", "").strip().lower() == "windows")
+
+
 def _config_con_nominati():
     """config.json nomina dei compartimenti (oltre a `predefinito`)? Una lettura
     e basta: senza compartimenti questo hook non importa il pacchetto e fa
     quello che ha sempre fatto. Una config che non si legge conta come "forse":
-    `compartimenti_viste.attivo()` puo' avere ancora l'ultima copia valida."""
+    `compartimenti_viste.attivo()` puo' avere ancora l'ultima copia valida.
+
+    Su Windows i compartimenti sono spenti (ragionano su percorsi POSIX, vedi
+    plancia/piattaforma.compartimenti_supportati): la risposta e' sempre no, e il
+    briefing e' quello di sempre anche se config.json ne nomina."""
+    if _su_windows():
+        return False
     try:
         with open(CONFIG, encoding="utf-8") as fh:
             cfg = json.load(fh)
@@ -266,10 +280,16 @@ def ancoraggio(cwd, filtro=None):
     """
     if not cwd:
         return ""
+    # Nei messaggi si scrive il percorso com'e' stato scritto da chi lo ha dato (su
+    # Windows `_norma` lo porta tutto minuscolo e con una sola barra, buono per confrontare
+    # e brutto da leggere, e Claude potrebbe rimetterlo in una scheda cosi'). Su macOS e
+    # Linux le due forme coincidono: il testo non cambia.
+    cwd_vero = _senza_fine(cwd)
     cwd = _norma(cwd)
 
     import sqlite3
     noti = {}
+    nomi_veri = {}
     con = sqlite3.connect(f"file:{DB}?mode=ro", uri=True, timeout=1.0)
     try:
         # Due fonti, non una: un progetto puo' essere legato a una cartella da un
@@ -284,6 +304,7 @@ def ancoraggio(cwd, filtro=None):
         ).fetchall()
         for percorso, chiave in righe:
             noti[_norma(percorso)] = chiave
+            nomi_veri[_norma(percorso)] = _senza_fine(percorso)
     finally:
         con.close()
     if filtro is not None:
@@ -298,7 +319,7 @@ def ancoraggio(cwd, filtro=None):
         elenco = ("  Progetti registrati qui dentro: " + ", ".join(figli)) if figli else ""
         return (
             "\n\nATTENZIONE: questa sessione e' aperta in una cartella contenitore, "
-            f"non dentro un progetto ({cwd}).\n"
+            f"non dentro un progetto ({cwd_vero}).\n"
             "  Da qui le schede dei file di un progetto NON si aprono (la radice della "
             "sessione e' questa cartella, e settings.json non conta) e ogni cd sposta "
             "solo la shell. Appena sai su quale progetto si lavora, PRIMA di scrivere "
@@ -315,19 +336,51 @@ def ancoraggio(cwd, filtro=None):
                  if percorso not in contenitori and _dentro(cwd, percorso)]
     if candidati:
         percorso, chiave = max(candidati, key=lambda pc: len(pc[0]))
-        return f"\n\nSessione ancorata al progetto `{chiave}` ({percorso})."
+        return f"\n\nSessione ancorata al progetto `{chiave}` ({nomi_veri.get(percorso, percorso)})."
 
     return (
-        f"\n\nQuesta cartella non risulta legata a nessun progetto di Plancia ({cwd}). "
+        f"\n\nQuesta cartella non risulta legata a nessun progetto di Plancia ({cwd_vero}). "
         "Prima di scrivere, cerca la scheda con `plancia` azione=projects; se non c'e', creala."
     )
+
+
+def _leggi_stdin():
+    """Il JSON che Claude Code manda su stdin, sempre letto come UTF-8.
+
+    `sys.stdin.read()` usa la tabella di caratteri del sistema: su Windows, con lo
+    stdin in una pipe, e' cp1252, e una cartella con un accento nel nome arrivava con
+    i caratteri sbagliati (`CittÃ `) nella coda e nei confronti dei percorsi. Un BOM
+    iniziale (lo mette PowerShell) non e' JSON e si toglie. Su macOS e Linux e' UTF-8
+    gia' di suo: niente cambia. Uno stdin che non ha `.buffer` (le prove lo sostituiscono
+    con un testo) si legge com'e'."""
+    buffer = getattr(sys.stdin, "buffer", None)
+    if buffer is None:
+        return sys.stdin.read()
+    return buffer.read().decode("utf-8-sig", "replace")
+
+
+def _scrivi_stdout(testo):
+    """Scrive `testo` su stdout in UTF-8, qualunque sia la tabella del sistema.
+
+    Su Windows, con l'uscita in una pipe, `sys.stdout.write` usa cp1252: la freccia
+    del briefing (cp1252 non ha quel carattere) alzava `UnicodeEncodeError`,
+    l'eccezione finiva nel `except` di chi chiama e la sessione partiva SENZA
+    briefing, in silenzio; un accento arrivava a Claude Code, che legge UTF-8, come
+    mojibake. Con i byte diretti su `sys.stdout.buffer` non c'e' tabella di mezzo."""
+    buffer = getattr(sys.stdout, "buffer", None)
+    if buffer is None:
+        sys.stdout.write(testo)
+        return
+    sys.stdout.flush()
+    buffer.write(testo.encode("utf-8", "replace"))
+    buffer.flush()
 
 
 def run():
     raw = ""
     try:
         if not sys.stdin.isatty():
-            raw = sys.stdin.read()
+            raw = _leggi_stdin()
     except Exception:
         pass
     try:
@@ -452,7 +505,7 @@ def run():
         except Exception:
             pass
         if text.strip():
-            sys.stdout.write(json.dumps({"hookSpecificOutput": {
+            _scrivi_stdout(json.dumps({"hookSpecificOutput": {
                 "hookEventName": "SessionStart",
                 "additionalContext": text,
             }}, ensure_ascii=False) + "\n")

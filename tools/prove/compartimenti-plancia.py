@@ -42,6 +42,13 @@ Le parti:
   nella vista di alfa e' di alfa;
 - config rotta: si usa l'ultima copia valida;
 - il filtro su un archivio grande, con il tempo che costa.
+
+Su Windows i compartimenti sono spenti (`piattaforma.compartimenti_supportati`: ragionano
+su percorsi POSIX). Gira davvero solo la parte "senza compartimenti" (e "con la sola voce
+`predefinito`"): l'hook, il richiamo, l'MCP e la dashboard vedono tutto. Tutto il resto si
+segna "saltato: non supportato su Windows" controllo per controllo, con lo stesso totale
+di macOS e Linux (vedi `_saltati.py`). Le prove del comportamento su Windows sono in
+`windows-hook.py`.
 """
 
 import json
@@ -73,6 +80,21 @@ def _carica_finti():
 
 
 _finti = _carica_finti()
+
+
+def _carica_saltati():
+    """`_saltati.py` (materiale di supporto, non una prova) sta accanto a questo file."""
+    if "_saltati" not in sys.modules:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "_saltati", Path(__file__).resolve().parent / "_saltati.py")
+        modulo = importlib.util.module_from_spec(spec)
+        sys.modules["_saltati"] = modulo
+        spec.loader.exec_module(modulo)
+    return sys.modules["_saltati"]
+
+
+_saltati = _carica_saltati()
 PYTHON = "/usr/bin/python3" if os.path.exists("/usr/bin/python3") else sys.executable
 
 MARCHI = {"alfa": "QUERCIA", "beta": "SALICE", "predefinito": "FAGGIO"}
@@ -374,6 +396,7 @@ def _hook(fix, comp: str, cwd=None, evento="SessionStart") -> dict:
 def _hook_payload(fix, payload) -> dict:
     p = subprocess.run([PYTHON, str(RADICE / "bin" / "plancia-hook")],
                        input=json.dumps(payload), capture_output=True, text=True,
+                       encoding="utf-8", errors="replace",
                        env=_env_sub(fix["env"]), timeout=60)
     testo = ""
     try:
@@ -510,6 +533,11 @@ def _rifiuto(esito) -> bool:
 # --------------------------------------------------------------------------
 
 def esegui(prova) -> None:
+    # Su Windows i compartimenti sono spenti (piattaforma.compartimenti_supportati):
+    # gira davvero solo la parte "senza compartimenti", il resto si segna saltato,
+    # controllo per controllo, con lo stesso totale di macOS e Linux (vedi _saltati.py).
+    reale = prova
+    prova = _saltati.Contatore(reale)
     base = Path(tempfile.mkdtemp(prefix="plancia-prova-comp-"))
     server = None
     try:
@@ -558,6 +586,12 @@ def esegui(prova) -> None:
         c, corpo = srv.get("/api/projects", testo=True)
         prova("con la sola voce `predefinito` la dashboard mostra tutto",
               "QUERCIA" in corpo and "FAGGIO" in corpo and "SALICE" in corpo)
+
+        if _saltati.WIN:
+            # Windows: i compartimenti nominati sono spenti, niente da provare oltre
+            _saltati.salta_il_resto("compartimenti-plancia", prova)
+            _saltati.chiudi("compartimenti-plancia", prova, reale)
+            return
 
         # ---- compartimenti configurati (guardiano spento: E1 non dipende da E3)
         _scrivi_config(env, comp=_config_comp(w))
@@ -971,6 +1005,7 @@ def esegui(prova) -> None:
         prova("nessuna prova ha lanciato un `claude` oltre a quello del lancio proprio "
               "(al piu' uno: il server MCP esce prima che il filo lo lanci)",
               not segnale.exists() or len(segnale.read_text().splitlines()) <= 1)
+        _saltati.chiudi("compartimenti-plancia", prova, reale)
     finally:
         if server is not None:
             server.chiudi()

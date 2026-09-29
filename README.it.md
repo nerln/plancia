@@ -578,8 +578,11 @@ rifiutati. Con i compartimenti attivi `briefing.md` non si scrive (c'e' un file
 per compartimento) e torna quando li si toglie.
 
 Limiti da sapere: le regole sulle cartelle confrontano percorsi POSIX (che
-iniziano con `/` o `~`): un percorso Windows con la lettera del disco non e' ancora
-riconosciuto, quindi su Windows ogni oggetto resta nel compartimento predefinito.
+iniziano con `/` o `~`), quindi i compartimenti e il guardiano qui sotto sono solo per
+macOS e Linux. Su Windows sono spenti, apposta e nel codice: una voce `compartimenti`
+o `guardiano` in `config.json` e' ignorata, ogni sessione vede tutto (il briefing e'
+quello di sempre), il guardiano esce subito senza negare niente e dice "non supportato
+su Windows" una volta per sessione, e `plancia doctor` e `plancia guardiano` lo dicono.
 Il riepilogo giornaliero lanciato da un pianificatore non ha una sessione, quindi
 e' quello del predefinito.
 
@@ -648,7 +651,8 @@ letture sono libere: sono dati tuoi, già sul tuo disco.
 ### Il guardiano dei compartimenti, e cosa non vede
 
 `bin/plancia-guardiano` è un hook PreToolUse facoltativo che tiene separati due gruppi
-di lavoro sulla stessa macchina (vedi `plancia/compartimenti.py`). È un analizzatore
+di lavoro sulla stessa macchina (vedi `plancia/compartimenti.py`). Legge percorsi e
+comandi di shell POSIX, quindi su Windows non fa niente (vedi i limiti sopra). È un analizzatore
 euristico di ciò che una chiamata di strumento dice di voler toccare: un guardiano di
 incidenti, non un confine di sicurezza. Ferma quello che un agente fa senza pensarci:
 leggere i file dell'altro gruppo, riscrivere la config del guardiano stesso, una
@@ -675,7 +679,7 @@ git config core.hooksPath .githooks
 ```
 
 Accende il gancio che fa girare `python3 tools/prova.py` prima di ogni push:
-4037 controlli in pochi minuti, su un archivio finto che non tocca
+4090 controlli in pochi minuti, su un archivio finto che non tocca
 il tuo.
 
 ## Licenza
