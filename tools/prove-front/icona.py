@@ -1,4 +1,5 @@
-"""Prove per ICONA: l'icona minimalista in Liquid Glass (docs/lotti/LOTTO-ICONA-2.md).
+"""Prove per ICONA: l'icona minimalista in Liquid Glass (docs/lotti/LOTTO-ICONA-2.md
+e, per il disegno del segno, docs/lotti/LOTTO-ICONA-3.md).
 
 Statiche: si leggono i sorgenti (mac/icona/Plancia.icon, mac/makeicon.swift,
 mac/build.sh, i due favicon), niente Xcode, niente build. L'unica eccezione è
@@ -7,8 +8,10 @@ gli strumenti da riga di comando). La funzione pubblica è `esegui(prova, radice
 la forma di tools/prova-front.py (vedi tools/prove-front/README.md).
 
 Le prove valgono per QUALUNQUE segno, non per uno in particolare: il primo giro
-disegnava un ago di bussola, il secondo la plancia di una nave, il terzo potrà
-essere altro. Il contratto tra i due file che disegnano è questo: gli SVG degli
+disegnava un ago di bussola, il secondo la plancia di una nave a più pezzi, il
+terzo (docs/lotti/LOTTO-ICONA-3.md) la stessa nave in una sagoma sola; un quarto
+potrà essere altro, e le soglie di forma qui sotto sono scelte di design da
+riaprire se il segno cambia davvero. Il contratto tra i due file che disegnano è questo: gli SVG degli
 strati sono fatti di percorsi M, L, Q, Z, un sottopercorso per forma, e
 mac/makeicon.swift dichiara le stesse forme come
 `let <nome> = Forma(punti: [CGPoint(x: .., y: ..), ...], raggio: ..)`, con la
@@ -425,8 +428,14 @@ def esegui(prova, radice):
     #    gradini, da clip-art.
     #  - Slanciato: il riquadro del segno intero è basso e lungo, altezza al più il
     #    48 per cento della larghezza (il secondo giro era al 53: tozzo).
+    #    Un buco non è "un riquadro dentro un altro": è anche girato al contrario (lo
+    #    stesso criterio della prova dei buchi più sotto). Un pezzo aggiunto DENTRO il
+    #    riquadro dello scafo o della casa (un albero corto, un oblò, un pannello) ma
+    #    girato come loro è una forma piena e va contata, non presa per un buco.
     piene = {n: sum(1 for i, sp in enumerate(sps)
-                    if not any(i != j and _dentro(sp, altro) for j, altro in enumerate(sps)))
+                    if not any(i != j and _dentro(sp, altro)
+                               and _area_con_segno(sp) * _area_con_segno(altro) < 0
+                               for j, altro in enumerate(sps)))
              for n, sps in dagli_svg.items()}
     prova("il segno ha pochi pezzi: in ogni strato al più due forme piene (scafo e una casa sola, niente gradini)",
           bool(piene) and max(piene.values()) <= 2, str(piene))
@@ -436,6 +445,22 @@ def esegui(prova, radice):
     prova("il segno è slanciato: il suo riquadro è alto al più il 48 per cento della larghezza (non tozzo)",
           slancio is not None and slancio <= 0.48,
           f"altezza/larghezza={None if slancio is None else round(slancio, 3)}")
+
+    # Le tre misure del terzo giro che tengono il segno grande e centrato nel corpo
+    # dell'icona (la tavola da 1024 del .icon), verdi anche prima e messe qui perché
+    # non derivino nei giri futuri: larghezza fra il 70 e il 78 per cento della
+    # tavola, centro del riquadro entro 40 unità dal centro in verticale (il segno
+    # è basso e lungo, il centro del riquadro sta un po' sopra il centro della
+    # tavola: 499,5 su 512) ed entro 20 in orizzontale.
+    larghezza_segno = ((riquadro_segno[2] - riquadro_segno[0]) / 1024) if riquadro_segno else None
+    prova("il segno è largo fra il 70 e il 78 per cento della tavola (né piccolo né a filo del bordo)",
+          larghezza_segno is not None and 0.70 <= larghezza_segno <= 0.78,
+          f"larghezza/tavola={None if larghezza_segno is None else round(larghezza_segno, 3)}")
+    centro_segno = (((riquadro_segno[0] + riquadro_segno[2]) / 2, (riquadro_segno[1] + riquadro_segno[3]) / 2)
+                    if riquadro_segno else None)
+    prova("il segno è centrato nella tavola: il centro del suo riquadro sta entro 20 unità (x) e 40 (y) dal centro",
+          centro_segno is not None and abs(centro_segno[0] - 512) <= 20 and abs(centro_segno[1] - 512) <= 40,
+          f"centro={None if centro_segno is None else tuple(round(v, 1) for v in centro_segno)}")
 
     ricalcolate = {n: (_arrotonda(p, r), _arrotonda(p, r, inverso=True)) for n, (p, r) in forme.items()}
     non_trovati = [nome for nome, sp in tutti_sp
@@ -573,6 +598,26 @@ def esegui(prova, radice):
         prova(f"{relativo}: il marchio accanto al nome (.{classe}) porta i percorsi degli SVG dell'icona",
               bool(corpo) and bool(percorsi_svg) and all(d in corpo for d in percorsi_svg.values())
               and "rotate(" not in corpo and "<circle" not in corpo)
+        # Il segno dentro la scatola del marchio: il gruppo è
+        # scale(lato/1024) translate(512 512) scale(zoom) translate(-cx -cy). Il riquadro
+        # del segno, portato in quella scatola, deve avere un margine per lato (almeno il
+        # 3 per cento della scatola: la prua non tocca il bordo, niente taglio a 24 px) e
+        # i due margini orizzontali devono differire di poco (segno centrato nella scatola).
+        m_tr = re.search(r"scale\(([\d.]+)\)\s*translate\(512 512\)\s*scale\(([\d.]+)\)\s*"
+                         r"translate\(-?([\d.]+)\s+-?([\d.]+)\)", corpo)
+        m_vb = re.search(r'viewBox="0 0 ([\d.]+) ([\d.]+)"', m.group(0) if m else "")
+        if m_tr and m_vb and riquadro_segno:
+            sc, zoom, cx, cy = (float(v) for v in m_tr.groups())
+            scatola = float(m_vb.group(1))
+            sx = [(sc * (512 + zoom * (x - cx))) / scatola for x in (riquadro_segno[0], riquadro_segno[2])]
+            sy = [(sc * (512 + zoom * (y - cy))) / scatola for y in (riquadro_segno[1], riquadro_segno[3])]
+            margini = (sx[0], 1 - sx[1], sy[0], 1 - sy[1])
+            ok_marchio = min(margini) >= 0.03 and abs(margini[0] - margini[1]) <= 0.02
+            dettaglio = "margini sx/dx/su/giù nella scatola=" + str(tuple(round(v, 3) for v in margini))
+        else:
+            ok_marchio, dettaglio = False, "trasformazione del marchio non riconosciuta"
+        prova(f"{relativo}: il segno nel marchio sta dentro la scatola con almeno il 3 per cento di margine per lato, "
+              "centrato in orizzontale (la prua non tocca il bordo)", ok_marchio, dettaglio)
         prova(f"{relativo}: il marchio attenua una parte una volta sola (opacity, senza stroke-opacity)",
               bool(corpo) and "opacity" in corpo and "stroke-opacity" not in corpo)
 
@@ -585,5 +630,20 @@ def esegui(prova, radice):
     tipo_colore = png.read_bytes()[25] if png.is_file() and len(png.read_bytes()) > 25 else None
     prova("site/img/icon.png è un quadrato pieno, senza canale alfa (apple-touch-icon: iOS riempie di nero la trasparenza)",
           tipo_colore in (0, 2), f"colour type={tipo_colore}")
+    # Il PNG è un binario generato (build.sh spiega come): senza questa misura può
+    # restare al segno del giro prima senza che niente diventi rosso. È la resa iOS,
+    # a tutto riquadro: il segno sta alle coordinate della tavola per lato/1024
+    # (la barca è chiara sul blu notte: la luminanza basta a isolarla).
+    png_icona = _leggi_png(png) if png.is_file() else None
+    box_png = _riquadro_acceso(png_icona, 0.0, 1.0) if png_icona else None
+    if box_png and riquadro_segno:
+        k = png_icona[0] / 1024
+        previsto_png = tuple(v * k for v in riquadro_segno)
+        scarto = max(abs(a - b) for a, b in zip(box_png, previsto_png))
+        prova("site/img/icon.png porta il segno corrente: il riquadro dei pixel chiari sta dove lo mettono gli SVG, entro 6 px",
+              scarto <= 6 * k * 2, f"misurato={box_png} previsto={tuple(round(v) for v in previsto_png)} scarto={round(scarto, 1)}")
+    else:
+        prova("site/img/icon.png porta il segno corrente: il riquadro dei pixel chiari sta dove lo mettono gli SVG, entro 6 px",
+              False, "PNG non leggibile (RGB/RGBA a 8 bit) o segno non trovato")
     prova("site/index.html usa site/img/icon.png come apple-touch-icon",
           'rel="apple-touch-icon" href="img/icon.png"' in _leggi(radice, "site/index.html"))

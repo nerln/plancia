@@ -52,6 +52,17 @@ echo "· icona"
 #     disegna la stessa forma con un vetro imitato (mac/makeicon.swift) e la
 #     trasforma in icns con `iconutil`. Il manifesto porta solo CFBundleIconFile.
 #  Se falliscono tutte e due, l'app resta senza icona propria e si costruisce lo stesso.
+#  site/img/icon.png (apple-touch-icon del sito) NON lo produce questo script: e' un
+#  binario a parte, RGB 512x512 senza alfa, e va rigenerato a mano ogni volta che
+#  cambia il segno. Si parte da una resa iOS del .icon a tutto riquadro:
+#    ictool mac/icona/Plancia.icon --export-image --output-file resa.png \
+#      --platform iOS --rendition Default --width 1024 --height 1024 --scale 1
+#  (ictool sta in Icon Composer, dentro Xcode 26+), si riduce a 512 e si toglie il
+#  canale alfa; se la resa ha gli angoli trasparenti o un contorno, il fondo fuori
+#  dal rettangolo centrale va riempito con il blu notte dello sfondo (un gradiente
+#  lineare, senza cuciture). Non c'e' un'opzione di ictool per il quadrato pieno.
+#  Se ti scordi, non passa inosservato: tools/prove-front/icona.py misura il
+#  riquadro dei pixel chiari del PNG e lo confronta con quello degli SVG (entro 6 px).
 ICONA_SRC="$ROOT/mac/icona/Plancia.icon"
 ICONA_TMP="$BUILD/icona"
 ICONA=""

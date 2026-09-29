@@ -15,8 +15,12 @@
 // un raggio che ne arrotonda gli spigoli: dal vertice si va verso i due vicini per
 // `raggio` unità (al più metà lato) e si chiude la curva con una quadratica che ha
 // il vertice per punto di controllo. È la stessa regola con cui sono scritti gli
-// SVG. I vetri stanno dentro la casa a distanza costante dai suoi bordi, e il loro
-// raggio è quello della casa meno quella distanza: gli angoli sono concentrici.
+// SVG. I vetri stanno dentro la casa a circa 38 unità dai suoi bordi alto, sinistro
+// e destro (misurato in perpendicolare: 37-39). Dal bordo basso no: la fascia sta sul
+// fronte alto della casa e sotto la casa continua per altre 200 unità fino allo scafo,
+// quindi quel lato non fa parte della regola e non va "corretto". Il raggio dei vetri
+// è quello della casa meno quella distanza (58 - 38 = 20), arrotondato a 21: gli
+// angoli in alto sono concentrici con quelli della casa.
 // Se cambi il segno di là, cambialo anche qui: tools/prove-front/icona.py
 // ricalcola i percorsi da queste coordinate e li confronta con gli SVG.
 //
