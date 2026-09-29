@@ -39,6 +39,15 @@ dati (`_prove_interpreti_e_scritture`), le cartelle annidate, i nominati sulla
 stessa cartella e la madre di un subagente (`_prove_annidati`) e i minori
 (`_prove_minori`).
 
+Il quinto giro aggiunge: i falsi positivi di un nominato per argomenti che cominciano
+con `/` senza essere percorsi (`_prove_falsi_positivi_regex`, 75 comandi onesti), le
+cartelle di codice condivise (`_prove_condivise`), i buchi di elenco del quarto tester
+(`_prove_gravi_5`: here-string, sostituzione di processo, script scritto e lanciato,
+`chmod` senza -R, `xargs`, cicli, graffe, interpreti; e i permessi tolti alla cartella
+dei dati), i settings che neutralizzano il guardiano (`_prove_settings_5`) e i minori
+(`_prove_minori_5`: ANSI-C, `cd` con graffe, il tetto dei percorsi, BaseException,
+hang, PYTHONPATH).
+
 Gli strumenti di sessione si provano con gli id che l'app manda davvero
 (`local_<uuid>`, nomi, `self`, `main`), risolti da un registro dell'app finto
 nella HOME temporanea (`claude-code-sessions/*/*/local_<uuid>.json`), con l'id
@@ -2651,6 +2660,849 @@ def _prove_minori(prova, a: Ambiente):
     a.togli_config()
 
 
+# --------------------------------------------------------------------------
+# quinto giro
+# --------------------------------------------------------------------------
+
+def _importa_compartimenti():
+    """Il modulo, per le prove che chiamano una sua funzione (None se non c'e':
+    sul commit di base la prova diventa rossa, non va in errore)."""
+    sys.path.insert(0, str(RADICE))
+    try:
+        from plancia import compartimenti
+        return compartimenti
+    except Exception:  # noqa: BLE001
+        return None
+    finally:
+        try:
+            sys.path.remove(str(RADICE))
+        except ValueError:
+            pass
+
+
+CASI_ONESTI = [
+    "sed -n '/^## Parte 1/,/^## Parte 2/p' file.md",
+    "awk '/^## Parte 1/{f=1;next} /^## Parte 2/{f=0} f' file.md",
+    "sed -n '/void load_remote_marker/,/^        }/p' src/x.cpp",
+    "sed -n '/60,min/p' f",
+    "sed -e '/foo/d' f",
+    "sed '/x/!d' f",
+    "sed -n '/a/,/b/{p}' f",
+    "awk '/foo/ {print $1}' f",
+    "awk '/foo/' f",
+    "awk '$1 ~ /x/' f",
+    "awk -F/ '{print $NF}' f",
+    "grep -n '</article>' index.html",
+    "grep '</div>' index.html",
+    "sed -i '' 's#</article>#</article>\\n#' page.html",
+    "sed -i '' 's|/usr/bin|/opt|' f",
+    "echo '</item>' >> feed.xml",
+    'echo \'<a href="/form.html">x</a>\' >> index.html',
+    "printf '</p>\\n' >> index.html",
+    'cat > form.html <<\'EOF\'\n<form action="/form.json"><input></form></article>\nEOF',
+    'cat > page.html <<EOF\n<article><a href="/prizes.html">x</a></article>\nEOF',
+    "python3 - <<'PY'\nprint('</item>')\nPY",
+    'python3 -c "print(\'</article>\')"',
+    'python3 -c "import re; print(re.sub(r\'/x/\', \'\', \'a/x/b\'))"',
+    'curl -s -X POST -d @form.json http://localhost:3000/form.html',
+    'curl -o out.json https://api.example.com/v1/x',
+    'curl http://localhost:3000/api/x',
+    "curl -s https://api.github.com/repos/x/y/pulls | jq '.[0].title'",
+    'gh api /repos/x/y/pulls',
+    'gh api repos/x/y/pulls',
+    'git clone https://github.com/x/y',
+    'pip install git+https://github.com/x/y.git',
+    'docker pull ghcr.io/x/y:tag',
+    "grep -rn '/api/users' src",
+    "rg '/api/v1' src",
+    "grep -E '^/[a-z]+' f",
+    "find . -path '*/x/*' -name '*.py'",
+    "git log --format='%h /%s' -5",
+    'ls */',
+    "tr '/' '_' < f",
+    'cut -d/ -f1 f',
+    'date +%Y/%m/%d',
+    "printf '%s/%s\\n' a b",
+    'echo $((10/2))',
+    'expr 4 / 2',
+    "awk 'BEGIN{print 4/2}'",
+    "jq '.a/2' data.json",
+    "bc <<< '4/2'",
+    'echo a/b',
+    'echo "a/b/c"',
+    'echo /article>',
+    'git show HEAD:src/x.cpp',
+    'git diff HEAD~1 -- src/x.cpp',
+    "git log -S'/foo/' --oneline",
+    "git grep '/foo'",
+    "git log --grep='/x'",
+    "git commit -m 'fix /api/users path'",
+    'git commit -m "fix: handle /item and </article> tags"',
+    "gh pr create --title 'x' --body 'touches /etc/hosts and </div>'",
+    "sed -n '1,/^$/p' f",
+    "sed '1d;$d' f",
+    "sed 's/\\//_/g' f",
+    "sed 's,/,_,g' f",
+    "perl -pe 's/\\/x\\//y/' f",
+    "perl -ne 'print if /^\\/x/' f",
+    'python3 -c "print(open(\'f\').read().split(\'/\'))"',
+    'node -e "console.log(\'a/b\'.split(\'/\'))"',
+    'ssh host cat /etc/hosts',
+    'docker exec c cat /app/x',
+    'scp host:/remote/path .',
+    'rsync host:/path .',
+    'kubectl exec p -- cat /etc/x',
+    'aws s3 ls s3://bucket/prefix/',
+    'unzip -p a.zip x/y',
+    'tar tf a.tgz x/y',
+    'docker run -v $PWD:/app -w /app x ls /app',
+]
+
+
+PIPE_ONESTE = [
+    "find . -name x | awk -F/ '{print $NF}'",
+    "find . -name '*.py' | sed 's,/,_,g'",
+    "find . -type f | tr '/' '_'",
+    "git ls-files | cut -d/ -f1 | sort -u",
+    "grep -rn foo . | awk -F: '{print $1}' | sed 's#/#-#g'",
+    "find . -name '*.md' | xargs grep -l '/etc/hosts'",
+    "rg -l '/api/v1' . | head",
+    "sed -n '/^# /p' file.md | awk '/x/'",
+    "gh api /repos/x/y/pulls --jq '.[].title'",
+    "gh pr view 3 --json title --jq '.title'",
+    "curl -s https://api.esempio.test/y | jq '.a/2'",
+    "git log --oneline | sed '/wip/d'",
+    "python3 -c \"print('</b>')\" && echo done",
+    "ls */ | grep '^/'",
+]
+
+
+def _prove_falsi_positivi_regex(prova, a: Ambiente):
+    """Quinto giro, punto 1: un argomento che comincia con `/` ma non e' un
+    percorso (la regex di sed/awk/grep/rg, un tag HTML, un endpoint di API, un
+    url) non fa negare un nominato. Un token e' un percorso candidato solo se sta
+    nella posizione di un file per un comando noto, o (comando sconosciuto) se
+    esiste o sta sotto una cartella che esiste. I 75 comandi onesti del quarto
+    tester: 0 negati per il nominato."""
+    a.togli_config()
+    # una cartella di alfa tutta nuova: le altre prove ci lasciano collegamenti e
+    # sottocartelle che un `ls */` seguirebbe fuori dai permessi (a ragione)
+    pulita = a.radice / "alfa-pulita"
+    pulita.mkdir(exist_ok=True)
+    cfg = a.config("bloccante")
+    cfg["compartimenti"]["alfa"]["cartelle"].append(str(pulita))
+    a.scrivi_config(cfg)
+    for f in ("file.md", "index.html", "page.html", "feed.xml", "src/x.cpp", "form.json",
+              "data.json", "f", "list.txt"):
+        p = pulita / f
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("x\n", "utf-8")
+    prova("regex: la lista dei comandi onesti e' di 75", len(CASI_ONESTI) == 75)
+
+    def alfa(cmd):
+        return a.chiama(a.pl("Bash", {"command": cmd}, sid=S_ALFA_LIBERA, aperta_in=pulita))
+
+    negati = []
+    for c in CASI_ONESTI:
+        if not alfa(c).ammesso:
+            negati.append(c[:70])
+    prova("regex: alfa, 75 comandi onesti con argomenti che cominciano con `/` senza esserlo: "
+          "0 negati", not negati, f"{len(negati)} negati: {negati[:6]}")
+    for c in PIPE_ONESTE:
+        r = alfa(c)
+        prova(f"regex: alfa, `{c[:56]}`: ammesso (nessun `/` di regex, `-F/` o `tr '/'` "
+              "diventa un percorso)", r.ammesso, repr(r))
+    # dal predefinito (cwd in un progetto senza divieti): i primi 60 restano ammessi
+    for f in ("file.md", "index.html", "page.html", "feed.xml", "src/x.cpp", "form.json",
+              "data.json", "f", "list.txt"):
+        p = a.progetto / f
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("x\n", "utf-8")
+    p_neg = [c[:70] for c in CASI_ONESTI[:60]
+             if not a.chiama(a.pl("Bash", {"command": c}, sid=S_COMUNE,
+                                  aperta_in=a.progetto)).ammesso]
+    prova("regex: predefinito, i primi 60 comandi onesti: 0 negati", not p_neg, str(p_neg[:6]))
+    # i veri accessi restano negati: la posizione di un file, o un percorso che esiste
+    nota = str(a.comune / "nota.txt")
+    nuovo = str(a.comune / "nuovo-file.txt")
+    veri = [
+        "find / -name x", "grep -r foo /", f"awk '{{print}}' {nota}",
+        f"sed -n '/x/p' {nota}", f"grep foo {nota}", f"rg foo {a.comune}",
+        f"mytool {nota}", f"mytool {nuovo}", f"git -C {a.comune} log",
+        f"python3 -c \"open('{nota}')\"", f"perl -ne print {nota}", f"jq . {nota}",
+        f"gh api --input {nota} /x", "cat /opt-inesistente-x/file", f"cat {nuovo}",
+        f"touch {nuovo}", f"mkdir {a.comune}/nuova-cartella", f"cp x {nuovo}",
+        f"mytool --out={nota}", f"docker run -v {a.comune}:/app x ls /app",
+        f"echo x > {nuovo}", f"sed -i '' s/a/b/ {nota}", f"awk -f {nota}",
+        f"grep -e foo -f {nota}", f"grep --include='*.py' foo {nota}",
+    ]
+    for c in veri:
+        r = alfa(c)
+        prova(f"regex: alfa, `{c[:60].replace(str(a.radice), '<R>')}`: resta negato (un file "
+              "vero nella posizione di un file, o un percorso che esiste)", r.negato, repr(r))
+    # una `/` da sola conta solo come radice di una ricerca del suo stesso comando
+    for c in ("ls /", "find . -name x | awk -F/ '{print $NF}'", "echo / | tr '/' _"):
+        prova(f"regex: alfa, `{c}`: ammesso (la `/` non e' una ricerca)", alfa(c).ammesso)
+    # il registro vero della macchina, rigiocato: i frammenti che compaiono come
+    # bersaglio (regex, HTML, `/script`) non sono percorsi plausibili, un percorso si
+    C = _importa_compartimenti()
+    plaus = getattr(C, "_plausibile", None)
+    frammenti = ["/script", "/article>", "/item", "/x", "/api/users", "/repos/x/y/pulls",
+                 "/app/x", "/^## Parte 1/,/^## Parte 2/p", "//y/",
+                 "/void load_remote_marker/,/^        }/p",
+                 "/^## Parte 1/{f=1;next} /^## Parte 2/{f=0} f", "/form.html", "/</b>"]
+    prova("regex: i frammenti di regex e HTML del registro vero non sono percorsi plausibili",
+          plaus is not None and not any(plaus(f) for f in frammenti),
+          str([f for f in frammenti if plaus and plaus(f)]))
+    prova("regex: ...un percorso che esiste, uno nuovo in una cartella che esiste, ~/x si",
+          plaus is not None and plaus(nota) and plaus(nuovo) and plaus("/etc/hosts")
+          and plaus("~/x") and plaus("relativo/x"))
+    a.togli_config()
+
+
+def _prove_condivise(prova, a: Ambiente):
+    """Quinto giro, punto 2: `condivise`, cartelle di codice (i checkout degli
+    strumenti) che tutti i compartimenti LEGGONO e in cui ESEGUONO, e in cui nessuno
+    scrive fuori dai propri permessi. La cartella dei dati di Plancia non e' mai
+    condivisa."""
+    cod = a.radice / "codice-condiviso"
+    (cod / "sub").mkdir(parents=True, exist_ok=True)
+    (cod / "tool.py").write_text("print(1)\n", "utf-8")
+    (cod / "README").write_text("x\n", "utf-8")
+    X = str(cod)
+    a.togli_config()
+
+    def alfa(cmd, cwd=None):
+        return a.chiama(a.pl("Bash", {"command": cmd}, sid=S_ALFA_LIBERA, aperta_in=a.alfa1,
+                             cwd=cwd))
+
+    # senza `condivise` la cartella e' fuori dai permessi come ogni altra
+    a.scrivi_config(a.config("bloccante"))
+    prova("condivise: senza la chiave, alfa non legge la cartella di codice",
+          alfa(f"cat {X}/README").negato)
+    prova("condivise: ...il default e' una lista vuota (config.DEFAULTS)",
+          _default_condivise() == [])
+    a.togli_config()
+    a.scrivi_config(a.config("bloccante", condivise=[X]))
+    for c in (f"cat {X}/README", f"python3 {X}/tool.py", f"ls -la {X}", f"grep -rn x {X}",
+              f"cd {X} && ls", f"cd {X} && python3 tool.py", f"find {X} -name '*.py'",
+              f"git -C {X} log --oneline", f"git -C {X} status", f"head -1 {X}/sub/../README",
+              f"bash {X}/tool.py", f"cp {X}/README {a.alfa1}/copia.txt",
+              f"cd {a.alfa1} && cp {X}/README . && python3 {X}/tool.py > out.txt"):
+        r = alfa(c)
+        prova(f"condivise: alfa, `{c[:58].replace(str(a.radice), '<R>')}`: ammesso "
+              "(lettura e esecuzione)", r.ammesso, repr(r))
+    for tool, ti in (("Read", {"file_path": X + "/tool.py"}),
+                     ("Grep", {"pattern": "x", "path": X}),
+                     ("Glob", {"pattern": "**/*.py", "path": X}),
+                     ("SendUserFile", {"files": [X + "/README"]})):
+        r = a.chiama(a.pl(tool, ti, sid=S_ALFA_LIBERA, aperta_in=a.alfa1))
+        prova(f"condivise: alfa, {tool} nella cartella condivisa: ammesso", r.ammesso, repr(r))
+    scrivono = [
+        f"echo x > {X}/x", f"touch {X}/y", f"cp {a.alfa1}/segreto.txt {X}/",
+        f"cp {a.alfa1}/segreto.txt {X}/z", f"rm {X}/README", f"git -C {X} pull",
+        f"sed -i '' s/a/b/ {X}/README", f"tar xf a.tgz -C {X}",
+        f"python3 -c \"open('{X}/x','w')\"", f"cd {X} && touch y", f"cd {X} && echo x > y",
+        f"mv {X}/README {X}/R2", f"tee {X}/t <<< x", f"rm -rf {X}/sub", f"mkdir {X}/nuova",
+        f"ln -s a {X}/l", f"python3 -c \"import os; os.system('rm {X}/README')\"",
+        f"find {X} -name README -delete", f"cd {X} && git checkout .",
+        f"cd {X} && cat > n.txt <<'EOF'\nx\nEOF", f"for f in {X}/*; do rm $f; done",
+        f"cd {X}/sub && rm -f ../README", f"chmod 000 {X}/README", f"truncate -s0 {X}/README",
+        f"rsync -a {a.alfa1}/ {X}/", f"curl -o {X}/x http://localhost/x",
+        f"git -C {X} checkout -b nuovo", f"echo x | xargs -I{{}} touch {X}/{{}}",
+    ]
+    for c in scrivono:
+        r = alfa(c)
+        prova(f"condivise: alfa, `{c[:58].replace(str(a.radice), '<R>').splitlines()[0]}`: negato "
+              "(la cartella condivisa non si scrive)",
+              r.negato and "condivisa" in r.motivo, repr(r))
+    for tool, ti in (("Write", {"file_path": X + "/new.py", "content": "x"}),
+                     ("Edit", {"file_path": X + "/tool.py", "old_string": "1", "new_string": "2"}),
+                     ("MultiEdit", {"file_path": X + "/tool.py",
+                                    "edits": [{"old_string": "1", "new_string": "2"}]}),
+                     ("NotebookEdit", {"notebook_path": X + "/n.ipynb"})):
+        r = a.chiama(a.pl(tool, ti, sid=S_ALFA_LIBERA, aperta_in=a.alfa1))
+        prova(f"condivise: alfa, {tool} nella cartella condivisa: negato, dice `condivisa`",
+              r.negato and "condivisa" in r.motivo, repr(r))
+    prova("condivise: alfa, il comune resta fuori dai permessi",
+          a.chiama(a.pl("Read", {"file_path": str(a.comune / "nota.txt")}, sid=S_ALFA_LIBERA,
+                        aperta_in=a.alfa1)).negato)
+    prova("condivise: alfa, scrivere nella propria cartella resta ammesso",
+          alfa(f"echo x > {a.alfa1}/mio.txt").ammesso)
+    prova("condivise: il predefinito non e' toccato (scrive e legge come prima)",
+          a.chiama(a.pl("Bash", {"command": f"echo x > {X}/x; cat {X}/README"},
+                        sid=S_COMUNE, aperta_in=a.progetto)).ammesso)
+    # cartelle di un nominato dentro una condivisa: vince il piu' specifico
+    a.togli_config()
+    a.scrivi_config(a.config("bloccante", condivise=[str(a.radice)]))
+    prova("condivise: una condivisa che contiene tutto: alfa legge il comune",
+          alfa(f"cat {a.comune}/nota.txt").ammesso)
+    r = alfa(f"cat {a.beta1}/b.txt")
+    prova("condivise: ...ma non la cartella di beta (piu' specifica): negato, appartiene a beta",
+          r.negato and "beta" in r.motivo, repr(r))
+    r = alfa(f"grep -rn x {a.radice}")
+    prova("condivise: ...e una ricerca dalla radice condivisa che include beta e' negata",
+          r.negato, repr(r))
+    prova("condivise: ...scrivere nella propria cartella dentro la condivisa e' ammesso",
+          alfa(f"echo x > {a.alfa1}/n2.txt").ammesso)
+    prova("condivise: ...scrivere nel comune (condiviso) no",
+          alfa(f"echo x > {a.comune}/n2.txt").negato)
+    # la cartella dei dati non e' mai condivisa, anche se ci sta dentro
+    for chi, tgt in (("dentro una condivisa", f"cat {a.dati}/config.json"),
+                     ("le trascrizioni", f"cat {a.claude}/projects/x.jsonl")):
+        r = alfa(tgt)
+        prova(f"condivise: {chi} (la radice e' condivisa): i dati/le trascrizioni restano "
+              "fuori dai permessi", r.negato, repr(r))
+    a.togli_config()
+    a.scrivi_config(a.config("bloccante", condivise=[str(a.dati), str(a.dati / "sotto"), X]))
+    r = alfa(f"cat {a.dati}/config.json")
+    righe = [x for x in a.registro() if x.get("esito") == "nota"]
+    prova("condivise: una voce che e' la cartella dei dati (o sta dentro) e' ignorata: i dati "
+          "restano negati", r.negato, repr(r))
+    prova("condivise: ...con una nota nel registro (e le altre voci valgono)",
+          len(righe) == 1 and "dati" in righe[0].get("motivo", "")
+          and alfa(f"cat {X}/README").ammesso, str(righe))
+    # `solo-registro`: non nega, scrive `avrebbe-negato`
+    a.togli_config()
+    a.scrivi_config(a.config("solo-registro", condivise=[X]))
+    n0 = len(a.registro())
+    r = alfa(f"echo x > {X}/x")
+    righe = a.registro()
+    prova("condivise: solo-registro: la scrittura e' ammessa e lascia `avrebbe-negato`",
+          r.ammesso and len(righe) == n0 + 1 and righe[-1]["esito"] == "avrebbe-negato",
+          str(righe[-1:]))
+    # config: chiave con tipo sbagliato = config rotta (fail-closed con la copia)
+    a.togli_config()
+    a.scrivi_config(a.config("bloccante", condivise=[X]))
+    alfa(f"cat {X}/README")
+    a.scrivi_config(a.config("bloccante", condivise="non-una-lista"))
+    r = alfa(f"cat {a.comune}/nota.txt")
+    prova("condivise: `condivise` di tipo sbagliato e' config rotta: alfa e' ancora confinata "
+          "con l'ultima config valida", r.negato, repr(r))
+    prova("condivise: ...e l'ultima config valida ha ancora la condivisa",
+          alfa(f"cat {X}/README").ammesso)
+    # la CLI e l'autoprotezione
+    a.togli_config()
+    a.scrivi_config(a.config("bloccante", condivise=[X]))
+    for chi, kw in (("predefinito", dict(sid=S_COMUNE, aperta_in=a.progetto)),
+                    ("alfa", dict(sid=S_ALFA_LIBERA, aperta_in=a.alfa1))):
+        for cmd in ("plancia config condivise '[\"/tmp/x\"]'",
+                    "python3 -m plancia.cli config condivise '[]'"):
+            r = a.chiama(a.pl("Bash", {"command": cmd}, **kw))
+            prova(f"condivise: {chi}, `{cmd[:50]}`: negato (chiave del guardiano)", r.negato, repr(r))
+    env = dict(a.env())
+    env["PYTHONPATH"] = str(RADICE)
+
+    def plancia(*args):
+        p = subprocess.run([sys.executable, str(RADICE / "bin" / "plancia"), *args], env=env,
+                           cwd=str(RADICE), capture_output=True, timeout=60)
+        return p.returncode, p.stdout.decode("utf-8", "replace") + p.stderr.decode("utf-8", "replace")
+
+    a.togli_config()
+    rc, out = plancia("config", "condivise", json.dumps([X]))
+    letta = _testo(a.dati / "config.json")
+    prova("condivise: `plancia config condivise '[...]'` scrive la lista", rc == 0 and X in letta,
+          out + letta[:200])
+    rc, out = plancia("config", "condivise", json.dumps([str(a.dati)]))
+    prova("condivise: ...rifiuta la cartella dei dati (uscita 2, config invariata)",
+          rc == 2 and "dati" in out and X in _testo(a.dati / "config.json")
+          and str(a.dati) not in _testo(a.dati / "config.json"), out)
+    rc, out = plancia("config", "condivise", "solo-una-stringa")
+    prova("condivise: ...rifiuta un valore che non e' una lista di cartelle (uscita 2)",
+          rc == 2, out)
+    rc, out = plancia("config", "condivise", json.dumps(["relativa/x"]))
+    prova("condivise: ...rifiuta una cartella non assoluta (uscita 2)", rc == 2, out)
+    a.scrivi_config(a.config("solo-registro", condivise=[X]))
+    rc, out = plancia("guardiano", "--stato")
+    prova("condivise: `plancia guardiano --stato` dice quante cartelle condivise (non i percorsi)",
+          rc == 0 and "condivise: 1" in out and X not in out, out)
+    a.togli_config()
+
+
+def _default_condivise():
+    """`config.DEFAULTS["condivise"]`, o None se la chiave non c'e'."""
+    try:
+        from plancia import config
+        return config.DEFAULTS.get("condivise")
+    except Exception:  # noqa: BLE001
+        return None
+
+
+# Testo che arriva a un esecutore per vie non coperte dal quarto giro. `@@` e' il
+# file da leggere (di un altro compartimento), `@D@` la cartella di lavoro.
+CASI_G5_TESTO = [
+    # here-string a una shell o a un interprete
+    "sh <<< 'cat @@'", "bash <<< \"cat @@\"", "zsh <<< 'cat @@'", "sh -s <<< 'cat @@'",
+    "sh - <<< 'cat @@'", "eval <<< 'cat @@'", "echo x | sh <<< 'cat @@'",
+    "read c <<< 'cat @@'; sh -c \"$c\"", "python3 <<< \"print(open('@@').read())\"",
+    "sh <<<'cat @@'", "sh <<<\"cat @@\"", "cat <<< 'x'; sh <<< 'cat @@'",
+    "node <<< \"console.log(require('fs').readFileSync('@@','utf8'))\"",
+    # sostituzione di processo e eval con $(echo ...)
+    "bash <(echo 'cat @@')", "source <(echo 'cat @@')", ". <(echo 'cat @@')",
+    "sh <(printf 'cat @@')", "bash --rcfile <(echo 'cat @@') -i",
+    "eval \"$(echo 'cat @@')\"", "sh -c \"$(echo 'cat @@')\"",
+    "bash -c \"$(printf 'cat @@')\"", "sh <(echo cat @@)", "bash <(printf 'cat %s' @@)",
+    "echo 'cat @@' | /usr/bin/env bash", "echo 'cat @@' | env sh",
+    # script scritto e poi lanciato per percorso
+    "echo 'cat @@' > run.sh; ./run.sh", "echo 'cat @@' > run.sh; chmod +x run.sh; ./run.sh",
+    "printf 'cat @@\\n' > run.sh; chmod 755 run.sh && ./run.sh",
+    "cat > run.sh <<'EOF'\ncat @@\nEOF\nchmod +x run.sh && ./run.sh",
+    "tee run.sh <<EOF\ncat @@\nEOF\nsh run.sh",
+    "echo 'cat @@' | tee run.sh; sh run.sh",
+    "echo 'cat @@' > run.sh; chmod 755 run.sh; ./run.sh",
+    "f=$(mktemp); echo 'cat @@' > $f; sh $f", "f=$(mktemp); echo 'cat @@' > $f; bash < $f",
+    "f=$(mktemp); printf 'cat @@' > \"$f\"; . \"$f\"", "f=$(mktemp); echo 'cat @@' > $f; chmod +x $f; $f",
+    "echo 'cat @@' > /tmp/run.sh; /tmp/run.sh",
+    "echo 'cat @@' > s.sh && sh -c \"$(<s.sh)\"", "echo 'cat @@' > s.sh && sh -c \"$(cat s.sh)\"",
+    "echo 'cat @@' > s.sh && sh -c `cat s.sh`", "echo 'cat @@' > s.sh && eval \"`cat s.sh`\"",
+    "echo 'cat @@' > s.sh && eval $(cat s.sh)", "echo 'cat @@' > s.sh; eval \"$(cat s.sh)\"",
+    "echo @@ > list && cat $(<list)", "echo @@ > list && cat $(cat list)",
+    "echo @@ > list && cat `cat list`", "echo @@ > list && head -1 $(cat list)",
+    "echo @@ > list && ls -la $(cat list)", "echo @@ > list && cat \"$(cat list)\"",
+    "echo @@ > list && cat < $(cat list)", "echo @@ > list && cat list | xargs cat",
+    "echo @@ > list; for f in $(cat list); do cat $f; done",
+    "echo @@ > list && xargs -a list cat",
+    # virgolette ANSI-C
+    "cat $'@@'", "cat $\"@@\"",
+]
+
+# Scritture ai file del guardiano e alla sua cartella. `@D@` e' la cartella dei
+# dati, `@R@` il checkout da cui gira l'hook.
+CASI_G5_DATI = [
+    # chmod senza -R sulla cartella dei dati e sul codice
+    "chmod 000 @D@", "chmod 0 @D@", "chmod u-x @D@", "chmod a-rwx @D@/config.json",
+    "chmod 000 @R@/plancia", "chmod 000 @R@/bin", "chmod -x @D@", "chown nobody @D@",
+    "python3 -c \"import os; os.chmod(os.path.expanduser('~/.plancia'),0)\"",
+    "python3 -c \"import os; os.chmod('@D@',0)\"", "python3 -c \"import os; os.chmod('@R@/plancia',0)\"",
+    "ln -sfn /tmp/x @D@", "ln -sfn /tmp/x @R@/plancia",
+    # xargs, cicli, graffe, sostituzioni
+    "find @D@ -name config.json | xargs rm", "find @D@ -name config.json -print0 | xargs -0 rm",
+    "find @D@ -type f | xargs rm -f", "ls @D@ | xargs rm", "ls @D@/config.json | xargs rm",
+    "echo @D@/config.json | xargs rm", "echo @D@/config.json | xargs -I{} truncate -s0 {}",
+    "echo @D@/config.json | xargs sed -i '' s/a/b/", "xargs rm <<< @D@/config.json",
+    "xargs rm <<'EOF'\n@D@/config.json\nEOF",
+    "rm @D@/{config,x}.json", "rm @D@/config.{json,bak}", "rm @D@/{config.json,x}",
+    "rm @D@/con{fig,x}.json", "mv @D@/{config.json,x}", "rm @D@/{config.json,x}",
+    "rm $(ls @D@/config.json)", "rm `ls @D@/config.json`", "rm $(echo @D@/config.json)",
+    "truncate -s0 $(echo @D@/config.json)", "mv $(ls @D@/config.json) /tmp/x",
+    "for f in @D@/config.json; do rm $f; done", "for f in @D@/*.json; do : > $f; done",
+    "for f in @D@/config.json @D@/x; do rm -f \"$f\"; done",
+    "for f in @D@/*.json; do\n  truncate -s0 $f\ndone",
+    "while read f; do rm $f; done <<< @D@/config.json",
+    "find @D@ -name config.json | while read f; do rm $f; done",
+    "cat <<'EOF' | xargs rm\n@D@/config.json\nEOF",
+    # scritture dentro interpreti (system, subprocess, fs, rename, open con parentesi annidate)
+    "python3 -c \"import os; os.system('rm @D@/config.json')\"",
+    "python3 -c \"import subprocess; subprocess.run(['rm', '@D@/config.json'])\"",
+    "python3 -c \"import subprocess; subprocess.check_call('rm @D@/config.json', shell=True)\"",
+    "python3 -c \"import subprocess; subprocess.run(['plancia','config','guardiano','spento'])\"",
+    "python3 -c \"import os; os.system('plancia config guardiano spento')\"",
+    "python3 -c \"import os; os.system('sed -i s/a/b/ @D@/config.json')\"",
+    "python3 -c \"import os; open(os.path.expanduser('~/.plancia/config.json'), 'w').close()\"",
+    "python3 -c \"import os; open(os.path.expanduser('~/.plancia/config.json'), 'w')\"",
+    "python3 -c \"import os; open(os.path.join(os.path.expanduser('~'), '.plancia', 'config.json'), 'w')\"",
+    "python3 -c \"open('@D@/config.json', 'w')\"",
+    "python3 -c \"import os; open(os.path.expanduser('~/.plan'+'cia/config.json'),'w')\"",
+    "python3 -c \"import shutil; shutil.rmtree('@R@/plancia')\"",
+    "node -e \"require('child_process').execSync('rm @D@/config.json')\"",
+    "node -e \"require('fs').rmSync('@D@/config.json')\"",
+    "node -e \"require('fs').rmSync('@D@',{recursive:true})\"",
+    "node -e \"require('fs').renameSync('@D@/config.json','/tmp/x')\"",
+    "node -e \"require('fs').truncateSync('@D@/config.json')\"",
+    "ruby -e 'system(\"rm @D@/config.json\")'", "perl -e 'system(\"rm @D@/config.json\")'",
+    "perl -e 'rename \"@D@/config.json\", \"/tmp/x\"'",
+    "osascript -e 'do shell script \"rm @D@/config.json\"'",
+    "echo hi >& @D@/config.json", "echo hi 1<> @D@/config.json", "echo hi &> @D@/config.json",
+    "patch @D@/config.json /tmp/p.diff", "ditto /tmp/c.json @D@/config.json",
+    "gzip @D@/config.json", "sort -o @D@/config.json /tmp/x",
+    "mkdir -p @R@/plancia/__pycache__ && echo x > @R@/plancia/__pycache__/compartimenti.cpython-39.pyc",
+]
+
+
+def _prove_gravi_5(prova, a: Ambiente):
+    """Quinto giro, punto 3: buchi di elenco del quarto tester. Il testo che arriva a
+    un esecutore per vie nuove (here-string, sostituzione di processo, script scritto
+    e lanciato per percorso, `$(cat f)`), e le scritture al guardiano con `chmod`
+    senza -R, `xargs`, cicli, graffe, sostituzioni, e dentro gli interpreti. Ognuna
+    negata al predefinito (verso un file di alfa) e a alfa (verso il comune)."""
+    a.togli_config()
+    a.scrivi_config(a.config("bloccante"))
+    fuori_alfa, fuori_comune = str(a.alfa1 / "segreto.txt"), str(a.comune / "nota.txt")
+    dati, radice = str(a.dati), str(RADICE)
+
+    def esegui(chi, cmd):
+        if chi == "P":
+            return a.chiama(a.pl("Bash", {"command": cmd}, sid=S_COMUNE, aperta_in=a.progetto))
+        return a.chiama(a.pl("Bash", {"command": cmd}, sid=S_ALFA_LIBERA, aperta_in=a.alfa1))
+
+    passati = {"P": [], "A": []}
+    for c in CASI_G5_TESTO:
+        for chi, tgt in (("P", fuori_alfa), ("A", fuori_comune)):
+            cmd = c.replace("@@", tgt)
+            if not esegui(chi, cmd).negato:
+                passati[chi].append(cmd.replace(str(a.radice), "<R>")[:80])
+    prova("gravi5-testo: la lista dei casi e' di almeno 50", len(CASI_G5_TESTO) >= 50,
+          str(len(CASI_G5_TESTO)))
+    prova("gravi5-testo: dal predefinito nessun idioma passa (verso un file di alfa)",
+          not passati["P"], f"{len(passati['P'])} passati: {passati['P'][:6]}")
+    prova("gravi5-testo: da alfa nessun idioma passa (verso un file del comune)",
+          not passati["A"], f"{len(passati['A'])} passati: {passati['A'][:6]}")
+    # usi ordinari che devono restare ammessi
+    nota = str(a.alfa1 / "nota-nuova.txt")
+    ammessi_a = [
+        f"cat <<< 'vedi {fuori_comune}' > {nota}", "cat <<< 'ciao'", "read x <<< 'ciao'; echo $x",
+        f"echo 'vedi {fuori_comune}' > s.sh && cat s.sh", f"echo 'vedi {fuori_comune}' > s.sh; ls",
+        f"echo 'vedi {fuori_comune}' | tee s.sh", "f=$(mktemp); echo ciao > $f; cat $f",
+        "echo ciao > lista && cat lista | wc -l", "echo ciao > lista; git commit -m \"$(cat lista)\"",
+        "grep -c x <<< 'x'", "bc <<< '4/2'", "cat <(echo ciao)", "diff <(echo a) <(echo b)",
+        f"echo 'cat {fuori_comune}' > note.txt; cat note.txt",
+        "for f in a b c; do echo $f; done", "for f in *.txt; do wc -l $f; done",
+        "while read l; do echo $l; done <<< 'a b'",
+    ]
+    for cmd in ammessi_a:
+        r = esegui("A", cmd)
+        prova(f"gravi5-testo: alfa, `{cmd[:60].splitlines()[0]}`: ammesso (uso ordinario)",
+              r.ammesso, repr(r))
+    # scritture al guardiano
+    # dal predefinito: per alfa la cartella dei dati e' comunque fuori dai permessi
+    passate = []
+    for c in CASI_G5_DATI:
+        cmd = c.replace("@D@", dati).replace("@R@", radice)
+        if not esegui("P", cmd).negato:
+            passate.append(cmd.replace(dati, "<dati>").replace(radice, "<R>")[:80])
+    prova("gravi5-dati: la lista dei casi e' di almeno 70", len(CASI_G5_DATI) >= 70,
+          str(len(CASI_G5_DATI)))
+    prova("gravi5-dati: dal predefinito nessuna scrittura al guardiano passa",
+          not passate, f"{len(passate)} passate: {passate[:6]}")
+    p = str(a.progetto)
+    (a.progetto / "a.txt").write_text("x", "utf-8")
+    ammessi = [
+        f"chmod +x {dati}/qualcosa.sh", f"chmod 644 {p}/a.txt", f"chmod 000 {p}",
+        f"rm {p}/a.txt", f"for f in {p}/*.txt; do rm $f; done",
+        f"find {p} -name '*.tmp' | xargs rm", f"find {p} -name '*.tmp' -print0 | xargs -0 rm -f",
+        "echo x | xargs rm", f"rm $(ls {p}/a.txt)", f"rm {p}/{{a,b}}.txt",
+        f"python3 -c \"import subprocess; subprocess.run(['cat','{dati}/config.json'])\"",
+        f"python3 -c \"import os; os.system('cat {dati}/config.json')\"",
+        f"python3 -c \"import subprocess; subprocess.run(['rm','{p}/a.txt'])\"",
+        f"node -e \"console.log(require('fs').readFileSync('{dati}/config.json','utf8'))\"",
+        f"cat {dati}/config.json | xargs -I{{}} echo {{}}", f"ls {dati} | xargs -n1 echo",
+        "echo hi 2>&1 | tee log.txt", "echo x >&2", "ls > /dev/null 2>&1", "echo hi >& /dev/null",
+        f"python3 -c \"open('{p}/x.txt', 'w')\"", f"gzip {p}/a.txt", f"sort -o {p}/b.txt {p}/a.txt",
+        f"ln -s {p}/a.txt {p}/l", f"ln -sfn {p}/a.txt {p}/l2",
+        f"cat {dati}/config.json", f"ls -la {dati}", f"stat {dati}", f"chmod -R u+w {p}",
+    ]
+    for cmd in ammessi:
+        r = esegui("P", cmd)
+        prova(f"gravi5-dati: predefinito, `{cmd[:60]}`: ammesso", r.ammesso, repr(r))
+    a.togli_config()
+    _prove_permessi_dati(prova, a)
+
+
+def _prove_permessi_dati(prova, a: Ambiente):
+    """Un `chmod 000` che c'e' gia' stato (a mano, o prima che il guardiano fosse
+    bloccante) non spegne il guardiano in silenzio: senza permessi sulla cartella
+    dei dati l'hook lo dice con un `systemMessage`; se resta leggibile la copia
+    dell'ultima config, l'hook continua a negare."""
+    a.togli_config()
+    a.scrivi_config(a.config("bloccante"))
+    alfa_f = str(a.alfa1 / "segreto.txt")
+    lett = a.pl("Bash", {"command": f"cat {alfa_f}"}, sid=S_COMUNE, aperta_in=a.progetto)
+    innocua = a.pl("Read", {"file_path": str(a.progetto / "p.txt")}, sid=S_COMUNE,
+                   aperta_in=a.progetto)
+    r0 = a.chiama(lett)
+    prova("permessi: base, il predefinito che legge un file di alfa e' negato (e la copia "
+          "dell'ultima config c'e')", r0.negato
+          and (a.dati / "compartimenti.ultima-valida.json").exists(), repr(r0))
+    for f in ("guardiano.permessi-avviso", "guardiano.config-illeggibile"):
+        try:
+            (a.dati / f).unlink()
+        except OSError:
+            pass
+    os.chmod(a.dati / "config.json", 0)
+    try:
+        r = a.chiama(innocua)
+        prova("permessi: config.json senza permessi (la copia si legge): un avviso "
+              "`systemMessage` a chi non e' negato", r.rc == 0 and "systemMessage" in r.out
+              and "permessi" in r.out, repr(r))
+        r = a.chiama(lett)
+        prova("permessi: ...e l'hook continua a negare con la copia dell'ultima config",
+              r.negato, repr(r))
+    finally:
+        os.chmod(a.dati / "config.json", 0o644)
+    for f in ("guardiano.permessi-avviso", "guardiano.config-illeggibile"):
+        try:
+            (a.dati / f).unlink()
+        except OSError:
+            pass
+    os.chmod(a.dati, 0)
+    try:
+        r = a.chiama(lett)
+        prova("permessi: la cartella dei dati con `chmod 000`: l'hook esce 0 ma lo DICE "
+              "(`systemMessage` con i permessi), non e' un fail-open muto",
+              r.rc == 0 and "systemMessage" in r.out and "permessi" in r.out, repr(r))
+        r2 = a.chiama(lett)
+        prova("permessi: ...e lo dice a ogni chiamata finche' non si riparano (la marca "
+              "non si puo' scrivere)", r2.rc == 0 and "systemMessage" in r2.out, repr(r2))
+    finally:
+        os.chmod(a.dati, 0o755)
+    r = a.chiama(lett)
+    prova("permessi: ripristinati i permessi l'hook torna a negare, senza avvisi",
+          r.negato and "systemMessage" not in r.out, repr(r))
+    a.togli_config()
+
+
+def _voce(**extra_hook):
+    """La voce PreToolUse del guardiano con un campo del comando cambiato."""
+    h = {"type": "command", "command": VOCE_GUARDIANO}
+    h.update(extra_hook)
+    return h
+
+
+def _prove_settings_5(prova, a: Ambiente):
+    """Quinto giro, punto 3: oltre alla voce e a disableAllHooks, un settings.json
+    non puo' neutralizzare il guardiano con un `env` (PLANCIA_HOME, PYTHONPATH,
+    HOME...), un `matcher` che lo restringe, un `timeout` di zero, `async`, un `if`,
+    o spostando la voce sotto un altro evento."""
+    a.togli_config()
+    a.scrivi_config(a.config("bloccante"))
+    utente = a.claude / "settings.json"
+    utente.write_text(_settings(), "utf-8")
+    proj = a.progetto / ".claude" / "settings.local.json"
+    proj.parent.mkdir(parents=True, exist_ok=True)
+    proj.write_text('{"permissions": {"allow": ["Bash(ls:*)"]}}', "utf-8")
+
+    def pred(tool, ti):
+        return a.chiama(a.pl(tool, ti, sid=S_COMUNE, aperta_in=a.progetto))
+
+    def scrivi(extra=None, hooks=None, file=None):
+        d = {"theme": "dark", "hooks": hooks if hooks is not None else {
+            "PreToolUse": [{"matcher": "*", "hooks": [_voce()]}]}}
+        d.update(extra or {})
+        return pred("Write", {"file_path": str(file or utente), "content": json.dumps(d)})
+
+    r = scrivi()
+    prova("settings5: base, la stessa voce riscritta identica: ammesso", r.ammesso, repr(r))
+    for nome, hooks in (
+            ("matcher Nothing", {"PreToolUse": [{"matcher": "Nothing", "hooks": [_voce()]}]}),
+            ("matcher Read", {"PreToolUse": [{"matcher": "Read", "hooks": [_voce()]}]}),
+            ("matcher Bash|Edit", {"PreToolUse": [{"matcher": "Bash|Edit", "hooks": [_voce()]}]}),
+            ("timeout 0", {"PreToolUse": [{"matcher": "*", "hooks": [_voce(timeout=0)]}]}),
+            ("timeout 0.1", {"PreToolUse": [{"matcher": "*", "hooks": [_voce(timeout=0.1)]}]}),
+            ("timeout negativo", {"PreToolUse": [{"matcher": "*", "hooks": [_voce(timeout=-1)]}]}),
+            ("async true", {"PreToolUse": [{"matcher": "*", "hooks": [_voce(**{"async": True})]}]}),
+            ("if Bash(ls)", {"PreToolUse": [{"matcher": "*", "hooks": [_voce(**{"if": "Bash(ls)"})]}]}),
+            ("type diverso", {"PreToolUse": [{"matcher": "*", "hooks": [_voce(type="prompt")]}]}),
+            ("la voce sotto PostToolUse", {"PostToolUse": [{"matcher": "*", "hooks": [_voce()]}]}),
+            ("la voce sotto Stop", {"Stop": [{"hooks": [_voce()]}]}),
+            ("la voce sotto un evento e un'altra al suo posto",
+             {"PreToolUse": [{"matcher": "*", "hooks": [{"type": "command", "command": "/usr/bin/true"}]}],
+              "Stop": [{"hooks": [_voce()]}]}),
+            ("il comando con un ripiego", {"PreToolUse": [{"matcher": "*", "hooks": [
+                _voce(command=VOCE_GUARDIANO + " || true")]}]}),
+    ):
+        r = scrivi(hooks=hooks)
+        prova(f"settings5: Write con {nome}: negato, dice che spegnerebbe il guardiano",
+              r.negato and "plancia-guardiano" in r.motivo, repr(r))
+    for k, v in (("PLANCIA_HOME", "/tmp/nessuno"), ("HOME", "/tmp/nessuno"),
+                 ("CLAUDE_CONFIG_DIR", "/tmp/nessuno"), ("PYTHONPATH", "/tmp/pp"),
+                 ("PYTHONHOME", "/tmp/pp"), ("PYTHONSTARTUP", "/tmp/s.py"), ("PATH", "/tmp/bin"),
+                 ("LD_PRELOAD", "/tmp/x.so"), ("DYLD_INSERT_LIBRARIES", "/tmp/x.dylib")):
+        r = scrivi({"env": {k: v}})
+        prova(f"settings5: Write con env {k}: negato, dice `env`",
+              r.negato and "env" in r.motivo and k in r.motivo, repr(r))
+    r = pred("Edit", {"file_path": str(utente), "old_string": '"theme": "dark"',
+                      "new_string": '"theme": "dark", "env": {"PYTHONPATH": "/tmp/pp"}'})
+    prova("settings5: Edit che aggiunge env PYTHONPATH: negato", r.negato, repr(r))
+    r = pred("MultiEdit", {"file_path": str(utente), "edits": [
+        {"old_string": '"theme": "dark"', "new_string": '"theme": "dark", "env": {"PLANCIA_HOME": "/x"}'}]})
+    prova("settings5: MultiEdit che aggiunge env PLANCIA_HOME: negato", r.negato, repr(r))
+    r = pred("Edit", {"file_path": str(utente), "old_string": '"matcher": "*"',
+                      "new_string": '"matcher": "Nothing"'})
+    prova("settings5: Edit che cambia il matcher della voce: negato", r.negato, repr(r))
+    # l'env pericolosa vale per TUTTI i settings, anche senza la voce
+    r = scrivi({"env": {"PLANCIA_HOME": "/tmp/nessuno"}}, hooks={}, file=proj)
+    prova("settings5: settings.local.json di un progetto (senza la voce) con env PLANCIA_HOME: "
+          "negato (l'env dei progetti arriva anche all'hook)", r.negato, repr(r))
+    r = pred("Write", {"file_path": str(proj), "content": json.dumps({"env": {"PYTHONPATH": "/x"}})})
+    prova("settings5: ...con env PYTHONPATH: negato", r.negato, repr(r))
+    # quello che resta ammesso
+    for nome, extra, hooks in (
+            ("env innocua", {"env": {"FOO": "bar", "PYTHONIOENCODING": "utf-8",
+                                     "PYTHONDONTWRITEBYTECODE": "1"}}, None),
+            ("timeout 30", None, {"PreToolUse": [{"matcher": "*", "hooks": [_voce(timeout=30)]}]}),
+            ("timeout 5 e un'altra voce", None, {"PreToolUse": [
+                {"matcher": "*", "hooks": [_voce(timeout=5)]},
+                {"matcher": "Bash", "hooks": [{"type": "command", "command": "/usr/bin/true"}]}]}),
+            ("matcher vuoto (vale per tutti)", None,
+             {"PreToolUse": [{"matcher": "", "hooks": [_voce()]}]}),
+            ("un altro evento in piu'", None, {
+                "PreToolUse": [{"matcher": "*", "hooks": [_voce()]}], "Stop": []}),
+            ("async false", None, {"PreToolUse": [{"matcher": "*", "hooks": [_voce(**{"async": False})]}]}),
+            ("disableAllHooks false", {"disableAllHooks": False}, None)):
+        r = scrivi(extra, hooks)
+        prova(f"settings5: Write con {nome}: ammesso", r.ammesso, repr(r))
+    # un file che ha GIA' un'env pericolosa: cambiare altro non inciampa
+    utente.write_text(_settings({"env": {"PATH": "/usr/local/bin:/usr/bin"}}), "utf-8")
+    r = pred("Edit", {"file_path": str(utente), "old_string": '"theme": "dark"',
+                      "new_string": '"theme": "light"'})
+    prova("settings5: env pericolosa GIA' presente e invariata: un'altra modifica e' ammessa",
+          r.ammesso, repr(r))
+    r = pred("Edit", {"file_path": str(utente), "old_string": "/usr/local/bin:/usr/bin",
+                      "new_string": "/tmp/bin"})
+    prova("settings5: ...cambiarne il valore no", r.negato, repr(r))
+    a.togli_config()
+
+
+def _corri_copia(a: Ambiente, hook: Path, payload, timeout=20):
+    """Lancia l'hook di una copia del checkout; None se non torna in `timeout`."""
+    t0 = time.time()
+    try:
+        p = subprocess.run([PYTHON, str(hook)], input=json.dumps(payload).encode(),
+                           capture_output=True, env=a.env(), timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return None
+    return Esito(p.returncode, p.stdout.decode("utf-8", "replace"),
+                 p.stderr.decode("utf-8", "replace"), time.time() - t0)
+
+
+def _prove_minori_5(prova, a: Ambiente):
+    """Quinto giro, punto 4: virgolette ANSI-C, `cd` con graffe o con sostituzione,
+    il tetto dei percorsi che non e' silenzioso, BaseException e hang dell'hook,
+    PYTHONPATH che non lo spegne."""
+    a.togli_config()
+    a.scrivi_config(a.config("bloccante"))
+    fuori_alfa, fuori_comune = str(a.alfa1 / "segreto.txt"), str(a.comune / "nota.txt")
+
+    def pred(cmd, **kw):
+        kw.setdefault("aperta_in", a.progetto)
+        return a.chiama(a.pl("Bash", {"command": cmd}, sid=S_COMUNE, **kw))
+
+    def alfa(cmd, **kw):
+        kw.setdefault("aperta_in", a.alfa1)
+        return a.chiama(a.pl("Bash", {"command": cmd}, sid=S_ALFA_LIBERA, **kw))
+
+    # ANSI-C e virgolette di traduzione
+    esadecimale = fuori_alfa.replace("/", "\\x2f")
+    for cmd in (f"cat $'{fuori_alfa}'", f"cat $\"{fuori_alfa}\"", f"cat $'{esadecimale}'",
+                f"cat $'{a.alfa1}'/segreto.txt", f"cat $'{fuori_alfa}' 2>&1"):
+        prova(f"minori5: predefinito, `{cmd[:50].replace(str(a.radice), '<R>')}`: negato "
+              "(ANSI-C risolto)", pred(cmd).negato)
+    for cmd in (f"cat $'{fuori_comune}'", f"cat $\"{fuori_comune}\"",
+                f"cat $'{fuori_comune.replace('/', chr(92) + 'x2f')}'"):
+        prova(f"minori5: alfa, `{cmd[:50].replace(str(a.radice), '<R>')}`: negato", alfa(cmd).negato)
+    prova("minori5: `cat $'a b'` senza percorsi vietati: ammesso (l'espansione non inventa niente)",
+          pred("cat $'p.txt'", cwd=a.progetto).ammesso)
+    # cd con graffe o con sostituzione: cartella sconosciuta, un relativo dopo si nega
+    for cmd in ("cd alfa-{uno,due} && cat sotto/f.txt", "cd $(echo alfa-uno) && cat sotto/f.txt",
+                "cd \"$(echo alfa-uno)\" && cat sotto/f.txt", "cd `echo alfa-uno` && cat sotto/f.txt",
+                "cd \"$(pwd)/alfa-uno\" && cat sotto/f.txt", "cd $(pwd)/alfa-uno && cat sotto/f.txt",
+                "cd alfa-uno && cat sotto/f.txt"):
+        r = pred(cmd, aperta_in=a.comune, cwd=a.radice)
+        prova(f"minori5: predefinito (cwd sopra alfa), `{cmd}`: negato", r.negato, repr(r))
+    for cmd in ("cd progetto && cat p.txt", "cd $(pwd)/progetto && cat p.txt",
+                "cd \"$(pwd)/progetto\" && cat p.txt"):
+        r = pred(cmd, aperta_in=a.comune, cwd=a.comune)
+        prova(f"minori5: predefinito, `{cmd}` (cartella senza divieti): ammesso", r.ammesso, repr(r))
+    r = alfa(f"cd {a.alfa1}{{,/sotto}} && cat f.txt")
+    prova("minori5: alfa, `cd <sua>{,/sotto} && cat f.txt`: cartella sconosciuta, negato "
+          "(scrivi il percorso)", r.negato, repr(r))
+    # il tetto: non e' silenzioso, e non e' un modo di nascondere un percorso
+    padding = "true; " * 400 + f"cat {fuori_alfa}"
+    prova("minori5: `true;` x400 e poi un file di alfa: negato (il padding non nasconde niente)",
+          pred(padding).negato)
+    nomi = "true " + " ".join(f"n{i}" for i in range(400))
+    r = pred(nomi + f"; cat {fuori_alfa}")
+    prova("minori5: 400 nomi distinti e poi un file di alfa: negato (un percorso vero non e' "
+          "fermato dal tetto dei nomi)", r.negato, repr(r))
+    n0 = len(a.registro())
+    r = pred(nomi, aperta_in=a.progetto)
+    nuove = a.registro()[n0:]
+    prova("minori5: 400 nomi distinti da soli, dal predefinito: ammesso ma con una riga "
+          "`nota` nel registro (il tetto non e' silenzioso)",
+          r.ammesso and len(nuove) == 1 and nuove[0]["esito"] == "nota"
+          and "troppi" in nuove[0]["motivo"], f"{r!r} {nuove}")
+    grande = a.alfa1 / "grande"
+    grande.mkdir(exist_ok=True)
+    for i in range(210):
+        (grande / f"f{i:03d}.txt").write_text("x", "utf-8")
+    cmd = "cat " + " ".join(["grande/*", "grande/f*", "grande/f?*", "grande/*.txt",
+                             "grande/f*.txt", "grande/f0*"])
+    r = alfa(cmd)
+    prova("minori5: alfa, sei glob da 210 voci (oltre il tetto delle espansioni): negato, "
+          "il motivo dice 'troppi percorsi'", r.negato and "troppi percorsi" in r.motivo, repr(r))
+    r = alfa("cat grande/* > /dev/null")
+    prova("minori5: alfa, un glob da 210 voci (sotto il tetto): ammesso", r.ammesso, repr(r))
+    C = _importa_compartimenti()
+    if C is not None and hasattr(C, "MAX_PERCORSI_DURO"):
+        vecchio = C.MAX_PERCORSI_DURO
+        try:
+            C.MAX_PERCORSI_DURO = 20
+            avvisi = []
+            C.percorsi_richiesti("Bash", {"command": "cat " + " ".join(
+                f"{a.progetto}/x{i}" for i in range(50))}, str(a.progetto), avvisi=avvisi)
+            prova("minori5: oltre il tetto duro dei percorsi l'analisi lo dice (avvisi)",
+                  "percorsi" in avvisi, str(avvisi))
+        finally:
+            C.MAX_PERCORSI_DURO = vecchio
+    else:
+        prova("minori5: oltre il tetto duro dei percorsi l'analisi lo dice (avvisi)", False,
+              "MAX_PERCORSI_DURO non c'e'")
+    # PYTHONPATH con un json.py che esce: non spegne l'hook
+    tmp = a.radice / "pp"
+    tmp.mkdir(exist_ok=True)
+    (tmp / "json.py").write_text("raise SystemExit(0)\n", "utf-8")
+    (tmp / "re.py").write_text("raise SystemExit(0)\n", "utf-8")
+    env = dict(a.env())
+    env["PYTHONPATH"] = str(tmp)
+    r = a.chiama(a.pl("Bash", {"command": f"cat {fuori_alfa}"}, sid=S_COMUNE, aperta_in=a.progetto),
+                 env=env)
+    prova("minori5: PYTHONPATH con un json.py e un re.py che escono: l'hook nega lo stesso",
+          r.negato, repr(r))
+    # BaseException e hang: l'hook esce 0 con la riga e l'avviso
+    seg = a.pl("Bash", {"command": f"cat {fuori_alfa}"}, sid=S_COMUNE, aperta_in=a.progetto)
+    base = a.radice / "copia-hook-5"
+    hook = _copia_checkout(a, base)
+    comp = base / "plancia" / "compartimenti.py"
+    originale = comp.read_text("utf-8")
+    marca = a.dati / "guardiano.non-parte"
+    r = _corri_copia(a, hook, seg)
+    prova("minori5: la copia intatta nega", r is not None and r.negato, repr(r))
+    guasti = {
+        "sys.exit(0) in fondo al modulo": "\nimport sys\nsys.exit(0)\n",
+        "sys.exit(1) in fondo al modulo": "\nimport sys\nsys.exit(1)\n",
+        "raise KeyboardInterrupt": "\nraise KeyboardInterrupt\n",
+        "un ciclo infinito (hang)": "\nwhile True:\n    pass\n",
+        "un sonno lunghissimo (hang)": "\nimport time\ntime.sleep(600)\n",
+    }
+    for nome, codice in guasti.items():
+        comp.write_text(originale + codice, "utf-8")
+        if marca.exists():
+            marca.unlink()
+        n0 = len(a.registro())
+        r = _corri_copia(a, hook, seg, timeout=20)
+        nuove = [x for x in a.registro()[n0:] if x.get("esito") == "guardiano-non-parte"]
+        if r is None:
+            prova(f"minori5: {nome}: l'hook torna entro il tempo massimo (non resta appeso)",
+                  False, "non e' tornato in 20 s")
+            continue
+        try:
+            avviso = json.loads(r.out).get("systemMessage", "")
+        except ValueError:
+            avviso = ""
+        prova(f"minori5: {nome}: rc 0, nessun diniego, una riga `guardiano-non-parte` e il "
+              "`systemMessage`", r.rc == 0 and not r.negato and len(nuove) == 1
+              and "plancia-guardiano non parte" in avviso, f"{r!r} {nuove}")
+        if "hang" in nome:
+            prova(f"minori5: {nome}: torna in meno di 8 secondi (il tempo massimo e' 2)",
+                  r.secondi < 8, f"{r.secondi:.1f} s")
+    comp.write_text(originale, "utf-8")
+    if marca.exists():
+        marca.unlink()
+    r = _corri_copia(a, hook, seg)
+    prova("minori5: riparata, la copia torna a negare", r is not None and r.negato, repr(r))
+    a.togli_config()
+
+
 def _prove_forma(prova):
     """Il file, la versione di Python, la privacy del repo pubblico."""
     attesi = [GUARDIANO, RADICE / "plancia" / "compartimenti.py", Path(__file__)]
@@ -2744,5 +3596,10 @@ def esegui(prova):
         _prove_interpreti_e_scritture(prova, a)
         _prove_annidati(prova, a)
         _prove_minori(prova, a)
+        _prove_falsi_positivi_regex(prova, a)
+        _prove_condivise(prova, a)
+        _prove_gravi_5(prova, a)
+        _prove_settings_5(prova, a)
+        _prove_minori_5(prova, a)
     finally:
         a.chiudi()

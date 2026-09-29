@@ -25,7 +25,18 @@ Limiti da dire chiari (non sono difetti da correggere qui):
   altro comando. Dentro lo stesso utente del sistema operativo non c'e' modo di
   farlo diventare un confine vero: quello serve un utente separato.
 - L'estrazione dei percorsi da un comando Bash e' euristica (vedi
-  `_candidati_comando`): token e sottostringhe che sembrano percorsi.
+  `_candidati_an`): token e sottostringhe che sembrano percorsi. Un argomento e' un
+  percorso candidato solo nella posizione di un FILE: non il modello di `grep`/`rg`,
+  non lo script di `sed`/`awk`, non il filtro di `jq`, non il codice di `python -c`
+  o `perl -e`, non un endpoint (`gh api /repos/x`), non un url, non il valore di
+  `find -name`, di `git log --grep` o di `git commit -m` (`_classi_token`). E un
+  `/...` dato a un comando che non opera su file (`_FILE_CMD`) o trovato dentro un
+  codice e' un percorso solo se esiste, o se sta sotto una cartella che esiste
+  diversa dalla radice (`_plausibile`): `</article>`, `/script`, `/api/users`, una
+  regex che comincia con `/`, non lo sono. Una `/` da sola vale solo come radice di
+  una ricerca del suo stesso comando (`find / -name x`), non perche' sta nella stessa
+  pipe (`find . | awk -F/ ...`). Lo stesso comando nominato dentro `-v a:/b` vale
+  come due percorsi.
 - Una ricerca RICORSIVA lanciata da Bash (`grep -r`, `rg`, `find`, `ls -R`,
   `tree`, `tar`, `zip`, `cp -r`, `rsync`, `git grep`) si riconosce dal nome del
   comando e vale come Grep: le cartelle nominate nel comando e la cwd sono
@@ -59,7 +70,8 @@ Limiti da dire chiari (non sono difetti da correggere qui):
   (i sorgenti locali) e su `root`; un altro strumento MCP che legge un file
   con un nome di parametro nuovo no, finche' il nome non e' in `CHIAVI_PERCORSO`.
 - I file del guardiano (config, copia, registro, manifesto, hook, questo
-  modulo, `plancia/__init__.py`, `plancia/config.py`, e ogni `.py` in `bin/` e nella
+  modulo, `plancia/__init__.py`, `plancia/config.py`, il loro codice compilato in
+  `plancia/__pycache__`, e ogni `.py` in `bin/` e nella
   radice del checkout da cui gira l'hook) non si modificano da nessuna sessione,
   e nemmeno le sue chiavi di config (`guardiano`, `compartimenti`,
   `strumenti_drive`) con la CLI di Plancia (`plancia config guardiano ...`,
@@ -68,26 +80,43 @@ Limiti da dire chiari (non sono difetti da correggere qui):
   Bash e' euristico (redirezioni, `tee`, `sed -i`, `cp`/`mv`/`install`/`rsync`
   verso il file, `rm`/`mv` del file o della cartella che lo contiene,
   `find -delete`/`-exec rm`, `chmod -R`, `curl -o`, `wget -O`, `tar x -C`,
-  `unzip -d`, `git checkout` nella cartella dei dati, codice di un interprete
-  che nomina il file o `.plancia`+`config.json` e scrive): un percorso costruito
-  a pezzi dentro uno script non si vede, ne' un `git checkout` nel checkout
-  stesso, ne' una copia in massa nella radice del checkout. Vale solo in
+  `unzip -d`, `git checkout` nella cartella dei dati, `chmod`/`chown` senza -R sulla
+  cartella dei dati e su quelle del codice, `ln -sfn` sulla cartella, `>&` e `<>`,
+  `patch`, `gzip`, `sort -o`, le stesse operazioni con graffe, glob, variabili, cicli
+  `for`, sostituzioni `$(...)`, `xargs` e `while read`, codice di un interprete che
+  nomina il file o `.plancia`+`config.json` e scrive, o che lancia una shell
+  (`os.system('rm x')`, `subprocess.run(['rm', 'x'])`, `execSync`, `system(...)`,
+  `do shell script`: le stringhe del codice si leggono come comandi, e le stringhe
+  attaccate con `+` si uniscono): un percorso costruito a pezzi con l'ambiente o
+  con un glob dentro uno script non si vede, ne' un `git checkout` nel checkout
+  stesso, ne' una copia in massa nella radice del checkout, ne' `kill` del processo. Vale solo in
   `bloccante`, come ogni diniego: chi vuole cambiare la config con l'aiuto di
   una sessione deve prima passare a `solo-registro`. Anche `plancia config <chiave>`
   rifiuta di riscrivere un config.json che non si legge (uscita 2).
 - I file `settings.json` e `settings.local.json` di Claude Code (di `~`, di
   `CLAUDE_CONFIG_DIR` e dei progetti, cioe' sotto una cartella `.claude`) sono
   protetti in modo MIRATO: Write/Edit/MultiEdit passano solo se il contenuto
-  risultante non ha `disableAllHooks` a vero e, quando il file ha oggi la voce
-  PreToolUse di `plancia-guardiano`, la ha ancora (lo stesso comando); Bash che
-  li scrive e' negato con l'invito a usare Edit. Dedotto, non visto: l'effetto
-  di `disableAllHooks` in un settings di progetto. Non coperti: `managed
-  settings`, le variabili d'ambiente, l'app (`mcp__ccd_settings__*`), un
-  `settings.json` cambiato prima che il guardiano fosse acceso.
-- Il guardiano che non parte (il pacchetto non si importa, l'hook solleva) resta
+  risultante non ha `disableAllHooks` a vero, non mette in `env` una variabile che
+  fa partire l'hook altrove o senza le sue librerie (`PLANCIA_HOME`, `HOME`,
+  `CLAUDE_CONFIG_DIR`, `PYTHONPATH`, `PYTHONHOME`, `PATH`, `LD_PRELOAD`, `DYLD_*`:
+  per TUTTI i settings, se nuova o cambiata) e, quando il file ha oggi la voce
+  PreToolUse di `plancia-guardiano`, la ha ancora, col comando uguale e efficace:
+  sotto PreToolUse, senza un `matcher` che la restringe, senza `if`, non `async`,
+  con un `timeout` di almeno un secondo. Bash che li scrive e' negato con l'invito a
+  usare Edit. Dedotto, non visto: l'effetto di `disableAllHooks` e di `env` letti da
+  Claude Code. Non coperti: `managed settings`, l'app (`mcp__ccd_settings__*`), un
+  secondo hook che approva (dedotto: un `deny` prevale), un `settings.json` cambiato
+  prima che il guardiano fosse acceso.
+- Il guardiano che non parte (il pacchetto non si importa, l'hook solleva, un
+  `sys.exit` o un `KeyboardInterrupt` nel modulo, oltre due secondi di calcolo) resta
   fail-open ma lascia una riga `guardiano-non-parte` nel registro e un
   `systemMessage` per l'utente (`bin/plancia-guardiano`); il pacchetto si carica
-  senza mettere `bin/` ne' la radice sul `sys.path`.
+  senza mettere `bin/`, la radice ne' `PYTHONPATH` sul `sys.path`. Non si prende
+  `os._exit`, ne' un ciclo in codice C che non guarda i segnali. Una config che non si
+  legge per PERMESSI (la cartella dei dati con `chmod 000`) non e' un fail-open muto:
+  l'hook lo dice con un `systemMessage` (al massimo ogni dieci minuti; a ogni chiamata
+  se la marca non si puo' scrivere) e, se la copia dell'ultima config si legge, continua
+  a negare.
 - Trascrizioni e memoria di un compartimento nominato stanno sotto
   `<CLAUDE_CONFIG_DIR o ~/.claude>/projects/<cartella codificata>`: sono suo
   lavoro come le sue cartelle (`Ambito.proprietario_specchio`; E1 usa la stessa
@@ -105,6 +134,18 @@ Limiti da dire chiari (non sono difetti da correggere qui):
   li' non si vede: la separazione di `/tmp` e' di facciata contro un agente che
   la cerca. Un comando come `tar czf /tmp/x.tgz src` da un nominato e' negato per
   scelta: se si vuole ammettere `/tmp`, e' una riga in `NEUTRI_FISSI`.
+- Cartelle di codice CONDIVISE (`condivise` di config, default nessuna): tutti i
+  compartimenti le leggono e ci eseguono (i checkout degli strumenti pubblici che
+  una sessione di un nominato lancia: Plancia, boa), nessun nominato ci scrive fuori
+  dai propri permessi (`_valuta_condivise` per Bash, `_percorso_nominato` per gli
+  strumenti di scrittura). Vince sempre il piu' specifico: la cartella di un
+  nominato dentro una condivisa e' sua, e una ricerca che parte dalla condivisa e
+  include la cartella di un altro nominato e' negata. Mai condivisa: la cartella dei
+  dati di Plancia e `<claude>/projects`, anche se stanno dentro una voce; una voce che
+  e' la cartella dei dati o sta dentro e' ignorata con una nota nel registro. La
+  scrittura da Bash e' quella che `_bersagli_scrittura` riconosce (redirezioni, `tee`,
+  `cp`, `rm`, `touch`, `sed -i`, `git checkout`, codice di un interprete...): un
+  programma che scrive per conto suo (`npm install`, un `make`) non si vede.
 - Le variabili di un comando (`cat $DIR/x`) si espandono con quelle assegnate
   nello stesso comando (`VAR=x; cat $VAR/f`, `export VAR=x`), poi con
   l'ambiente del payload, se ce n'e' uno (nessun hook di Claude Code lo manda,
@@ -130,8 +171,29 @@ Limiti da dire chiari (non sono difetti da correggere qui):
   lo riceve una shell, un interprete, `eval`, `source`, `xargs`, `ssh`, o se il
   comando che lo riceve manda l'output a una pipe verso un esecutore o a una
   sostituzione (`eval "$(cat <<EOF ...)"`), il suo contenuto si controlla come
-  comando. Lo stesso vale per una here-string. Due comandi dati in due chiamate
-  separate (uno scrive lo script, l'altro lo esegue) non si vedono.
+  comando. Lo stesso vale per una here-string (anche con le virgolette: `sh <<<
+  'cat x'`), per una sostituzione di processo o di comando data a un esecutore
+  (`bash <(echo 'cat x')`, `eval "$(echo 'cat x')"`), per un testo scritto in un file
+  (redirezione, `tee`, anche da una pipe) e poi eseguito per percorso (`./run.sh`,
+  `$f` con `f=$(mktemp)`), letto dentro una sostituzione (`sh -c "$(<s.sh)"`, `cat
+  $(cat lista)`, `for f in $(cat lista)`) o mandato a un esecutore lungo la pipe
+  (`cat lista | xargs cat`). Due comandi dati in due chiamate separate (uno scrive lo
+  script, l'altro lo esegue) non si vedono. Restano fuori, dichiarati: il testo di
+  comando dentro gli argomenti di un altro comando (`awk 'BEGIN{system("cat x")}'`,
+  `find -exec sh -c 'cat x'`, `git -c core.pager='cat x'`, `env -S 'cat x'`), e le
+  variabili costruite con `printf -v` o `IFS=: read`.
+- Le virgolette ANSI-C (`$'...'`, con `\x2f` e simili) e `$"..."` si leggono come
+  virgolette normali. Un ciclo `for VAR in PAROLE; do ...; done` con parole note (anche
+  glob e graffe) si svolge: il segmento che usa `$VAR` si controlla per ogni valore;
+  con parole non note (`while read f`, `for f in $(cmd)`) il comando che scrive con `$f`
+  si controlla con tutti i percorsi nominati nel resto del comando. Le graffe di
+  shell (`rm dati/{config,x}.json`) si espandono. Un `cd` verso una destinazione con
+  le graffe o con una sostituzione di comando (`cd alfa-{uno,due}`, `cd "$(cmd)"`) lascia
+  la cartella SCONOSCIUTA; `$(pwd)` e `$PWD` sono la cartella simulata.
+- I tetti dell'analisi non sono silenziosi: oltre 300 nomi semplici, 1000 voci
+  espanse da glob, 5000 percorsi in un comando, il resto non si guarda e un nominato e'
+  negato ("troppi percorsi"), il predefinito lascia una riga `nota` nel registro. Un
+  percorso vero (`/...`) non e' mai fermato dal tetto dei nomi.
 - La cwd di un nominato aperto fuori dalle sue cartelle (per id) vale per ogni
   comando Bash (vedi `valuta`); al contrario una sessione del predefinito che
   entra per errore in una cartella di un nominato (`cd` persistente) diventa
@@ -241,7 +303,14 @@ CHIAVI_LISTA_PERCORSI = ("files", "paths", "file_paths")
 # Chiavi che portano un url: un `file:` e' un percorso (WebFetch, i browser).
 CHIAVI_URL = ("url", "uri")
 
+# I tetti dell'analisi di un comando. Nomi semplici (`cd cartella`): 300 per
+# comando; voci espanse dai glob: 1000 per comando (200 per token, sotto);
+# percorsi in tutto: 5000. Oltre il tetto il resto NON si guarda, e non e' mai
+# silenzioso: un nominato e' negato, il predefinito lascia una nota nel registro
+# (`valuta`). Un percorso vero (`/...`) non e' mai fermato dal tetto dei nomi.
 MAX_PERCORSI_COMANDO = 300
+MAX_ESPANSIONE_TOTALE = 1000
+MAX_PERCORSI_DURO = 5000
 MAX_ESPANSIONE_GLOB = 200
 
 # Le sessioni "misurate": strumenti dell'app che cercano o elencano fra TUTTE
@@ -423,10 +492,10 @@ def valida_compartimenti(raw):
 
 
 def _da_json(letta, solo_modo=False):
-    """(modo, compartimenti, strumenti_drive) da un oggetto gia' letto, o
-    ValueError. Con `solo_modo` e modo `spento` non si guarda altro: uno
-    spento con un resto scritto male e' comunque spento (l'hook spento non
-    legge niente oltre il modo)."""
+    """(modo, compartimenti, strumenti_drive, condivise) da un oggetto gia' letto, o
+    ValueError. Con `solo_modo` e modo `spento` non si guarda altro: uno spento con
+    un resto scritto male e' comunque spento (l'hook spento non legge niente oltre
+    il modo)."""
     if not isinstance(letta, dict):
         raise ValueError("config.json non e' un oggetto")
     modo = letta.get("guardiano", MODO_DEFAULT)
@@ -434,10 +503,11 @@ def _da_json(letta, solo_modo=False):
         raise ValueError("guardiano: modo sconosciuto")
     modo = modo.strip().lower()
     if solo_modo and modo == "spento":
-        return modo, {}, []
+        return modo, {}, [], []
     comp = valida_compartimenti(letta.get("compartimenti"))
     drive = _lista_str(letta.get("strumenti_drive"), "strumenti_drive")
-    return modo, comp, drive
+    condivise = _lista_str(letta.get("condivise"), "condivise")
+    return modo, comp, drive, condivise
 
 
 def leggi_config(data_dir: str, rapida: bool = False) -> dict:
@@ -448,7 +518,7 @@ def leggi_config(data_dir: str, rapida: bool = False) -> dict:
     "strumenti_drive", "errore"}`. `assente`: il file non c'e' (guardiano
     spento, come da default)."""
     r = {"stato": "ok", "modo": MODO_DEFAULT, "compartimenti": {},
-         "strumenti_drive": [], "errore": None}
+         "strumenti_drive": [], "condivise": [], "errore": None}
     percorso = os.path.join(data_dir, "config.json")
     try:
         with open(percorso, "r", encoding="utf-8") as f:
@@ -458,10 +528,11 @@ def leggi_config(data_dir: str, rapida: bool = False) -> dict:
         return r
     except (OSError, UnicodeDecodeError) as exc:
         r["stato"], r["errore"] = "rotta", f"config.json non leggibile: {exc}"
+        r["permessi"] = isinstance(exc, PermissionError)
         return r
     try:
-        r["modo"], r["compartimenti"], r["strumenti_drive"] = _da_json(
-            json.loads(testo), rapida)
+        (r["modo"], r["compartimenti"], r["strumenti_drive"],
+         r["condivise"]) = _da_json(json.loads(testo), rapida)
     except (ValueError, RecursionError) as exc:
         r["stato"], r["errore"] = "rotta", f"config.json non valido: {exc}"
     return r
@@ -476,10 +547,11 @@ def _leggi_copia(data_dir: str):
     valida)."""
     try:
         with open(_percorso_copia(data_dir), "r", encoding="utf-8") as f:
-            modo, comp, drive = _da_json(json.load(f))
+            modo, comp, drive, condivise = _da_json(json.load(f))
     except (OSError, ValueError, UnicodeDecodeError, RecursionError):
         return None
-    return {"modo": modo, "compartimenti": comp, "strumenti_drive": drive}
+    return {"modo": modo, "compartimenti": comp, "strumenti_drive": drive,
+            "condivise": condivise}
 
 
 def _salva_copia_se_diversa(data_dir: str, cfg: dict) -> None:
@@ -488,7 +560,8 @@ def _salva_copia_se_diversa(data_dir: str, cfg: dict) -> None:
     interrotto a meta' non deve lasciare una copia tagliata."""
     nuovo = json.dumps({"guardiano": cfg["modo"],
                         "compartimenti": cfg["compartimenti"],
-                        "strumenti_drive": cfg["strumenti_drive"]},
+                        "strumenti_drive": cfg["strumenti_drive"],
+                        "condivise": cfg.get("condivise", [])},
                        indent=2, sort_keys=True, ensure_ascii=False)
     dest = _percorso_copia(data_dir)
     try:
@@ -530,28 +603,37 @@ def carica(data_dir: str) -> dict:
         # spento. Senza copia non se ne crea una: spento non scrive niente.
         if os.path.exists(_percorso_copia(data_dir)):
             _salva_copia_se_diversa(data_dir, {
-                "modo": "spento", "compartimenti": {}, "strumenti_drive": []})
+                "modo": "spento", "compartimenti": {}, "strumenti_drive": [],
+                "condivise": []})
         return {"modo": "spento", "compartimenti": {}, "strumenti_drive": [],
-                "stato": "ok", "nota": None}
+                "condivise": [], "stato": "ok", "nota": None, "avviso": None}
     if c["stato"] == "assente":
         return {"modo": "spento", "compartimenti": {}, "strumenti_drive": [],
-                "stato": c["stato"], "nota": None}
+                "condivise": [], "stato": c["stato"], "nota": None, "avviso": None}
     if c["stato"] == "ok":
         _salva_copia_se_diversa(data_dir, c)
         return {"modo": c["modo"], "compartimenti": c["compartimenti"],
-                "strumenti_drive": c["strumenti_drive"], "stato": "ok",
-                "nota": None}
+                "strumenti_drive": c["strumenti_drive"],
+                "condivise": c["condivise"], "stato": "ok", "nota": None,
+                "avviso": None}
+    # un config.json che esiste e non si legge per permessi (una cartella dei dati
+    # con `chmod 000`) spegne il guardiano senza rumore: l'avviso lo dice
+    avviso = None
+    if c.get("permessi"):
+        avviso = ("plancia-guardiano non legge la sua config (%s): senza, i "
+                  "compartimenti non sono protetti finche' non si ripristinano i "
+                  "permessi." % (c["errore"],))
     copia = _leggi_copia(data_dir)
     if copia is not None:
         return {"modo": copia["modo"], "compartimenti": copia["compartimenti"],
                 "strumenti_drive": copia["strumenti_drive"],
-                "stato": "copia",
+                "condivise": copia["condivise"], "stato": "copia",
                 "nota": "config illeggibile (%s): uso l'ultima valida"
-                        % (c["errore"],)}
+                        % (c["errore"],), "avviso": avviso}
     return {"modo": "solo-registro", "compartimenti": {}, "strumenti_drive": [],
-            "stato": "rotta",
+            "condivise": [], "stato": "rotta",
             "nota": "config illeggibile (%s): nessuna copia valida, "
-                    "solo-registro per tutti" % (c["errore"],)}
+                    "solo-registro per tutti" % (c["errore"],), "avviso": avviso}
 
 
 # --------------------------------------------------------------------------
@@ -586,9 +668,11 @@ def scrivi_registro(data_dir: str, riga: dict) -> None:
         pass
 
 
-def _nota_config_dovuta(data_dir: str) -> bool:
-    """Vero se e' ora di scrivere di nuovo la riga "config illeggibile"."""
-    marca = os.path.join(data_dir, "guardiano.config-illeggibile")
+def _nota_config_dovuta(data_dir: str, nome_marca: str = "guardiano.config-illeggibile") -> bool:
+    """Vero se e' ora di scrivere di nuovo la riga "config illeggibile" (o un'altra
+    nota, con la sua marca). Se la marca non si puo' scrivere (la cartella dei dati
+    senza permessi) e' sempre ora."""
+    marca = os.path.join(data_dir, nome_marca)
     try:
         if time.time() - os.path.getmtime(marca) < NOTA_CONFIG_OGNI_SECONDI:
             return False
@@ -670,8 +754,13 @@ def stato(data_dir: str) -> dict:
             non_parte["ultima"] = {"ts": d.get("ts"), "motivo": d.get("motivo")}
             continue
         recenti[e if e in recenti else "altro"] += 1
+    if c["stato"] == "ok":
+        condivise = len(c["condivise"])
+    else:
+        condivise = len(copia["condivise"]) if copia else 0
     return {"modo": modo, "config": c["stato"], "errore": c["errore"],
             "usa_copia": bool(copia), "compartimenti": elenco,
+            "condivise": condivise,
             "registro_24h": recenti, "non_parte": non_parte}
 
 
@@ -683,7 +772,7 @@ class Ambito:
     """I compartimenti di una config, con i percorsi gia' risolti."""
 
     def __init__(self, comp: dict, strumenti_drive=None, home=None, uid=None,
-                 data_dir=None, claude_dir=None):
+                 data_dir=None, claude_dir=None, condivise=None):
         self.home = home or os.path.expanduser("~")
         self.uid = os.getuid() if uid is None else uid
         self.data_dir = data_dir or ""
@@ -727,6 +816,38 @@ class Ambito:
         self.comandi_vietati = [s for s in (pred.get("comandi_vietati") or []) if s]
         self._divieti = None
         self._neutri = None
+        # Cartelle di CODICE CONDIVISE (`condivise` di config): tutti i
+        # compartimenti le LEGGONO e ci ESEGUONO, nessuno ci SCRIVE fuori dai propri
+        # permessi. Servono i checkout degli strumenti che una sessione di un
+        # nominato lancia (Plancia stessa, boa). Mai condivisa: la cartella dei dati
+        # di Plancia (PLANCIA_HOME), anche se sta dentro una cartella condivisa; una
+        # voce che e' quella cartella o sta dentro si ignora, con una nota.
+        self.dati_norm = _norm(self.data_dir) if self.data_dir else ""
+        self.condivise, self.note = [], []
+        for raw in condivise or []:
+            e = os.path.expanduser(raw)
+            n = _norm(e) if os.path.isabs(e) else ""
+            if not n or n == "/":
+                self.note.append("condivise: %r ignorata (non e' una cartella "
+                                 "assoluta, o e' la radice del disco)" % raw)
+            elif self.dati_norm and _dentro(n, self.dati_norm):
+                self.note.append("condivise: una voce e' la cartella dei dati di "
+                                 "Plancia o sta dentro: ignorata (i dati non sono mai "
+                                 "condivisi)")
+            elif n not in self.condivise:
+                self.condivise.append(n)
+
+    def in_condivisa(self, p: str) -> bool:
+        """`p` sta in una cartella di codice condivisa. Non la cartella dei dati di
+        Plancia ne' `<claude>/projects` (trascrizioni e memoria), anche se una voce
+        di `condivise` le contiene."""
+        if not self.condivise or not p:
+            return False
+        if self.dati_norm and _dentro(p, self.dati_norm):
+            return False
+        if self.progetti and _dentro(p, self.progetti):
+            return False
+        return any(_dentro(p, c) for c in self.condivise)
 
     def neutri(self):
         """L'elenco neutro, risolto una volta per chiamata."""
@@ -1184,8 +1305,33 @@ _CACHE_ANALISI = {}
 _CONTATORE = [0]
 
 
+_RX_ANSI_C = re.compile(r"\$'((?:[^'\\]|\\.)*)'")
+_RX_ANSI_L = re.compile(r'\$"((?:[^"\\]|\\.)*)"')
+
+
+def _decodifica_ansi_c(corpo: str) -> str:
+    """Il contenuto di `$'...'` con le sue sequenze di escape (`\\n`, `\\x2f`,
+    `\\057`, `\\'`): quello che la shell passa al comando."""
+    try:
+        return corpo.encode("latin-1", "backslashreplace").decode("unicode_escape")
+    except (UnicodeError, ValueError):
+        return corpo
+
+
+def _senza_ansi_c(seg: str) -> str:
+    """`$'...'` e `$"..."` (le virgolette ANSI-C e di traduzione di bash) diventano
+    virgolette normali: `shlex` li leggerebbe come un `$` seguito da un testo
+    fra apici, e `cat $'/percorso'` non nominerebbe piu' il percorso."""
+    if "$'" not in seg and '$"' not in seg:
+        return seg
+    seg = _RX_ANSI_C.sub(
+        lambda m: "'" + _decodifica_ansi_c(m.group(1)).replace("'", "'\\''") + "'", seg)
+    return _RX_ANSI_L.sub(lambda m: '"' + m.group(1) + '"', seg)
+
+
 def _token(seg: str) -> list:
     import shlex
+    seg = _senza_ansi_c(seg)
     try:
         lex = shlex.shlex(seg, posix=True, punctuation_chars=True)
         lex.whitespace_split = True
@@ -1197,20 +1343,61 @@ def _token(seg: str) -> list:
 
 _PREFISSI_COMANDO = ("sudo", "time", "nice", "env", "command", "xargs", "exec",
                      "nohup")
+# Parole di controllo che aprono un comando (`do rm $f`, `then cat x`, `while
+# read f`, `{ cmd; }`): il comando vero e' la parola che segue.
+_CTRL = frozenset(("do", "then", "else", "elif", "if", "while", "until", "!", "{"))
 _RX_ASSEGNA = re.compile(r"^[A-Za-z_]\w*=")
+
+
+def _espandi_graffe(t: str, tetto: int = 64) -> list:
+    """Le espansioni con le graffe di shell di un token: `a{b,c}d` -> `abd`, `acd`
+    (anche annidate). Le `${...}` non sono graffe, un `{}` senza virgole nemmeno
+    (`find -exec x {} \\;`). Al massimo `tetto` voci."""
+    i, n = 0, len(t)
+    while i < n:
+        if t[i] == "{" and (i == 0 or t[i - 1] != "$"):
+            prof, virg, j = 0, [], i
+            while j < n:
+                if t[j] == "{":
+                    prof += 1
+                elif t[j] == "}":
+                    prof -= 1
+                    if prof == 0:
+                        break
+                elif t[j] == "," and prof == 1:
+                    virg.append(j)
+                j += 1
+            if j < n and virg:
+                pre, post = t[:i], t[j + 1:]
+                parti, ini = [], i + 1
+                for v in virg:
+                    parti.append(t[ini:v])
+                    ini = v + 1
+                parti.append(t[ini:j])
+                out = []
+                for p in parti:
+                    for e in _espandi_graffe(pre + p + post, tetto):
+                        out.append(e)
+                        if len(out) >= tetto:
+                            return out
+                return out
+        i += 1
+    return [t]
 
 
 def _spezza(tok):
     """`(prefissi, assegnazioni, primo_token, nome, argomenti)` di un segmento,
-    dopo i prefissi (`sudo`, `env`, `xargs`, `VAR=x`, opzioni dei prefissi...).
+    dopo i prefissi (`sudo`, `env`, `xargs`, `VAR=x`, opzioni dei prefissi, anche
+    con il percorso: `/usr/bin/env`) e le parole di controllo (`do`, `then`, ...).
     `nome` e' senza cartella; vuoto se il segmento e' solo assegnazioni."""
     t = list(tok)
     pre, ass = [], []
-    while t and (t[0] in _PREFISSI_COMANDO or re.match(r"^\w+=", t[0])
+    while t and (os.path.basename(t[0]) in _PREFISSI_COMANDO or t[0] in _CTRL
+                 or re.match(r"^\w+=", t[0])
                  or (t[0].startswith("-") and len(t) > 1)
                  or _punt(t[0])):
-        if t[0] in _PREFISSI_COMANDO:
-            pre.append(t[0])
+        if os.path.basename(t[0]) in _PREFISSI_COMANDO:
+            pre.append(os.path.basename(t[0]))
         elif _RX_ASSEGNA.match(t[0]):
             ass.append(t[0])
         t = t[1:]
@@ -1272,7 +1459,13 @@ def _togli_heredoc(cmd: str, hd=None):
                 hd[idx]["corpo"] = "\n".join(righe)
             attesa = []
             continue
-        if c == "<" and cmd.startswith("<<", i) and not cmd.startswith("<<<", i):
+        if c == "<" and cmd.startswith("<<<", i):
+            # una here-string: tutte e tre le `<` insieme, altrimenti la seconda
+            # coppia `<<` sembrerebbe un heredoc (`sh <<< 'cat x'`)
+            out.append("<<<")
+            i += 3
+            continue
+        if c == "<" and cmd.startswith("<<", i):
             m = _RX_HEREDOC.match(cmd, i)
             if m:
                 delim = next((g for g in m.group(2, 3, 4) if g is not None), "")
@@ -1335,9 +1528,12 @@ def _dividi_segmenti(t: str) -> list:
             cur.append(c)
             i += 1
             continue
-        if c == "$" and t[i + 1:i + 2] == "(":
+        if c in "$<>" and t[i + 1:i + 2] == "(" and not (
+                c != "$" and t[i - 1:i] == c):
+            # `$(...)`, e la sostituzione di processo `<(...)` / `>(...)`: un
+            # comando dentro, non una subshell del comando stesso
             sub += 1
-            cur.append("$(")
+            cur.append(c + "(")
             i += 2
             continue
         if sub:
@@ -1488,9 +1684,16 @@ def _operandi_cd(args):
 
 
 def _risolvi_cd(target: str, cwd, locali, env):
-    """La cartella in cui porta `cd target` da `cwd`, o `_IGNOTA`."""
+    """La cartella in cui porta `cd target` da `cwd`, o `_IGNOTA`. Una
+    destinazione costruita con una sostituzione di comando (`cd "$(cmd)/x"`) o con
+    le graffe (`cd alfa-{uno,due}`) non porta a UNA cartella che si sappia: e'
+    sconosciuta (`$(pwd)` si sa: e' la cartella simulata, vedi `_fase_a`)."""
+    if "\x02" in target or "$(" in target or "`" in target:
+        return _IGNOTA
     e = _espandi_var(target, env, locali)
     if not e:
+        return _IGNOTA
+    if "{" in e and len(_espandi_graffe(e)) > 1:
         return _IGNOTA
     if _ha_glob(e):
         base = cwd if cwd and cwd != _IGNOTA else None
@@ -1547,23 +1750,61 @@ def _nuova_cwd(nome, args, cwd, dirs, locali, env, prima, dopo):
     return nuova, dirs
 
 
+_RX_FD = re.compile(r"^(?:\d+|-)$")
+
+
 def _uscite(tok) -> list:
-    """I bersagli delle redirezioni di uscita (`> f`, `>> f`, `>| f`)."""
+    """I bersagli delle redirezioni di uscita: `> f`, `>> f`, `>| f`, `&> f`, `>& f`
+    (con un file: `>&2` e `>&-` duplicano un descrittore) e `<> f` (apre il file
+    anche in scrittura)."""
     out, prec = [], ""
     for t in tok:
         if _punt(t):
             prec = t
             continue
-        if ">" in prec and "<" not in prec and not prec.endswith("&"):
+        if ">" in prec and ("<" not in prec or prec == "<>") and (
+                not prec.endswith("&") or not _RX_FD.match(t)):
             out.append(t)
         prec = ""
     return out
 
 
+_RX_PWD = re.compile(r"\$\(\s*pwd\s*\)|`\s*pwd\s*`")
+_MAX_VALORI_CICLO = 20
+_MAX_VARIANTI = 60
+
+
+def _valori_ciclo(args, cwd, vs, env):
+    """I valori che `for VAR in PAROLE...` da' a VAR, o None se non si sanno (una
+    sostituzione di comando, una variabile non definita): le parole si espandono
+    con le variabili, le graffe e i glob (sul disco)."""
+    valori = []
+    for w in args[2:]:
+        if _punt(w):
+            break
+        if "\x02" in w:
+            continue
+        e = _espandi_var(w, env, vs)
+        if e is None:
+            continue
+        for b in _espandi_graffe(e):
+            if _ha_glob(b):
+                g = _espandi_glob(b, cwd if cwd != _IGNOTA else None)
+                valori.extend(g if g else [b])
+            else:
+                valori.append(b)
+    return valori[:_MAX_VALORI_CICLO] or None
+
+
 def _fase_a(testo: str, st: dict, env):
-    """I segmenti di `testo` con la cartella e le variabili di quando partono."""
+    """I segmenti di `testo` con la cartella e le variabili di quando partono. Un
+    ciclo `for VAR in PAROLE; do ...; done` con parole note si SVOLGE: il segmento
+    che usa `$VAR` compare una volta per valore, con quel valore."""
     cwd, vs, dirs = st["cwd"], st["vars"], list(st["dirs"])
-    pila, segs, prima = [], [], ""
+    if cwd and cwd != _IGNOTA and vs.get("PWD") != cwd:
+        vs = dict(vs)
+        vs["PWD"] = cwd
+    pila, segs, prima, cicli = [], [], "", []
     for it in _dividi_segmenti(testo):
         if it[0] == "(":
             pila.append((cwd, vs, list(dirs)))
@@ -1573,16 +1814,28 @@ def _fase_a(testo: str, st: dict, env):
                 cwd, vs, dirs = pila.pop()
             continue
         _, seg, dopo = it
-        tok = _token(_maschera(_RX_WHICH.sub(lambda m: m.group(1) or m.group(2), seg)))
+        tok = _token(_maschera(_RX_PWD.sub("$PWD", _RX_WHICH.sub(
+            lambda m: m.group(1) or m.group(2), seg))))
         pre, ass, cmd0, nome, args = _spezza(tok)
         if cmd0.startswith("$") and cmd0 not in ("$", "$(") and "(" not in cmd0:
             e = _espandi_var(cmd0, env, vs)
             if e:
                 nome = os.path.basename(e)
         s = {"nome": nome, "args": args, "token": tok, "testo": seg, "pre": pre,
-             "cwd": cwd, "vars": vs, "prima": prima, "dopo": dopo,
+             "cmd0": cmd0, "cwd": cwd, "vars": vs, "prima": prima, "dopo": dopo,
              "hd": [int(m.group(1)) for m in (_RX_MARCA_HD.match(t) for t in tok) if m]}
-        segs.append(s)
+        varianti = [s]
+        for var, valori in cicli:
+            if valori is not None and re.search(r"\$\{?%s\b" % re.escape(var), seg):
+                nuove = []
+                for base in varianti:
+                    for v in valori:
+                        s2 = dict(base)
+                        s2["vars"] = dict(base["vars"])
+                        s2["vars"][var] = v
+                        nuove.append(s2)
+                varianti = nuove[:_MAX_VARIANTI]
+        segs.extend(varianti)
         # effetti sullo stato, DOPO aver fissato quello con cui il segmento parte
         if nome == "" and ass:
             vs = dict(vs)
@@ -1599,6 +1852,12 @@ def _fase_a(testo: str, st: dict, env):
             vs = {k: v for k, v in vs.items() if k not in args}
         elif nome in ("cd", "pushd", "popd"):
             cwd, dirs = _nuova_cwd(nome, args, cwd, dirs, vs, env, prima, dopo)
+            vs = dict(vs)
+            vs["PWD"] = cwd if cwd and cwd != _IGNOTA else None
+        elif nome == "for" and len(args) >= 3 and args[1] == "in":
+            cicli.append((args[0], _valori_ciclo(args, cwd, vs, env)))
+        elif nome == "done" and cicli:
+            cicli.pop()
         prima = dopo
     return segs
 
@@ -1652,11 +1911,12 @@ def _analizza(cmd: str, cwd0=None, env=None, prof: int = 0, st=None, cons=None,
         chiave = (cmd, cwd0, tuple(sorted(env.items())) if env else None)
         if chiave in _CACHE_ANALISI:
             return _CACHE_ANALISI[chiave]
-    ris = {"segmenti": [], "corpi": []}
+    ris = {"segmenti": [], "corpi": [], "hd": []}
     if cmd and prof <= 4:
         # anche nei testi delle sostituzioni: un heredoc dentro `"$(...)"` non
         # si vede finche' il testo non e' estratto dalle virgolette
         testo, hd = _togli_heredoc(cmd, hd)
+        ris["hd"] = hd
         if st is None:
             st = {"cwd": cwd0, "vars": {}, "dirs": []}
         segs = _fase_a(testo, st, env)
@@ -1676,6 +1936,63 @@ def _sotto(ris: dict, testo: str, s: dict, cwd0, env, prof, hd, cons=None):
     ris["corpi"].extend(r["corpi"])
 
 
+def _chiave_simbolica(t: str) -> str:
+    """Un token che e' solo una variabile (`$f`, `${f}`, `"$f"`), normalizzato:
+    serve a riconoscere il file `$f` scritto e poi usato quando il valore della
+    variabile non si sa (`f=$(mktemp)`). Stringa vuota se non lo e'."""
+    m = re.match(r"^\$(?:\{([A-Za-z_]\w*)\}|([A-Za-z_]\w*))$", t or "")
+    return ("$" + (m.group(1) or m.group(2))) if m else ""
+
+
+def _riferisce(t: str, s2: dict, dn: str, chiave: str, env) -> bool:
+    """Il token `t` del segmento `s2` indica il file `dn` (percorso risolto) o la
+    variabile simbolica `chiave`."""
+    if not t or _punt(t) or t.startswith("-") or _RX_MARCA_HD.match(t):
+        return False
+    if chiave and _chiave_simbolica(t) == chiave:
+        return True
+    if not dn:
+        return False
+    e = _espandi_var(t, env, s2["vars"])
+    if not e:
+        return False
+    n = _norm(e, s2["cwd"] if s2["cwd"] != _IGNOTA else None)
+    return bool(n) and n.lower() == dn.lower()
+
+
+def _dopo_pipe_esecutore(segs: list, k: int) -> bool:
+    """Il testo del segmento `k` arriva, lungo la pipe, a un esecutore."""
+    j = k
+    while j < len(segs) and segs[j]["dopo"] in ("|", "|&"):
+        j += 1
+        if j < len(segs) and _e_esecutore(segs[j]):
+            return True
+    return False
+
+
+def _legge_il_file(s2: dict, segs: list, k2: int, dn: str, chiave: str, env) -> bool:
+    """Il segmento `s2` USA il contenuto del file `dn` come comando o come elenco di
+    argomenti: lo esegue (`sh f`, `. f`, `bash < f`, `./f`), lo legge dentro una
+    sostituzione (`$(cat f)`, `$(<f)`, apici inversi) che non e' solo un testo (un
+    messaggio di `git commit -m`), o lo legge e lo manda a un esecutore lungo la
+    pipe (`cat f | xargs cat`)."""
+    toks = [t for t in s2["token"]]
+    if _e_esecutore(s2) and any(_riferisce(t, s2, dn, chiave, env) for t in toks):
+        return True
+    if s2.get("cmd0") and _riferisce(s2["cmd0"], s2, dn, chiave, env) and (
+            not s2["cmd0"].startswith("-")):
+        return True
+    if not _consumo_testo(s2):
+        for interno in _sostituzioni(s2["testo"]):
+            for t in _token(_maschera(interno)):
+                if _riferisce(t, s2, dn, chiave, env):
+                    return True
+    if _dopo_pipe_esecutore(segs, k2) and any(
+            _riferisce(t, s2, dn, chiave, env) for t in toks):
+        return True
+    return False
+
+
 def _fase_b(segs: list, ris: dict, cwd0, env, prof: int, cons, hd: list) -> None:
     # le catene: segmenti collegati da pipe
     catena = None
@@ -1689,11 +2006,7 @@ def _fase_b(segs: list, ris: dict, cwd0, env, prof: int, cons, hd: list) -> None
         nome = s["nome"]
         pipe_out = s["dopo"] in ("|", "|&")
         # il testo di questo segmento arriva a un esecutore lungo la pipe?
-        j, pipe_esec = k, False
-        while j < len(segs) and segs[j]["dopo"] in ("|", "|&"):
-            j += 1
-            if j < len(segs) and _e_esecutore(segs[j]):
-                pipe_esec = True
+        pipe_esec = _dopo_pipe_esecutore(segs, k)
         catturato = cons is not None
         # echo/printf: inerti solo se stampano su un terminale o in un file,
         # senza pipe e fuori da una sostituzione (la regola e' quella)
@@ -1715,12 +2028,20 @@ def _fase_b(segs: list, ris: dict, cwd0, env, prof: int, cons, hd: list) -> None
                     break
         if nome == "eval":
             _sotto(ris, " ".join(s["args"]), s, cwd0, env, prof, hd)
-        # il testo di echo/printf che una pipe porta a un esecutore e' un
-        # comando (`echo "cat /x" | sh`): si analizza come tale
-        if nome in _MUTI and pipe_out and pipe_esec:
+        # il testo di echo/printf che una pipe porta a un esecutore, o che una
+        # sostituzione porta a un comando che lo esegue (`eval "$(echo 'cat x')"`,
+        # `bash <(echo 'cat x')`), e' un comando (`echo "cat /x" | sh`): si analizza
+        # come tale
+        if nome in _MUTI and ((pipe_out and pipe_esec)
+                              or (catturato and _e_esecutore(cons))):
             testo_e = _testo_echo(s)
             _sotto(ris, testo_e, s, cwd0, env, prof, hd)
             ris["corpi"].append((testo_e, s["cwd"]))
+        # echo/printf mandato a `tee file`: il testo finisce nel file
+        if nome in _MUTI and pipe_out and k + 1 < len(segs) and segs[k + 1]["nome"] == "tee":
+            dest_tee = _operandi(segs[k + 1])
+            if dest_tee:
+                differiti.append((k, _testo_echo(s), dest_tee[0]))
         # here-string: `read f <<< testo`, `sh <<< 'cmd'`
         prec = ""
         for t in s["token"]:
@@ -1735,6 +2056,10 @@ def _fase_b(segs: list, ris: dict, cwd0, env, prof: int, cons, hd: list) -> None
             prec = ""
         # heredoc
         uscite = _uscite(s["token"])
+        dest_hd = uscite[0] if uscite else None
+        if dest_hd is None and nome == "tee":
+            op_tee = _operandi(s)
+            dest_hd = op_tee[0] if op_tee else None
         for hid in s["hd"]:
             if hid >= len(hd):
                 continue
@@ -1750,42 +2075,36 @@ def _fase_b(segs: list, ris: dict, cwd0, env, prof: int, cons, hd: list) -> None
                     # inversi del suo corpo: quei comandi girano davvero
                     for interno in _sostituzioni(corpo):
                         _sotto(ris, interno, s, cwd0, env, prof, hd)
-                if uscite:
-                    differiti.append((k, corpo, uscite[0]))
+                if dest_hd:
+                    differiti.append((k, corpo, dest_hd))
         if s["muto"] and uscite:
             differiti.append((k, _testo_echo(s), uscite[0]))
-    # un testo scritto in un file e poi dato a un esecutore nello stesso comando
+    # un testo scritto in un file e poi usato nello stesso comando come comando o
+    # come elenco di percorsi
     for k, testo, dest in differiti:
         d = _espandi_var(dest, env, segs[k]["vars"])
         dn = _norm(d, segs[k]["cwd"] if segs[k]["cwd"] != _IGNOTA else None) if d else ""
-        if not dn:
+        chiave = "" if dn else _chiave_simbolica(dest)
+        if not dn and not chiave:
             continue
-        for s2 in segs[k + 1:]:
-            if not _e_esecutore(s2):
-                continue
-            usa = False
-            for t in s2["token"]:
-                if _punt(t) or t.startswith("-"):
-                    continue
-                e = _espandi_var(t, env, s2["vars"])
-                if e and _norm(e, s2["cwd"] if s2["cwd"] != _IGNOTA else None).lower() == dn.lower():
-                    usa = True
-                    break
-            if usa:
+        for k2 in range(k + 1, len(segs)):
+            s2 = segs[k2]
+            if _legge_il_file(s2, segs, k2, dn, chiave, env):
                 _sotto(ris, testo, s2, cwd0, env, prof, hd)
                 ris["corpi"].append((testo, s2["cwd"]))
                 break
 
 
-def _parole_segmento(s: dict) -> list:
-    """I token di un segmento che possono essere percorsi o nomi: senza la
-    punteggiatura, senza la parola che segue un heredoc (e' il segnaposto del
-    delimitatore), senza il testo di una here-string che nessuno usa, e per
-    `echo`/`printf` inerti solo i bersagli delle redirezioni (gli altri
-    argomenti si stampano e basta)."""
+def _parole_segmento_i(s: dict) -> list:
+    """I token di un segmento che possono essere percorsi o nomi, come `(indice,
+    token, redirezione)`: senza la punteggiatura, senza la parola che segue un
+    heredoc (e' il segnaposto del delimitatore), senza il testo di una here-string
+    che nessuno usa, e per `echo`/`printf` inerti solo i bersagli delle
+    redirezioni (gli altri argomenti si stampano e basta). `redirezione` e' vero
+    per il bersaglio di una redirezione: e' sempre un file."""
     muto = s.get("muto")
     out, prec = [], ""
-    for t in s["token"]:
+    for i, t in enumerate(s["token"]):
         if _punt(t):
             prec = t
             continue
@@ -1799,8 +2118,320 @@ def _parole_segmento(s: dict) -> list:
             continue
         if muto and not redirezione:
             continue
-        out.append(t)
+        out.append((i, t, redirezione))
     return out
+
+
+def _parole_segmento(s: dict) -> list:
+    return [t for _, t, _ in _parole_segmento_i(s)]
+
+
+# Comandi i cui argomenti (non opzioni) sono FILE: un argomento a uno di questi e'
+# sempre un percorso da controllare, anche se non esiste ancora (`mkdir`, `touch`,
+# `cp x /nuovo/y`). Per un comando che non e' qui un argomento `/...` e' un
+# percorso solo se esiste o se sta sotto una cartella che esiste (`_plausibile`):
+# una regex, un tag HTML (`</article>`), un endpoint (`gh api /repos/x`) non lo sono.
+_FILE_CMD = frozenset((
+    "cat", "tac", "nl", "less", "more", "head", "tail", "wc", "cp", "mv", "rm",
+    "rmdir", "ls", "ln", "touch", "mkdir", "chmod", "chown", "chgrp", "chflags",
+    "find", "tar", "zip", "unzip", "gzip", "gunzip", "zcat", "bzip2", "bunzip2",
+    "xz", "unxz", "stat", "file", "du", "df", "tee", "diff", "cmp", "sort", "uniq",
+    "cut", "paste", "od", "xxd", "hexdump", "strings", "base64", "md5", "md5sum",
+    "shasum", "sha1sum", "sha256sum", "sha512sum", "cksum", "realpath", "readlink",
+    "basename", "dirname", "truncate", "install", "rsync", "scp", "ditto", "patch",
+    "ed", "ex", "vi", "vim", "nano", "emacs", "code", "open", "bat", "tree",
+    "source", ".", "cd", "pushd", "popd", "rev", "fold", "fmt", "join", "comm",
+    "split", "csplit", "mktemp", "mkfifo", "dd", "shred", "unlink", "sponge",
+    "grep", "egrep", "fgrep", "rg", "ag", "ack", "sed", "awk", "gawk", "mawk",
+    "nawk", "jq", "perl", "sqlite3", "xattr", "stat", "qlmanage", "pbcopy"))
+# Interpreti: `-c CODICE`, `-e CODICE`: il codice non e' un file.
+_OPZ_CODICE = ("-c", "-e", "-E", "-p", "-r", "--eval", "--print")
+# Opzioni di grep e rg che prendono un valore che e' testo o un modello, non un file.
+_GREP_VALORE = frozenset((
+    "-A", "-B", "-C", "-m", "-g", "-t", "-T", "-d", "-D", "-M", "-j", "--glob",
+    "--iglob", "--type", "--type-not", "--include", "--exclude", "--exclude-dir",
+    "--include-dir", "--max-depth", "--max-count", "--context", "--after-context",
+    "--before-context", "--threads", "--max-columns", "--label"))
+_FIND_VALORE = frozenset((
+    "-name", "-iname", "-path", "-ipath", "-wholename", "-iwholename", "-regex",
+    "-iregex", "-lname", "-ilname", "-type", "-xtype", "-perm", "-user", "-group",
+    "-size", "-mtime", "-mmin", "-atime", "-amin", "-ctime", "-cmin", "-fstype",
+    "-maxdepth", "-mindepth", "-links", "-uid", "-gid", "-newerXY"))
+_GIT_VALORE_TESTO = frozenset((
+    "-m", "--message", "--grep", "-S", "-G", "--author", "--committer", "--format",
+    "--pretty", "--since", "--until", "--after", "--before", "-e", "--date",
+    "--oneline-format", "-L"))
+_GH_VALORE_TESTO = frozenset((
+    "-b", "--body", "-t", "--title", "-m", "--message", "-f", "-F", "--field",
+    "--raw-field", "-H", "--header", "-q", "--jq", "--template", "-X", "--method",
+    "-R", "--repo", "-d", "--description", "--notes", "-n", "--limit"))
+
+
+def _operandi_indicizzati(s: dict, i0: int) -> list:
+    """`(indice, token)` degli argomenti dopo il comando (indice `i0`), senza
+    punteggiatura ne' bersagli di redirezione."""
+    out, prec = [], ""
+    for i in range(i0 + 1, len(s["token"])):
+        t = s["token"][i]
+        if _punt(t):
+            prec = t
+            continue
+        if prec:
+            prec = ""
+            continue
+        if _RX_MARCA_HD.match(t):
+            continue
+        out.append((i, t))
+    return out
+
+
+def _indice_comando(tok) -> int:
+    """L'indice del token che e' il comando (dopo prefissi, assegnazioni, parole di
+    controllo e opzioni dei prefissi): la stessa regola di `_spezza`."""
+    i = 0
+    while i < len(tok) and (os.path.basename(tok[i]) in _PREFISSI_COMANDO
+                            or tok[i] in _CTRL or re.match(r"^\w+=", tok[i])
+                            or (tok[i].startswith("-") and len(tok) - i > 1)
+                            or _punt(tok[i])):
+        i += 1
+    return i
+
+
+def _classi_token(s: dict):
+    """`(testo, file)`: gli indici dei token di `s["token"]` che un comando NOTO usa
+    come TESTO e non come file (il modello di `grep` e `rg`, lo script di `sed` e
+    `awk`, il filtro di `jq`, il codice di `python -c`/`perl -e`, il formato di
+    `date`, un endpoint di `gh api`, i valori di `find -name`, il messaggio di
+    `git commit -m`), e quelli che sono SEMPRE un percorso (`git -C DIR`). Un
+    token `/...` di testo non e' un percorso: `sed -n '/^## Parte 1/,/^## Parte
+    2/p'`, `grep '</article>'`, `awk -F/ ...`, `gh api /repos/x/y/pulls`."""
+    nome = (s["nome"] or "").lower()
+    testo, file_ = set(), set()
+    if not nome:
+        return testo, file_
+    i0 = _indice_comando(s["token"])
+    el = _operandi_indicizzati(s, i0)
+    n = len(el)
+    if nome == "sed":
+        dato, k = False, 0
+        while k < n:
+            i, a = el[k]
+            if a == "--":
+                for i2, _ in el[k + 1:]:
+                    if not dato:
+                        testo.add(i2)
+                        dato = True
+                break
+            if a in ("-e", "--expression") and k + 1 < n:
+                testo.add(el[k + 1][0])
+                dato = True
+                k += 2
+                continue
+            if a.startswith("--expression="):
+                testo.add(i)
+                dato = True
+            elif a in ("-f", "--file"):
+                dato = True
+                k += 2
+                continue
+            elif a.startswith("--file="):
+                dato = True
+            elif a == "-i" and k + 1 < n and el[k + 1][1] == "":
+                k += 2
+                continue
+            elif a.startswith("-") and a != "-":
+                if re.match(r"^-[A-Za-z]*e$", a) and k + 1 < n:
+                    testo.add(el[k + 1][0])
+                    dato = True
+                    k += 2
+                    continue
+            elif not dato:
+                testo.add(i)
+                dato = True
+            k += 1
+    elif nome in ("awk", "gawk", "mawk", "nawk"):
+        dato, k = False, 0
+        while k < n:
+            i, a = el[k]
+            if a == "-F" or a == "-v":
+                testo.add(i)
+                if k + 1 < n:
+                    testo.add(el[k + 1][0])
+                k += 2
+                continue
+            if a.startswith("-F") or a.startswith("-v"):
+                testo.add(i)
+            elif a in ("-f", "--file"):
+                dato = True
+                k += 2
+                continue
+            elif a.startswith("--file="):
+                dato = True
+            elif a in ("-e", "--source") and k + 1 < n:
+                testo.add(el[k + 1][0])
+                dato = True
+                k += 2
+                continue
+            elif a.startswith("-") and a != "-":
+                pass
+            elif not dato:
+                testo.add(i)
+                dato = True
+            k += 1
+    elif nome in ("grep", "egrep", "fgrep", "rg", "ag", "ack", "zgrep", "pgrep"):
+        dato, k = False, 0
+        if any(a == "--files" for _, a in el):
+            dato = True
+        valori = _GREP_VALORE | (frozenset(("-r", "--replace")) if nome == "rg"
+                                 else frozenset())
+        while k < n:
+            i, a = el[k]
+            if a in ("-e", "--regexp") and k + 1 < n:
+                testo.add(el[k + 1][0])
+                dato = True
+                k += 2
+                continue
+            if a.startswith("--regexp="):
+                testo.add(i)
+                dato = True
+            elif a in ("-f", "--file"):
+                dato = True
+                k += 2
+                continue
+            elif a in valori and k + 1 < n:
+                testo.add(el[k + 1][0])
+                k += 2
+                continue
+            elif a.startswith("--") and "=" in a and a.split("=", 1)[0] in valori:
+                testo.add(i)
+            elif a.startswith("-") and a != "-":
+                if re.match(r"^-[A-Za-z]*e$", a) and k + 1 < n:
+                    testo.add(el[k + 1][0])
+                    dato = True
+                    k += 2
+                    continue
+            elif not dato:
+                testo.add(i)
+                dato = True
+            k += 1
+    elif nome == "jq":
+        dato, k = False, 0
+        while k < n:
+            i, a = el[k]
+            if a in ("--arg", "--argjson", "--slurpfile", "--rawfile") and k + 2 < n + 0:
+                testo.add(el[k + 1][0])
+                if a in ("--arg", "--argjson"):
+                    testo.add(el[k + 2][0])
+                k += 3
+                continue
+            if a in ("-f", "--from-file"):
+                dato = True
+                k += 2
+                continue
+            if a == "--args" or a == "--jsonargs":
+                for i2, _ in el[k + 1:]:
+                    testo.add(i2)
+                break
+            if a.startswith("-") and a != "-":
+                pass
+            elif not dato:
+                testo.add(i)
+                dato = True
+            k += 1
+    elif nome == "tr":
+        testo.update(i for i, _ in el)
+    elif nome == "date":
+        testo.update(i for i, a in el if a.startswith("+"))
+    elif nome == "find":
+        k = 0
+        while k < n:
+            if el[k][1] in _FIND_VALORE and k + 1 < n:
+                testo.add(el[k + 1][0])
+                k += 2
+                continue
+            k += 1
+    elif nome == "gh":
+        sotto, k = None, 0
+        while k < n:
+            i, a = el[k]
+            if not a.startswith("-") and sotto is None:
+                sotto = a
+            elif a in _GH_VALORE_TESTO and k + 1 < n:
+                testo.add(el[k + 1][0])
+                k += 2
+                continue
+            elif a.startswith("--") and "=" in a and a.split("=", 1)[0] in _GH_VALORE_TESTO:
+                testo.add(i)
+            elif a == "--input" and k + 1 < n:
+                file_.add(el[k + 1][0])
+                k += 2
+                continue
+            elif sotto == "api" and not a.startswith("-"):
+                testo.add(i)
+            k += 1
+    elif nome == "git":
+        k, sotto = 0, None
+        while k < n:
+            i, a = el[k]
+            if a == "-C" and k + 1 < n:
+                file_.add(el[k + 1][0])
+                k += 2
+                continue
+            if a in ("-c",) and k + 1 < n:
+                testo.add(el[k + 1][0])
+                k += 2
+                continue
+            if a.startswith(("--git-dir=", "--work-tree=")):
+                file_.add(i)
+            elif a in ("--git-dir", "--work-tree") and k + 1 < n:
+                file_.add(el[k + 1][0])
+                k += 2
+                continue
+            elif not a.startswith("-") and sotto is None:
+                sotto = a
+            elif (a in _GIT_VALORE_TESTO or re.match(r"^-[A-Za-z]+m$", a)) and k + 1 < n:
+                testo.add(el[k + 1][0])      # `-m msg`, `-am msg`
+                k += 2
+                continue
+            elif a.startswith("--") and "=" in a and a.split("=", 1)[0] in _GIT_VALORE_TESTO:
+                testo.add(i)
+            elif re.match(r"^-[SG].", a):
+                testo.add(i)
+            elif sotto == "grep" and not a.startswith("-") and not any(
+                    x == "--" for _, x in el[:k]) and k == next(
+                        (j for j, (_, y) in enumerate(el) if y == "grep"), -1) + 1:
+                testo.add(i)
+            k += 1
+    elif _e_interprete(nome):
+        k = 0
+        while k < n:
+            i, a = el[k]
+            if (a in _OPZ_CODICE or (nome == "perl" and re.match(r"^-[A-Za-z0-9.]*[eE]$", a))) \
+                    and k + 1 < n:
+                testo.add(el[k + 1][0])
+                k += 2
+                continue
+            if not a.startswith("-"):
+                break
+            k += 1
+    return testo, file_
+
+
+def _plausibile(c: str) -> bool:
+    """Un token `/...` (o `~/...`) che un comando NON noto riceve, o un percorso
+    trovato in un testo di codice, e' un percorso da controllare solo se esiste o
+    se una cartella che lo contiene, diversa dalla radice, esiste: `/script`,
+    `/^## Parte 1/,...`, `/article>`, `/api/users` non sono percorsi. Un relativo
+    si tiene (si risolve sulla cartella del comando, che esiste)."""
+    e = os.path.expanduser(c) if c.startswith("~") else c
+    if not e.startswith("/"):
+        return True
+    q = re.sub(r"/{2,}", "/", e).rstrip("/")
+    while q and q != "/":
+        if os.path.lexists(q):
+            return True
+        q = os.path.dirname(q)
+    return False
 
 
 def _file_url(u: str):
@@ -1854,10 +2485,16 @@ def _varianti_token(t: str, env=None, locali=None):
         c = _espandi_var(c, env, locali)
         if not c:
             continue
-        if c == ".." or c.startswith(("/", "~", "./", "../")) or "/" in c:
-            perc.append(c)
-        elif not c.startswith("-") and len(c) <= 255 and not any(x.isspace() for x in c):
-            nomi.append(c)
+        for c in _espandi_graffe(c):
+            # `/a:/b` (`docker -v $PWD:/app`, un elenco come PATH): due percorsi
+            pezzi = [x for x in c.split(":") if x] if (
+                c.startswith("/") and ":" in c) else [c]
+            for c in pezzi:
+                if c == ".." or c.startswith(("/", "~", "./", "../")) or "/" in c:
+                    perc.append(c)
+                elif (not c.startswith("-") and len(c) <= 255
+                      and not any(x.isspace() for x in c)):
+                    nomi.append(c)
     return perc, nomi
 
 
@@ -1890,21 +2527,38 @@ def _candidati_an(an: dict, env=None) -> list:
     `(testo, tipo, cwd, segmento)`: `tipo` e' `p` (sembra un percorso) o `n` (un
     nome semplice), `cwd` la cartella in cui il segmento lo legge (simulata
     lungo i `cd`), `segmento` il dizionario di `_analizza` (None per il testo di
-    un codice, dove si cercano solo percorsi assoluti)."""
+    un codice, dove si cercano solo percorsi assoluti).
+
+    Un argomento e' un percorso candidato solo se sta nella posizione di un file:
+    non il modello di `grep`/`rg`, non lo script di `sed`/`awk`, non il codice di
+    un interprete (`_classi_token`); e per un comando che non e' fra quelli che
+    operano su file (`_FILE_CMD`) un `/...` che non esiste e non sta sotto una
+    cartella esistente non e' un percorso (`_plausibile`). Lo stesso per i
+    percorsi cercati dentro un testo di codice."""
     trovati = []
+
+    def plaus(lista):
+        return [c for c in lista if _plausibile(c)]
+
     for s in an["segmenti"]:
-        for t in _parole_segmento(s):
+        testo_i, file_i = _classi_token(s)
+        noto = (s["nome"] or "").lower() in _FILE_CMD
+        for i, t, redir in _parole_segmento_i(s):
+            if i in testo_i:
+                continue
             perc, semplici = _varianti_token(t, env, s["vars"])
+            if not (noto or redir or i in file_i):
+                perc = plaus(perc)
             trovati.extend((c, "p", s["cwd"], s) for c in perc)
             trovati.extend((c, "n", s["cwd"], s) for c in semplici)
         if _e_interprete(s["nome"]):
             for t in s["args"]:
-                trovati.extend((c, "p", None, s) for c in _trova_percorsi_in_testo(t))
+                trovati.extend((c, "p", None, s) for c in plaus(_trova_percorsi_in_testo(t)))
                 trovati.extend((c, "p", s["cwd"], s) for c in _trova_relativi_in_testo(t))
         for t in s.get("aqui_testo") or ():
-            trovati.extend((c, "p", None, s) for c in _trova_percorsi_in_testo(t))
+            trovati.extend((c, "p", None, s) for c in plaus(_trova_percorsi_in_testo(t)))
     for corpo, cw in an["corpi"]:
-        trovati.extend((c, "p", None, None) for c in _trova_percorsi_in_testo(corpo))
+        trovati.extend((c, "p", None, None) for c in plaus(_trova_percorsi_in_testo(corpo)))
         trovati.extend((c, "p", cw, None) for c in _trova_relativi_in_testo(corpo))
     visti, out = set(), []
     for c, tipo, cw, s in trovati:
@@ -1931,7 +2585,7 @@ def _espandi_glob(c: str, cwd) -> list:
         return []
 
 
-def _percorsi_da_comando(cmd: str, cwd, nomi_semplici=False, env=None):
+def _percorsi_da_comando(cmd: str, cwd, nomi_semplici=False, env=None, avvisi=None):
     """I percorsi di un comando Bash, risolti, come `(testo, percorso,
     segmento)`. Ogni percorso relativo si risolve sulla cartella in cui il suo
     segmento parte (simulata lungo i `cd`); se quella non si sa
@@ -1941,9 +2595,12 @@ def _percorsi_da_comando(cmd: str, cwd, nomi_semplici=False, env=None):
     da una cwd che sta sopra. Non per un nominato: con la cwd fuori dai suoi
     permessi ogni parola (`echo`, `ls`) risolverebbe fuori (ma vedi `valuta`: per
     un nominato la cwd stessa e' un percorso toccato da ogni comando). I token
-    con un glob si espandono sul disco (`cat cartella/*`)."""
+    con un glob si espandono sul disco (`cat cartella/*`). Se un tetto (vedi
+    `MAX_PERCORSI_COMANDO`) ferma l'analisi, lo si dice aggiungendo un testo alla
+    lista `avvisi`."""
     an = _analizza(cmd, cwd, env)
     out, visti = [], set()
+    n_nomi, n_glob = 0, 0
 
     def aggiungi(testo, n, s):
         k = (n, id(s))
@@ -1952,8 +2609,14 @@ def _percorsi_da_comando(cmd: str, cwd, nomi_semplici=False, env=None):
             out.append((testo, n, s))
 
     for c, tipo, cw, s in _candidati_an(an, env):
-        if tipo == "n" and not nomi_semplici:
-            continue
+        if tipo == "n":
+            if not nomi_semplici:
+                continue
+            if n_nomi >= MAX_PERCORSI_COMANDO:
+                if avvisi is not None and "nomi" not in avvisi:
+                    avvisi.append("nomi")
+                continue
+            n_nomi += 1
         base = cw if cw is not None else cwd
         if base == _IGNOTA and not c.startswith(("/", "~")):
             if tipo == "p":
@@ -1966,8 +2629,15 @@ def _percorsi_da_comando(cmd: str, cwd, nomi_semplici=False, env=None):
             # dimensioni, non nomi ne' contenuti (con -a i nomi si vedono)
             continue
         for e in _espandi_glob(c, base):
+            if n_glob >= MAX_ESPANSIONE_TOTALE:
+                if avvisi is not None and "glob" not in avvisi:
+                    avvisi.append("glob")
+                break
+            n_glob += 1
             aggiungi(e, _norm(e, base), s)
-        if len(out) >= MAX_PERCORSI_COMANDO:
+        if len(out) >= MAX_PERCORSI_DURO:
+            if avvisi is not None:
+                avvisi.append("percorsi")
             break
     return out
 
@@ -2079,7 +2749,8 @@ def _ric_catene(an: dict) -> dict:
     return d
 
 
-def percorsi_richiesti(nome: str, ti: dict, cwd, nomi_semplici=False, env=None):
+def percorsi_richiesti(nome: str, ti: dict, cwd, nomi_semplici=False, env=None,
+                       avvisi=None):
     """Tutti i percorsi che una chiamata di strumento vuole toccare, come
     `(testo, percorso_risolto, ricorsivo)`. `ricorsivo` e' `None` (no), `True`
     (una ricerca che entra in tutto quello che sta sotto) o un intero (una
@@ -2151,12 +2822,14 @@ def percorsi_richiesti(nome: str, ti: dict, cwd, nomi_semplici=False, env=None):
     if isinstance(cmd, str) and cmd:
         an = _analizza(cmd, cwd, env)
         ric_c = _ric_catene(an)
-        trovati = _percorsi_da_comando(cmd, cwd, nomi_semplici, env)
+        trovati = _percorsi_da_comando(cmd, cwd, nomi_semplici, env, avvisi)
         for testo, n, s in trovati:
             r = ric_c.get(s["catena"]) if s is not None else None
             # Una `/` da sola non e' un percorso da negare (`ls /`), salvo che
-            # una ricerca ricorsiva parta proprio da li' (`find / -name x`).
-            if n == "/" and not _ric_attiva(r):
+            # una ricerca ricorsiva del SUO stesso segmento parta proprio da li'
+            # (`find / -name x`): non basta che sia nella stessa pipe (`find . |
+            # awk -F/ ...`, `... | tr '/' _`).
+            if n == "/" and not (s is not None and _ric_attiva(_ricorsivita(s))):
                 continue
             out.append((testo, n, r))
         for s in an["segmenti"]:
@@ -2374,10 +3047,18 @@ def valuta(payload: dict, ambito: Ambito, chi: dict, data_dir: str):
         v = _valuta_cwd_nominato(cmd, chi, ambito, mio, _env_payload(payload))
         if v:
             return v
+    # 3c) un nominato non scrive in una cartella di codice condivisa
+    if nominato and ambito.condivise and isinstance(cmd, str) and cmd:
+        v = _valuta_condivise(cmd, chi, ambito, mio, _env_payload(payload))
+        if v:
+            return v
     # 4) percorsi
+    scrittura = _nome_corto(nome) in STRUMENTI_SCRITTURA
+    avvisi = []
     for testo, p, ricorsivo in percorsi_richiesti(nome, ti, chi["cwd"] or None,
                                                   nomi_semplici=not nominato,
-                                                  env=_env_payload(payload)):
+                                                  env=_env_payload(payload),
+                                                  avvisi=avvisi):
         if p == _IGNOTA:
             return {"bersaglio": testo, "proprietario": "sconosciuto",
                     "motivo": "compartimento %s: il comando cambia cartella con una "
@@ -2385,11 +3066,35 @@ def valuta(payload: dict, ambito: Ambito, chi: dict, data_dir: str):
                               "variabile non definita) e poi usa un percorso "
                               "relativo: scrivi percorsi assoluti" % mio}
         if nominato:
-            v = _percorso_nominato(p, chi, ambito, mio, ricorsivo)
+            v = _percorso_nominato(p, chi, ambito, mio, ricorsivo, scrittura)
         else:
             v = _percorso_predefinito(p, ricorsivo, ambito, mio)
         if v:
             return v
+    if avvisi:
+        # un tetto ha fermato l'analisi: il resto del comando non e' stato guardato
+        if nominato:
+            return {"bersaglio": "", "proprietario": "sconosciuto",
+                    "motivo": "compartimento %s: il comando nomina troppi percorsi "
+                              "(oltre il tetto dell'analisi: %s) per controllarli "
+                              "tutti: spezzalo" % (mio, ", ".join(avvisi))}
+        return {"bersaglio": "", "proprietario": "sconosciuto", "solo_nota": True,
+                "motivo": "compartimento %s: il comando nomina troppi percorsi (oltre "
+                          "il tetto dell'analisi: %s): il resto non e' stato "
+                          "controllato" % (mio, ", ".join(avvisi))}
+    return None
+
+
+def _valuta_condivise(cmd, chi, ambito, mio, env):
+    """Un comando Bash di un nominato che scrive, cancella o sposta dentro una
+    cartella di codice condivisa (e non dentro i suoi permessi): negato. La
+    lettura e l'esecuzione sono ammesse (vedi `_percorso_nominato`)."""
+    for tipo, val, _ in _bersagli_scrittura(cmd, chi["cwd"] or None, env):
+        if tipo in ("file", "contiene", "stato") and ambito.in_condivisa(val):
+            if ambito.proprietari_percorso(val):
+                continue        # dentro la cartella di un nominato: si decide li'
+            return {"bersaglio": val, "proprietario": "condivisa",
+                    "motivo": _MOTIVO_CONDIVISA % (mio, val)}
     return None
 
 
@@ -2423,19 +3128,37 @@ def _valuta_cwd_nominato(cmd, chi, ambito, mio, env):
 
 
 # Le chiavi di config.json che tengono acceso o configurano il guardiano.
-CHIAVI_GUARDIANO = ("guardiano", "compartimenti", "strumenti_drive")
+CHIAVI_GUARDIANO = ("guardiano", "compartimenti", "strumenti_drive", "condivise")
 
 # Scritture "per altre vie" dentro il codice di un interprete
-# (`python3 -c "open(f, 'w')"`, `Path(f).write_text`, `os.remove`, `shutil`,
-# `fs.writeFileSync`, `File.write`, `open(F, ">...")` di perl, `config.save_config`,
-# ...): se il testo nomina un file del guardiano E ha uno di questi segni, e' una
-# scrittura. `json.load(open(f))` no.
+# (`python3 -c "open(f, 'w')"`, `Path(f).write_text`, `os.remove`, `os.chmod`,
+# `shutil`, `fs.writeFileSync`, `fs.rmSync`, `fs.renameSync`, `File.write`,
+# `open(F, ">...")` di perl, `rename`, `config.save_config`, ...): se il testo nomina
+# un file del guardiano E ha uno di questi segni, e' una scrittura.
+# `json.load(open(f))` no.
 _RX_CODICE_SCRIVE = re.compile(
-    r"write|dump\(|os\.(?:replace|rename|remove|unlink|truncate|link|symlink)"
+    r"write|dump\(|os\.(?:replace|rename|remove|unlink|truncate|link|symlink|chmod|chown"
+    r"|rmdir|removedirs)"
     r"|unlink|rmtree|shutil|truncate|save_config|appendFile|File\.open|File\.delete"
     r"|File\.rename|FileUtils|\bmv\b|\bcopyfile|\bcopy2?\("
-    r"""|open\([^)]*,\s*['"][wax+]|mode\s*=\s*['"][wax+]|open\s*\(?[^;\n]*['"]\s*\+?>""",
+    r"|rmSync|renameSync|rmdirSync|copyFileSync|createWriteStream|\bchmod|\bchown|\brename\b"
+    r"|\.move\("
+    r"|open\s*\((?:[^()]|\((?:[^()]|\((?:[^()]|\([^()]*\))*\))*\))*?,\s*['\"](?:[wax]|r\+)[bt+]*['\"]"
+    r"""|mode\s*=\s*['"][wax+]|open\s*\(?[^;\n]*['"]\s*\+?>""",
     re.I)
+# Il codice che lancia un comando di shell (`os.system('rm x')`, `subprocess.run(
+# ['rm', 'x'])`, `execSync`, `system(...)` di perl e ruby, `do shell script`): le
+# stringhe del codice si analizzano come comandi (`_comandi_nel_codice`).
+_RX_ESEGUE = re.compile(
+    r"system|subprocess|popen|\bexec|spawn|shell script|shell_exec|passthru|\bqx\b|`"
+    r"|Kernel|check_call|check_output|\.call\(|\bcall\(", re.I)
+_RX_UNISCI = re.compile(r"""['"]\s*\+\s*['"]""")
+_RX_STRINGA = re.compile(r"""'((?:[^'\\]|\\.)*)'|"((?:[^"\\]|\\.)*)\"""")
+# Operazioni di codice che colpiscono una CARTELLA (i permessi, lo spostamento, la
+# rimozione): con il nome della cartella dei dati di Plancia nel testo bastano.
+_RX_DIR_OPS = re.compile(
+    r"chmod|chown|rmtree|rmdir|removedirs|rename|replace|symlink|\.move\(|shutil|"
+    r"rmSync|renameSync|rmdirSync", re.I)
 _RX_SED_SUL_POSTO = re.compile(r"^(?:-[A-Za-z]*i|--in-place)")
 # Il pacchetto di Plancia importato da un interprete, e cio' che lo usa per
 # cambiare la config: `main([...])` della CLI, `save_config`, `sys.argv`.
@@ -2507,6 +3230,7 @@ class _Protetti:
         self.cartelle = {os.path.dirname(p) for p in self.esatti | self.settings_utente}
         self.radice_l = self.radice.lower()
         self.bin_l = self.bin.lower()
+        self.pycache_l = os.path.join(self.radice, "plancia", "__pycache__").lower()
 
     def tag(self, n: str):
         """`file` (protetto del tutto), `settings` (protetto in modo mirato) o
@@ -2517,6 +3241,9 @@ class _Protetti:
         d = os.path.dirname(low)
         if d in (self.radice_l, self.bin_l) and low.endswith((".py", ".pyc", ".so", ".pth")):
             return "file"
+        if (d == self.pycache_l and low.endswith(".pyc")
+                and os.path.basename(low).split(".")[0] in ("__init__", "compartimenti", "config")):
+            return "file"       # il codice gia' compilato: un pyc costruito a mano si esegue
         if (os.path.basename(low) == "__init__.py" and os.path.dirname(d) == self.radice_l
                 and os.path.basename(d) != "plancia"):
             return "file"       # un pacchetto nuovo nella radice: `json/__init__.py`
@@ -2540,21 +3267,69 @@ class _Protetti:
 
 
 def _voci_guardiano(testo: str):
-    """I comandi delle voci PreToolUse di un settings che nominano
-    `plancia-guardiano`, o None se il testo non e' JSON."""
+    """Le voci PreToolUse di un settings che nominano `plancia-guardiano`, come
+    dizionari `{command, matcher, timeout, async, if, type}`, o None se il testo non
+    e' JSON."""
     try:
         d = json.loads(testo)
     except (ValueError, RecursionError):
         return None
-    out = set()
+    out = []
     hooks = d.get("hooks") if isinstance(d, dict) else None
     pre = hooks.get("PreToolUse") if isinstance(hooks, dict) else None
     for voce in pre if isinstance(pre, list) else ():
-        for h in (voce.get("hooks") if isinstance(voce, dict) else None) or ():
+        if not isinstance(voce, dict):
+            continue
+        for h in voce.get("hooks") or ():
             c = h.get("command") if isinstance(h, dict) else None
             if isinstance(c, str) and "plancia-guardiano" in c:
-                out.add(c)
+                cond = h.get("if") if h.get("if") is not None else voce.get("if")
+                out.append({"command": c, "matcher": voce.get("matcher"),
+                            "timeout": h.get("timeout"), "async": h.get("async"),
+                            "if": cond, "type": h.get("type")})
     return out
+
+
+def _voce_efficace(v: dict) -> bool:
+    """La voce del guardiano gira davvero su ogni strumento: nessun `matcher` che la
+    restringe, nessun `if`, non e' `async` (non puo' negare), non ha un `timeout`
+    che la uccide (meno di un secondo), e' un comando."""
+    if v["matcher"] not in (None, "", "*", ".*"):
+        return False
+    if v["if"]:
+        return False
+    if v["async"] in (True, "true"):
+        return False
+    t = v["timeout"]
+    if t is not None and not (isinstance(t, (int, float)) and not isinstance(t, bool)
+                              and t >= 1):
+        return False
+    return v["type"] in (None, "command")
+
+
+# Variabili d'ambiente che, messe nella chiave `env` di un settings, arrivano al
+# processo dell'hook e lo fanno partire altrove o senza le sue librerie: il
+# guardiano legge la config da PLANCIA_HOME (o HOME), importa moduli da PYTHONPATH,
+# e parte con il python che trova in PATH.
+_ENV_PERICOLOSE = frozenset((
+    "PLANCIA_HOME", "HOME", "CLAUDE_CONFIG_DIR", "PYTHONPATH", "PYTHONHOME",
+    "PYTHONSTARTUP", "PYTHONUSERBASE", "PYTHONEXECUTABLE", "PYTHONINSPECT",
+    "PYTHONBREAKPOINT", "PATH", "LD_PRELOAD", "LD_LIBRARY_PATH"))
+
+
+def _env_pericolose(testo: str) -> dict:
+    """Le voci di `env` di un settings che neutralizzerebbero il guardiano."""
+    try:
+        d = json.loads(testo)
+    except (ValueError, RecursionError):
+        return {}
+    e = d.get("env") if isinstance(d, dict) else None
+    if not isinstance(e, dict):
+        return {}
+    return {k: v for k, v in e.items() if isinstance(k, str)
+            and (k in _ENV_PERICOLOSE or k.startswith(("DYLD_", "PYTHON")) and
+                 k not in ("PYTHONIOENCODING", "PYTHONUTF8", "PYTHONDONTWRITEBYTECODE",
+                           "PYTHONUNBUFFERED", "PYTHONWARNINGS"))}
 
 
 def _testo_dopo_scrittura(corto: str, ti: dict, attuale: str):
@@ -2603,16 +3378,26 @@ def _controlla_settings(n: str, corto: str, ti: dict, P: _Protetti):
     if spento:
         return ("scrive `disableAllHooks` a vero: spegnerebbe tutti gli hook, "
                 "guardiano compreso")
+    nuove_env = _env_pericolose(nuovo)
+    vecchie_env = _env_pericolose(attuale)
+    cambiate = sorted(k for k, v in nuove_env.items()
+                      if k not in vecchie_env or vecchie_env[k] != v)
+    if cambiate:
+        return ("mette in `env` %s: arriverebbe al processo del guardiano e lo farebbe "
+                "partire senza la sua config o le sue librerie" % ", ".join(cambiate))
     prima = _voci_guardiano(attuale)
     if prima:
         dopo = _voci_guardiano(nuovo)
         if dopo is None:
-            ok = all(json.dumps(c)[1:-1] in nuovo or c in nuovo for c in prima)
+            ok = all(json.dumps(v["command"])[1:-1] in nuovo or v["command"] in nuovo
+                     for v in prima)
         else:
-            ok = prima <= dopo
+            ok = all(any(x["command"] == v["command"] and _voce_efficace(x)
+                         for x in dopo) for v in prima)
         if not ok:
-            return ("toglie o cambia la voce PreToolUse di plancia-guardiano: "
-                    "spegnerebbe il guardiano")
+            return ("toglie o cambia la voce PreToolUse di plancia-guardiano (il "
+                    "comando, l'evento, un `matcher` che la restringe, un `if`, "
+                    "`async`, un `timeout` troppo corto): spegnerebbe il guardiano")
     return None
 
 
@@ -2676,26 +3461,59 @@ def _tar_estrae(args) -> bool:
     return any(re.match(r"^-[A-Za-z]*x[A-Za-z]*$", a) for a in args)
 
 
-def _scrive_un_protetto(cmd: str, cwd, P: _Protetti, env=None):
-    """`(bersaglio, come)` se il comando Bash scrive, cancella o sposta un file
-    del guardiano, o imposta una sua chiave con la CLI; altrimenti None. `come`
-    e' `cli`, `scrive`, `settings` (un file di impostazioni di Claude Code) o
-    `ignota` (una scrittura relativa dopo un `cd` che non si sa dove porta).
+def _comandi_nel_codice(t: str) -> list:
+    """Le stringhe di un codice (`os.system('rm x')`, `subprocess.run(['rm', 'x'])`,
+    `execSync("rm x")`, `do shell script "rm x"`) lette come comandi di shell: ogni
+    stringa da sola, le stringhe di ogni lista `[...]` unite con lo spazio, e tutte
+    insieme (con lo spazio e senza: `'rm '+'x'`). Al massimo una trentina."""
+    lit = [m.group(1) if m.group(1) is not None else m.group(2)
+           for m in _RX_STRINGA.finditer(t)]
+    cand = []
+    for m in re.finditer(r"\[([^\]]*)\]", t):
+        parti = [x.group(1) if x.group(1) is not None else x.group(2)
+                 for x in _RX_STRINGA.finditer(m.group(1))]
+        if parti:
+            cand.append(" ".join(parti))
+    cand.append(" ".join(lit))
+    cand.append("".join(lit))
+    cand.extend(x for x in lit if " " in x or "/" in x)
+    visti, out = set(), []
+    for c in cand:
+        if c and c not in visti and len(c) < 4096:
+            visti.add(c)
+            out.append(c)
+    return out[:30]
+
+
+def _bersagli_scrittura(cmd: str, cwd, env=None, prof: int = 0):
+    """Ogni posto in cui un comando Bash SCRIVE, cancella, sposta o cambia i
+    permessi, come `(tipo, valore, segmento)`: `file` (un percorso risolto),
+    `contiene` (una cartella di cui si cancella o sposta il contenuto: `rm -r`),
+    `stato` (una cartella in cui si scrive in massa o si cambiano i permessi),
+    `ignota` (un percorso relativo dopo un `cd` che non si sa dove porta),
+    `cli` (una chiave di config del guardiano impostata con la CLI di Plancia) e
+    `dati` (il file di config nominato per nome dentro un codice). Chi lo usa
+    decide cosa e' protetto (`_scrive_un_protetto`) o in sola lettura
+    (`_valuta_condivise`).
 
     EURISTICO, dichiarato: chi vuole aggirarlo ci riesce (un percorso costruito a
     pezzi dentro uno script). Chiude il caso ordinario: `plancia config guardiano
-    spento`, `sed -i`, `tee`, una redirezione, `cp x config.json`, `python3 -c`
-    che scrive il file, `rm`/`mv` del file o della cartella che lo contiene,
-    `find -delete`, `curl -o`, `tar x -C`, `git checkout` nella cartella dei
-    dati. I percorsi relativi si risolvono sulla cartella SIMULATA del segmento
-    (`cd cartella-dati && sed -i ... config.json`). La lettura e' ammessa."""
+    spento`, `sed -i`, `tee`, una redirezione, `cp x config.json`, `python3 -c` che
+    scrive il file o lancia `rm` con `os.system`/`subprocess`, `rm`/`mv` del file o
+    della cartella che lo contiene (anche con graffe, glob, variabili, cicli `for`,
+    sostituzioni `$(...)`, `xargs`), `find -delete`, `curl -o`, `tar x -C`, `git
+    checkout` nella cartella. I percorsi relativi si risolvono sulla cartella
+    SIMULATA del segmento. La lettura non compare."""
     an = _analizza(cmd, cwd, env)
+    segs = an["segmenti"]
+    hdl = an.get("hd") or []
+    pos = {id(x): i for i, x in enumerate(segs)}
 
     def base(s):
         return s["cwd"] if s["cwd"] is not None else cwd
 
     def risolvi(x, s):
-        """I percorsi risolti a cui punta `x` (anche con un glob di shell), o
+        """I percorsi risolti a cui punta `x` (anche con graffe e glob di shell), o
         None se `x` e' relativo e la cartella non si sa."""
         x = _espandi_var(x, env, s["vars"])
         if not x:
@@ -2703,54 +3521,34 @@ def _scrive_un_protetto(cmd: str, cwd, P: _Protetti, env=None):
         b = base(s)
         if b == _IGNOTA and not x.startswith(("/", "~")):
             return None
-        return [n for n in (_norm(c, b) for c in [x] + _espandi_glob(x, b)) if n]
+        out = []
+        for xx in _espandi_graffe(x):
+            for c in [xx] + _espandi_glob(xx, b):
+                n = _norm(c, b)
+                if n:
+                    out.append(n)
+        return out
 
-    def protetto(x, s):
+    def tipo_(t, x, s):
         r = risolvi(x, s)
         if r is None:
-            return x, "ignota"
+            yield ("ignota", x, s)
+            return
         for n in r:
-            t = P.tag(n)
-            if t:
-                return n, ("settings" if t == "settings" else "scrive")
-        return None
-
-    def contiene(x, s):
-        r = risolvi(x, s)
-        if r is None:
-            return x, "ignota"
-        for n in r:
-            c = P.contiene(n)
-            if c:
-                return c[0], ("settings" if c[1] == "settings" else "scrive")
-        return None
-
-    def stato(x, s):
-        """`x` e' una cartella che contiene direttamente file protetti."""
-        r = risolvi(x, s)
-        if r is None:
-            return x, "ignota"
-        for n in r:
-            if P.cartella_stato(n):
-                return n, "scrive"
-        return None
+            yield (t, n, s)
 
     def destinazione(operandi, s):
-        """Il file protetto che un `cp`/`mv`/`install`/`rsync` scrive: l'ultimo
-        operando, o (se e' una cartella) la cartella piu' il nome di ogni sorgente."""
+        """Il file che un `cp`/`mv`/`install`/`rsync` scrive: l'ultimo operando, o
+        (se e' una cartella) la cartella piu' il nome di ogni sorgente."""
         if not operandi:
-            return None
-        v = protetto(operandi[-1], s)
-        if v:
-            return v
+            return
+        yield from tipo_("file", operandi[-1], s)
         r = risolvi(operandi[-1], s) or []
         if len(operandi) >= 2 and r and (operandi[-1].endswith("/") or os.path.isdir(r[0])):
             for src in operandi[:-1]:
                 n = _norm(os.path.join(r[0], os.path.basename(src.rstrip("/"))))
-                t = P.tag(n) if n else None
-                if t:
-                    return n, ("settings" if t == "settings" else "scrive")
-        return None
+                if n:
+                    yield ("file", n, s)
 
     def valore_opzione(args, brevi, lunghe):
         """Il valore di un'opzione (`-o x`, `-ox`, `--output x`, `--output=x`)."""
@@ -2767,67 +3565,108 @@ def _scrive_un_protetto(cmd: str, cwd, P: _Protetti, env=None):
                     return a.split("=", 1)[1]
         return None
 
+    def parole_utili(tokens):
+        return [t for t in tokens if t and not _punt(t) and not t.startswith("-")
+                and not _RX_MARCA_HD.match(t)]
+
+    def parole_testo(testo):
+        return [w for w in re.split(r"\s+", testo) if w]
+
+    def extra(s):
+        """Gli operandi che un comando riceve senza scriverli fra i suoi argomenti:
+        l'output di una sostituzione (`rm $(ls x)`), il testo che arriva a
+        `xargs` (da una pipe, da un heredoc o da una here-string), e, se un
+        operando e' una variabile che non si sa (`while read f; do rm $f; done`),
+        i percorsi nominati altrove nello stesso comando."""
+        ex = []
+        if not _consumo_testo(s):
+            for interno in _sostituzioni(s["testo"]):
+                ex.extend(parole_utili(_token(_maschera(interno))[1:]))
+        if "xargs" in s["pre"] or s["nome"] == "parallel":
+            ex.extend(w for t in (s.get("aqui_testo") or []) for w in parole_testo(t))
+            for hid in s["hd"]:
+                if hid < len(hdl):
+                    ex.extend(parole_testo(hdl[hid]["corpo"]))
+            k = pos.get(id(s), 0)
+            for s0 in segs[:k]:
+                if s0["catena"] == s["catena"]:
+                    ex.extend(parole_utili(s0["token"][1:]))
+                    ex.extend(w for t in (s0.get("aqui_testo") or []) for w in parole_testo(t))
+                    for hid in s0["hd"]:
+                        if hid < len(hdl):
+                            ex.extend(parole_testo(hdl[hid]["corpo"]))
+        if any(t.startswith("$") and _espandi_var(t, env, s["vars"]) is None
+               for t in _operandi(s)):
+            for s0 in segs:
+                if s0 is not s:
+                    ex.extend(parole_utili(s0["token"][1:]))
+                    ex.extend(w for t in (s0.get("aqui_testo") or []) for w in parole_testo(t))
+            for h in hdl:
+                ex.extend(parole_testo(h["corpo"]))
+        return ex[:300]
+
     codice = False
-    for s in an["segmenti"]:
+    for s in segs:
         nome, args = s["nome"], s["args"]
         n = nome.lower()
         # 1) la CLI di Plancia
         chiave = _cli_config_guardiano(s)
         if chiave:
-            return chiave, "cli"
+            yield ("cli", chiave, s)
         if _e_interprete(nome):
             codice = True
-        # 2) redirezioni: `> file`, `>> file`, `>| file`
+        # 2) redirezioni: `> file`, `>> file`, `>| file`, `>& file`, `<> file`
         for t in _uscite(s["token"]):
-            v = protetto(t, s)
-            if v:
-                return v
+            yield from tipo_("file", t, s)
         op = _operandi(s)
-        if n in ("tee", "truncate", "rm", "chmod", "chown", "ed", "ex", "vi", "vim",
-                 "nano", "emacs", "sponge", "unlink", "shred", "mv", "touch"):
-            for x in op:
-                v = protetto(x, s)
-                if v:
-                    return v
+        if n in ("tee", "truncate", "rm", "chmod", "chown", "chgrp", "chflags", "ed",
+                 "ex", "vi", "vim", "nano", "emacs", "sponge", "unlink", "shred", "mv",
+                 "touch", "mkdir", "rmdir", "patch", "gzip", "gunzip", "bzip2", "bunzip2",
+                 "xz", "unxz", "compress", "uncompress"):
+            if n in ("gzip", "gunzip", "bzip2", "bunzip2", "xz", "unxz") and any(
+                    a in ("-c", "--stdout", "--to-stdout") for a in args):
+                continue        # `gzip -c f` scrive su stdout, non nel file
+            ex = extra(s)
+            for x in op + ex:
+                yield from tipo_("file", x, s)
             if n == "mv":
-                v = destinazione(op, s)
-                if v:
-                    return v
+                yield from destinazione(op, s)
             if n in ("rm", "mv", "unlink", "shred"):
-                for x in op[:-1] if n == "mv" else op:
-                    v = contiene(x, s)
-                    if v:
-                        return v
-            if n in ("chmod", "chown") and any(
-                    re.match(r"^-[A-Za-z]*R", a) or a == "--recursive" for a in args):
-                for x in op:
-                    v = contiene(x, s)
-                    if v:
-                        return v
+                for x in (op[:-1] if n == "mv" else op) + ex:
+                    yield from tipo_("contiene", x, s)
+            if n in ("chmod", "chown", "chgrp", "chflags"):
+                # anche senza -R: `chmod 000 ~/.plancia` toglie l'accesso alla cartella
+                for x in op + ex:
+                    yield from tipo_("stato", x, s)
+                if any(re.match(r"^-[A-Za-z]*R", a) or a == "--recursive" for a in args):
+                    for x in op + ex:
+                        yield from tipo_("contiene", x, s)
         elif n in ("sed", "perl") and any(_RX_SED_SUL_POSTO.match(a) for a in args):
+            for x in op + extra(s):
+                yield from tipo_("file", x, s)
+        elif n in ("awk", "gawk") and "inplace" in args:
             for x in op:
-                v = protetto(x, s)
-                if v:
-                    return v
-        elif n in ("cp", "install", "rsync", "ln"):
-            v = destinazione(op, s)
-            if v:
-                return v
-            ricorsivo = n == "rsync" or any(
+                yield from tipo_("file", x, s)
+        elif n == "sort":
+            dest = valore_opzione(args, ("-o",), ("--output",))
+            if dest:
+                yield from tipo_("file", dest, s)
+        elif n in ("cp", "install", "rsync", "ln", "ditto"):
+            yield from destinazione(op, s)
+            if n == "ln" and op and any(re.match(r"^-[A-Za-z]*[fn]", a) for a in args):
+                # `ln -sfn x ~/.plancia`: sostituisce la cartella con un collegamento
+                yield from tipo_("stato", op[-1], s)
+            ricorsivo = n in ("rsync", "ditto") or any(
                 re.match(r"^-[A-Za-z]*[rRa]", a) or a in ("--recursive", "--archive")
                 for a in args)
             if ricorsivo and n != "ln" and op:
                 # una copia ricorsiva dentro la cartella dei file protetti li puo'
                 # sovrascrivere (`cp -r x/. ~/.plancia/`, `rsync -a x/ ~/.plancia/`)
-                v = stato(op[-1], s)
-                if v:
-                    return v
+                yield from tipo_("stato", op[-1], s)
         elif n == "dd":
             for a in args:
                 if a.startswith("of="):
-                    v = protetto(a[3:], s)
-                    if v:
-                        return v
+                    yield from tipo_("file", a[3:], s)
         elif n == "find":
             radici = []
             for a in args:
@@ -2839,64 +3678,45 @@ def _scrive_un_protetto(cmd: str, cwd, P: _Protetti, env=None):
                            and i + 1 < len(args)), None)
             if "-delete" in args or (esegue is not None and esegue not in _LETTURA_ESEC):
                 for x in radici or ["."]:
-                    v = stato(x, s) or protetto(x, s)
-                    if v:
-                        return v
+                    yield from tipo_("stato", x, s)
+                    yield from tipo_("file", x, s)
         elif n == "curl":
             dest = valore_opzione(args, ("-o",), ("--output",))
             if dest:
-                v = protetto(dest, s)
-                if v:
-                    return v
+                yield from tipo_("file", dest, s)
             if any(a in ("-O", "--remote-name", "--remote-name-all") for a in args) or any(
                     re.match(r"^-[A-Za-z]*O[A-Za-z]*$", a) for a in args):
                 cartella = valore_opzione(args, (), ("--output-dir",)) or "."
-                v = stato(cartella, s)
-                if v:
-                    return v
+                yield from tipo_("stato", cartella, s)
                 for a in args:
                     if _RX_URL.match(a):
                         nome_file = os.path.basename(a.split("?", 1)[0].rstrip("/"))
-                        v = protetto(os.path.join(cartella, nome_file), s)
-                        if v:
-                            return v
+                        yield from tipo_("file", os.path.join(cartella, nome_file), s)
         elif n == "wget":
             dest = valore_opzione(args, ("-O",), ("--output-document",))
             if dest:
-                v = protetto(dest, s)
-                if v:
-                    return v
+                yield from tipo_("file", dest, s)
             cartella = valore_opzione(args, ("-P",), ("--directory-prefix",)) or "."
             urls = [a for a in args if _RX_URL.match(a)]
             if urls:
-                v = stato(cartella, s)
-                if v:
-                    return v
+                yield from tipo_("stato", cartella, s)
                 for a in urls:
                     nome_file = os.path.basename(a.split("?", 1)[0].rstrip("/"))
-                    v = protetto(os.path.join(cartella, nome_file), s)
-                    if v:
-                        return v
+                    yield from tipo_("file", os.path.join(cartella, nome_file), s)
         elif n == "tar":
             estrae = _tar_estrae(args)
             cartella = valore_opzione(args, ("-C",), ("--directory",))
             if estrae:
-                v = stato(cartella or ".", s)
-                if v:
-                    return v
+                yield from tipo_("stato", cartella or ".", s)
             else:
                 dest = valore_opzione(args, (), ("--file",))
                 if dest is None and args and re.match(r"^-?[A-Za-z]*f[A-Za-z]*$", args[0]):
                     dest = args[1] if len(args) > 1 else None
                 if dest:
-                    v = protetto(dest, s)
-                    if v:
-                        return v
+                    yield from tipo_("file", dest, s)
         elif n == "unzip":
             if not any(a in ("-l", "-p", "-t", "-v", "-Z", "-z") for a in args):
-                v = stato(valore_opzione(args, ("-d",), ()) or ".", s)
-                if v:
-                    return v
+                yield from tipo_("stato", valore_opzione(args, ("-d",), ()) or ".", s)
         elif n == "git":
             salta, dir_git, sotto = False, None, None
             for i, a in enumerate(args):
@@ -2911,33 +3731,67 @@ def _scrive_un_protetto(cmd: str, cwd, P: _Protetti, env=None):
                     sotto = a
                     break
             if sotto in _GIT_SCRIVE:
-                v = stato(dir_git or ".", s)
-                if v:
-                    return v
-    # 3) codice dato a un interprete: usa la CLI o il pacchetto di Plancia per
-    # cambiare la config, oppure nomina un file del guardiano (con un percorso
-    # assoluto, o per nome: `.plancia` e `config.json`) E scrive
+                yield from tipo_("stato", dir_git or ".", s)
+    # 3) codice dato a un interprete
     if codice:
-        testi = [t for s in an["segmenti"] if _e_interprete(s["nome"]) for t in s["args"]]
+        testi = [t for s in segs if _e_interprete(s["nome"]) for t in s["args"]]
         testi += [t for t, _ in an["corpi"]]
+        # `'~/.plan' + 'cia/config.json'`: le stringhe attaccate con `+` si uniscono
+        testi += [u for u in (_RX_UNISCI.sub("", t) for t in testi) if u not in testi]
         for t in testi:
             scrive = bool(_RX_CODICE_SCRIVE.search(t))
             if _RX_PKG_PLANCIA.search(t):
                 if "save_config" in t:
-                    return "config.save_config", "cli"
+                    yield ("cli", "config.save_config", None)
                 if re.search(r"\bmain\s*\(|\bsys\.argv\b", t):
-                    return "plancia.cli", "cli"
+                    yield ("cli", "plancia.cli", None)
                 if "CONFIG_FILE" in t and scrive:
-                    return "CONFIG_FILE", "scrive"
+                    yield ("dati", "CONFIG_FILE", None)
+            if _RX_DATI_NOMINATI.search(t):
+                if scrive and _RX_DATI_FILE.search(t):
+                    yield ("dati", "config.json", None)
+                if _RX_DIR_OPS.search(t):
+                    yield ("dati", "config.json", None)
             if scrive:
-                if _RX_DATI_NOMINATI.search(t) and _RX_DATI_FILE.search(t):
-                    return "config.json", "scrive"
+                dir_ops = bool(_RX_DIR_OPS.search(t))
                 for c in _trova_percorsi_in_testo(t):
-                    for n in [_norm(c, cwd)]:
-                        if n and P.tag(n):
-                            return n, "settings" if P.tag(n) == "settings" else "scrive"
+                    n_ = _norm(c, cwd)
+                    if n_:
+                        yield ("file", n_, None)
+                        yield ("stato", n_, None)
+                        if dir_ops:
+                            yield ("contiene", n_, None)
+            if prof < 2 and _RX_ESEGUE.search(t):
+                for c in _comandi_nel_codice(t):
+                    yield from _bersagli_scrittura(c, cwd, env, prof + 1)
     if "save_config" in cmd and codice:
-        return "config.save_config", "cli"
+        yield ("cli", "config.save_config", None)
+
+
+def _scrive_un_protetto(cmd: str, cwd, P: _Protetti, env=None):
+    """`(bersaglio, come)` se il comando Bash scrive, cancella o sposta un file
+    del guardiano, cambia i permessi della sua cartella, o imposta una sua chiave
+    con la CLI; altrimenti None. `come` e' `cli`, `scrive`, `settings` (un file di
+    impostazioni di Claude Code) o `ignota` (una scrittura relativa dopo un `cd` che
+    non si sa dove porta). Vedi `_bersagli_scrittura` per l'elenco dei casi."""
+    for tipo, val, _ in _bersagli_scrittura(cmd, cwd, env):
+        if tipo == "cli":
+            return val, "cli"
+        if tipo == "ignota":
+            return val, "ignota"
+        if tipo == "dati":
+            return val, "scrive"
+        if tipo == "file":
+            t = P.tag(val)
+            if t:
+                return val, ("settings" if t == "settings" else "scrive")
+        elif tipo == "contiene":
+            c = P.contiene(val)
+            if c:
+                return c[0], ("settings" if c[1] == "settings" else "scrive")
+        elif tipo == "stato":
+            if P.cartella_stato(val):
+                return val, "scrive"
     return None
 
 
@@ -2996,10 +3850,13 @@ def _valuta_protetti(nome, ti, ambito, chi, data_dir, mio, env=None):
                       "compartimenti: %s" % (mio, bersaglio, _MOTIVO_A_MANO)}
 
 
-def _percorso_nominato(p, chi, ambito, mio, ricorsivo=None):
+def _percorso_nominato(p, chi, ambito, mio, ricorsivo=None, scrittura=False):
     """Un percorso contro i permessi di TUTTI i compartimenti della sessione
     (di solito uno). Una cartella e' del nominato piu' specifico che la
-    contiene: dentro `/w/alfa/beta` alfa non entra, anche se ha `/w/alfa`."""
+    contiene: dentro `/w/alfa/beta` alfa non entra, anche se ha `/w/alfa`. Una
+    cartella di codice CONDIVISA (`condivise`) si legge e vi si esegue; con
+    `scrittura` no, salvo dentro i propri permessi (la scrittura da Bash si
+    controlla a parte: `_valuta_condivise`)."""
     for nome in chi["nomi"]:
         c = ambito.nominati[nome]
         prop = ambito.proprietari_percorso(p)
@@ -3032,6 +3889,22 @@ def _percorso_nominato(p, chi, ambito, mio, ricorsivo=None):
         if _progetto_ok(p, chi, nome in chi["da_codifica"]):
             continue
         prop = ambito.proprietario_specchio(p)
+        if prop is None and not scrittura and ambito.in_condivisa(p):
+            # una ricerca che parte da una cartella condivisa entra anche nella
+            # cartella di un altro nominato che ci sta dentro
+            for altro, ca in ambito.nominati.items():
+                if altro in chi["nomi"]:
+                    continue
+                for f in ca["cartelle"]:
+                    if _dentro(f, p) and _ric(ricorsivo, _prof(f, p)):
+                        return {"bersaglio": p, "proprietario": altro,
+                                "motivo": "compartimento %s: la ricerca in %s include "
+                                          "%s, che appartiene a %s: restringi il "
+                                          "percorso" % (mio, p, f, altro)}
+            continue
+        if prop is None and scrittura and ambito.in_condivisa(p):
+            return {"bersaglio": p, "proprietario": "condivisa",
+                    "motivo": _MOTIVO_CONDIVISA % (mio, p)}
         if prop is None and _e_temporaneo(p, ambito):
             return {"bersaglio": p, "proprietario": "nessuno",
                     "motivo": "compartimento %s: %s e' nella cartella temporanea "
@@ -3051,6 +3924,10 @@ def _percorso_nominato(p, chi, ambito, mio, ricorsivo=None):
                           "permessi di %s)" % (mio, p, prop, nome)}
     return None
 
+
+_MOTIVO_CONDIVISA = ("compartimento %s: %s e' in una cartella di codice condivisa "
+                     "(`condivise` di config): si legge e ci si esegue, non ci si "
+                     "scrive fuori dai propri permessi")
 
 _TEMPORANEI = ("/tmp", "/private/tmp", "/var/tmp", "/private/var/tmp",
                "/var/folders", "/private/var/folders")
@@ -3281,7 +4158,11 @@ def hook(testo: str, data_dir: str) -> str:
     `solo-registro` qualunque eccezione = ammessa, niente output. In
     `bloccante` un'eccezione DOPO aver capito che chi chiama e' un nominato
     nega per prudenza (fail-closed per i nominati); prima di saperlo, o per il
-    predefinito, ammette."""
+    predefinito, ammette. Una config che non si legge per PERMESSI (la cartella
+    dei dati con `chmod 000`) non e' silenziosa: torna `{"systemMessage": ...}`
+    (al massimo ogni dieci minuti, sempre se non si riesce a scrivere la marca).
+    Un tetto dell'analisi superato lascia una riga `nota` per il predefinito e nega
+    un nominato."""
     try:
         payload = json.loads(testo)
     except (ValueError, RecursionError, TypeError):
@@ -3291,7 +4172,7 @@ def hook(testo: str, data_dir: str) -> str:
     ev = payload.get("hook_event_name")
     if isinstance(ev, str) and ev and ev != "PreToolUse":
         return ""
-    modo, chi, v = "spento", None, None
+    modo, chi, v, avviso_out = "spento", None, None, ""
     try:
         cfg = carica(data_dir)
         modo = cfg["modo"]
@@ -3303,10 +4184,18 @@ def hook(testo: str, data_dir: str) -> str:
                 "modalita": modo, "sessione": sid if isinstance(sid, str) else "",
                 "compartimento": "", "strumento": "", "bersaglio": "",
                 "motivo": cfg["nota"], "esito": "nota"})
+        if cfg.get("avviso") and _nota_config_dovuta(data_dir, "guardiano.permessi-avviso"):
+            avviso_out = json.dumps({"systemMessage": cfg["avviso"]}, ensure_ascii=False)
         if not cfg["compartimenti"]:
-            return ""
+            return avviso_out
         ambito = Ambito(cfg["compartimenti"], cfg["strumenti_drive"],
-                        data_dir=data_dir)
+                        data_dir=data_dir, condivise=cfg["condivise"])
+        if ambito.note and _nota_config_dovuta(data_dir, "guardiano.condivise-nota"):
+            sid = payload.get("session_id")
+            scrivi_registro(data_dir, {
+                "modalita": modo, "sessione": sid if isinstance(sid, str) else "",
+                "compartimento": "", "strumento": "", "bersaglio": "",
+                "motivo": "; ".join(ambito.note), "esito": "nota"})
         chi = chiamante(payload, ambito)
         v = valuta(payload, ambito, chi, data_dir)
     except Exception as exc:  # noqa: BLE001 - un hook globale non rompe niente
@@ -3316,17 +4205,18 @@ def hook(testo: str, data_dir: str) -> str:
                            "negato per prudenza" % (",".join(chi["nomi"]),
                                                     type(exc).__name__)}
         else:
-            return ""
+            return avviso_out
     if not v:
-        return ""
+        return avviso_out
     if v.get("solo_misura") and modo != "solo-registro":
-        return ""
-    blocca = modo == "bloccante" and not v.get("solo_misura")
+        return avviso_out
+    solo_nota = bool(v.get("solo_nota"))
+    blocca = modo == "bloccante" and not v.get("solo_misura") and not solo_nota
     sid = payload.get("session_id")
     scrivi_registro(data_dir, {
         "modalita": modo, "sessione": sid if isinstance(sid, str) else "",
         "compartimento": ",".join(chi["nomi"]) if chi and chi["nomi"] else PREDEFINITO,
         "strumento": str(payload.get("tool_name") or ""),
         "bersaglio": v["bersaglio"], "motivo": v["motivo"],
-        "esito": "negato" if blocca else "avrebbe-negato"})
-    return uscita_negata(v["motivo"]) if blocca else ""
+        "esito": "negato" if blocca else ("nota" if solo_nota else "avrebbe-negato")})
+    return uscita_negata(v["motivo"]) if blocca else avviso_out
