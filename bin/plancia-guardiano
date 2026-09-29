@@ -4,10 +4,25 @@
 Hook globale di Claude Code: gira su OGNI strumento di OGNI sessione, e legge
 da stdin il JSON dell'hook. Deve essere veloce e non deve mai rompere niente:
 qualunque problema (stdin vuoto o non JSON, il pacchetto che non si importa,
-un'eccezione) esce 0 senza output, cioe' "ammesso". L'unico modo di NEGARE e'
-la modalita' `bloccante` di config.json (chiave `guardiano`), con il diniego
-su stdout (vedi `compartimenti.uscita_negata`); `spento` (il default) esce
-subito.
+un'eccezione) esce 0 senza negare, cioe' "ammesso" (fail-open: un guardiano
+guasto non deve bloccare tutte le sessioni). L'unico modo di NEGARE e' la
+modalita' `bloccante` di config.json (chiave `guardiano`), con il diniego su
+stdout (vedi `compartimenti.uscita_negata`); `spento` (il default) esce subito.
+
+Ma un guasto NON e' silenzioso. Se il pacchetto non parte (un refuso in
+`plancia/__init__.py`, un checkout su un ramo senza `compartimenti.py`, un merge
+rotto) il guardiano e' spento per tutti, e nessuno lo saprebbe: qui, in
+qualunque eccezione, e con il guardiano non `spento` in config, si scrive una
+riga `guardiano-non-parte` in `guardiano.log` (solo libreria standard, al
+massimo una ogni dieci minuti, come la nota di config illeggibile) e si stampa
+su stdout `{"systemMessage": ...}`: il campo che Claude Code mostra
+all'utente per qualunque hook (verificato nel binario 2.1.267: schema
+`systemMessage`, "Warning message shown to the user"; che la UI lo mostri per un
+PreToolUse e' dedotto, non visto). `plancia guardiano --stato` la mostra.
+
+Il pacchetto si carica SENZA mettere la radice del checkout ne' `bin/` sul
+`sys.path`: un `json.py` in quelle cartelle non puo' prendere il posto del
+modulo di sistema (e i due percorsi sono anche fra i file protetti).
 
 Non installato da questo file: si aggiunge a mano a `settings.json` (matcher
 `*`, evento PreToolUse), prima in `solo-registro`.
@@ -15,14 +30,99 @@ Non installato da questo file: si aggiunge a mano a `settings.json` (matcher
 import os
 import sys
 
-try:
-    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+_QUI = os.path.dirname(os.path.abspath(__file__))
+_QUI_REALE = os.path.dirname(os.path.realpath(__file__))
+_RADICE = os.path.dirname(_QUI_REALE)
+# la cartella di questo script e' sys.path[0]: fuori, cosi' un file `.py` messo
+# accanto non ruba il posto a un modulo di sistema
+sys.path[:] = [p for p in sys.path if p not in ("", _QUI, _QUI_REALE)]
+
+_DIECI_MINUTI = 600
+
+
+def _non_parte(exc, sessione):
+    """Best effort, solo libreria standard, mai un'eccezione: la riga nel registro e
+    l'avviso all'utente. Niente se il guardiano e' `spento` in config (o non
+    c'e' config): un guardiano che non parte ma e' spento non fa danno."""
+    try:
+        import json
+        import time
+        dati = os.environ.get("PLANCIA_HOME") or os.path.join(
+            os.path.expanduser("~"), ".plancia")
+        modo = "?"
+        try:
+            with open(os.path.join(dati, "config.json"), "r", encoding="utf-8") as f:
+                letta = json.load(f)
+            m = letta.get("guardiano", "spento") if isinstance(letta, dict) else "?"
+            modo = m.strip().lower() if isinstance(m, str) else "?"
+        except FileNotFoundError:
+            return
+        except Exception:  # noqa: BLE001 - config illeggibile: potrebbe essere acceso
+            pass
+        if modo == "spento":
+            return
+        marca = os.path.join(dati, "guardiano.non-parte")
+        try:
+            if time.time() - os.path.getmtime(marca) < _DIECI_MINUTI:
+                return
+        except OSError:
+            pass
+        os.makedirs(dati, exist_ok=True)
+        with open(marca, "w") as f:
+            f.write("")
+        motivo = "guardiano-non-parte: %s: %s" % (type(exc).__name__, str(exc)[:300])
+        log = os.path.join(dati, "guardiano.log")
+        try:
+            if os.path.getsize(log) > 5 * 1024 * 1024:
+                os.replace(log, log + ".1")
+        except OSError:
+            pass
+        riga = {"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "modalita": modo, "sessione": sessione, "compartimento": "",
+                "strumento": "", "bersaglio": "", "motivo": motivo,
+                "esito": "guardiano-non-parte"}
+        fd = os.open(log, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+        try:
+            os.write(fd, (json.dumps(riga, ensure_ascii=False) + "\n").encode("utf-8"))
+        finally:
+            os.close(fd)
+        sys.stdout.write(json.dumps({"systemMessage": (
+            "plancia-guardiano non parte (%s: %s): i compartimenti NON sono protetti "
+            "in nessuna sessione finche' non si ripara. Vedi `plancia guardiano "
+            "--stato`." % (type(exc).__name__, str(exc)[:200]))}, ensure_ascii=False))
+        sys.stdout.flush()
+    except Exception:  # noqa: BLE001 - l'avviso non deve rompere l'hook
+        pass
+
+
+def _carica():
+    import importlib.util
+    cartella = os.path.join(_RADICE, "plancia")
+    spec = importlib.util.spec_from_file_location(
+        "plancia", os.path.join(cartella, "__init__.py"),
+        submodule_search_locations=[cartella])
+    modulo = importlib.util.module_from_spec(spec)
+    sys.modules["plancia"] = modulo
+    spec.loader.exec_module(modulo)
     from plancia import compartimenti
+    return compartimenti
+
+
+_sessione = ""
+try:
     testo = sys.stdin.read()
+    try:
+        import json as _json
+        _d = _json.loads(testo)
+        _s = _d.get("session_id") if isinstance(_d, dict) else ""
+        _sessione = _s if isinstance(_s, str) else ""
+    except Exception:  # noqa: BLE001
+        pass
+    compartimenti = _carica()
     uscita = compartimenti.hook(testo, compartimenti.percorso_dati())
     if uscita:
         sys.stdout.write(uscita)
         sys.stdout.flush()
-except Exception:  # noqa: BLE001 - un hook globale non rompe una sessione
-    pass
+except Exception as _exc:  # noqa: BLE001 - un hook globale non rompe una sessione
+    _non_parte(_exc, _sessione)
 sys.exit(0)

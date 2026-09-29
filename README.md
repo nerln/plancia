@@ -495,7 +495,7 @@ Reads are open: it is your data, already on your disk.
 git config core.hooksPath .githooks
 ```
 
-Turns on the hook that runs `python3 tools/prova.py` before every push: 1852
+Turns on the hook that runs `python3 tools/prova.py` before every push: 2426
 checks in about twenty seconds, against a throwaway archive that never touches
 yours. They cover the schema, the board, the proposals, the search index, the
 recap, the MCP surface and its token budget, every read route of the HTTP API,

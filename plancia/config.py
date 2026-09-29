@@ -94,8 +94,36 @@ def load_config() -> dict:
     return cfg
 
 
+class ConfigIlleggibile(RuntimeError):
+    """`config.json` esiste ma non si legge come un oggetto JSON: riscriverlo
+    con i default cancellerebbe quello che c'era (il guardiano e i
+    compartimenti, le cartelle escluse)."""
+
+
+def config_illeggibile():
+    """Il motivo per cui `config.json` esiste e non si legge come un oggetto
+    JSON, o None (non c'e', oppure si legge)."""
+    if not CONFIG_FILE.exists():
+        return None
+    try:
+        letta = json.loads(CONFIG_FILE.read_text("utf-8"))
+    except Exception as exc:  # noqa: BLE001 - qualunque errore di lettura
+        return f"{CONFIG_FILE} non si legge: {exc}"
+    if not isinstance(letta, dict):
+        return f"{CONFIG_FILE} non e' un oggetto JSON"
+    return None
+
+
 def save_config(cfg: dict) -> None:
+    """Scrive `config.json`. RIFIUTA (`ConfigIlleggibile`, senza scrivere) se il
+    file esiste e non si legge: `load_config()` in quel caso ha inghiottito
+    l'errore e torna i default, e scriverli indietro spegnerebbe il guardiano e
+    azzererebbe le esclusioni private senza dire niente. Prima si ripara il
+    file a mano."""
     ensure_dirs()
+    errore = config_illeggibile()
+    if errore:
+        raise ConfigIlleggibile(errore)
     CONFIG_FILE.write_text(json.dumps(cfg, indent=2, ensure_ascii=False), "utf-8")
 
 
