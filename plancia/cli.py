@@ -10,10 +10,16 @@ from datetime import datetime, timedelta, timezone
 from . import __version__, actions, briefing, config, store
 
 
+#: Quanto si aspetta la risposta di `/api/status` prima di dire che nessuno
+#: risponde: un server di Plancia sotto carico puo' metterci qualche secondo.
+_ATTESA_STATO = 8
+
+
 def _chi_ascolta(port):
     """Chi risponde su 127.0.0.1:`port`: "plancia" se e' un server di Plancia (lo
-    dice l'intestazione `Server`), "altro" se c'e' qualcosa d'altro, None se la
-    porta e' libera."""
+    dice l'intestazione `Server`), "altro" se risponde qualcos'altro, "muto" se la
+    porta e' aperta ma nessuno risponde in tempo (un Plancia sotto carico, per
+    esempio: il timeout e' largo apposta), None se la porta e' libera."""
     import socket
     import urllib.error
     import urllib.request
@@ -23,16 +29,26 @@ def _chi_ascolta(port):
     except OSError:
         return None
     try:
-        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/status", timeout=2) as res:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/status",
+                                    timeout=_ATTESA_STATO) as res:
             intestazioni = res.headers
     except urllib.error.HTTPError as exc:
         intestazioni = exc.headers
-    except Exception:
+    except Exception as exc:
+        motivo = getattr(exc, "reason", exc)
+        if isinstance(exc, (socket.timeout, TimeoutError)) or isinstance(
+                motivo, (socket.timeout, TimeoutError)):
+            return "muto"
         return "altro"
     return "plancia" if (intestazioni.get("Server") or "").startswith("Plancia") else "altro"
 
 
-def _porta_occupata(port) -> int:
+def _porta_occupata(port, chi="altro") -> int:
+    if chi == "muto":
+        print(f"la porta {port} e' occupata, forse da Plancia che non risponde: "
+              "riprova fra un momento, oppure scegli un'altra porta con "
+              "`plancia serve --port N`.", file=sys.stderr)
+        return 1
     print(f"la porta {port} e' occupata da un altro programma (non e' Plancia): "
           "scegli un'altra porta con `plancia serve --port N`.", file=sys.stderr)
     return 1
@@ -55,8 +71,8 @@ def cmd_serve(args):
     chi = _chi_ascolta(port)
     if chi == "plancia":
         return _gia_in_ascolto(port, args.open)
-    if chi == "altro":
-        return _porta_occupata(port)
+    if chi in ("altro", "muto"):
+        return _porta_occupata(port, chi)
     try:
         api.serve(port=args.port, open_browser=args.open, sync_first=not args.no_sync)
     except OSError as exc:
@@ -64,9 +80,10 @@ def cmd_serve(args):
         # Linux, 48 su macOS, WinError 10048 su Windows)
         import errno
         if exc.errno in (errno.EADDRINUSE, 10048) or getattr(exc, "winerror", None) == 10048:
-            if _chi_ascolta(port) == "plancia":
+            chi = _chi_ascolta(port)
+            if chi == "plancia":
                 return _gia_in_ascolto(port, args.open)
-            return _porta_occupata(port)
+            return _porta_occupata(port, chi if chi == "muto" else "altro")
         raise
 
 

@@ -756,6 +756,38 @@ def _lancia(argv):
         return subprocess.CompletedProcess(argv, 127, "", str(exc))
 
 
+def _toccabile():
+    """`(si', perche)`: Plancia puo' caricare servizi e attivita' pianificate del
+    sistema? No da una HOME di prova (vedi `piattaforma.sistema_toccabile`)."""
+    return piattaforma.sistema_toccabile()
+
+
+def _dentro_casa(percorso: Path) -> bool:
+    """Il file sta sotto la HOME del processo? Una HOME di prova non deve far
+    scrivere nemmeno nella cartella Esecuzione automatica o in ~/.config di chi
+    non e' lei (APPDATA e XDG_CONFIG_HOME si leggono dall'ambiente)."""
+    try:
+        casa = Path.home().resolve()
+        return casa == Path(percorso).resolve() or casa in Path(percorso).resolve().parents
+    except OSError:
+        return False
+
+
+def _scrivi_senza_caricare(piano: dict) -> None:
+    """Da una HOME di prova: i file del piano (il plist, l'unita' systemd, il
+    `.cmd` di Esecuzione automatica) si scrivono, i comandi non partono."""
+    file = piano["file"] or (piano.get("ripiego") or {}).get("file", [])
+    for percorso, testo in file:
+        if _dentro_casa(percorso):
+            _scrivi(percorso, testo)
+
+
+def _togli_senza_scaricare(piano: dict) -> None:
+    for percorso in piano["rimuovi"]:
+        if _dentro_casa(percorso) and percorso.exists():
+            percorso.unlink()
+
+
 def _attiva(piano: dict):
     """Scrive i file del piano e lancia i comandi di attivazione. Se l'ultimo
     fallisce e il piano ha un ripiego, toglie quello che aveva scritto e prova il
@@ -846,6 +878,10 @@ def _piano_server() -> dict:
 
 
 def autostart_on() -> str:
+    ok, perche = _toccabile()
+    if not ok:
+        _scrivi_senza_caricare(_piano_server())
+        return f"avvio automatico: file scritti, non caricati ({perche})"
     piano, esito = _attiva(_piano_server())
     if esito is not None and esito.returncode != 0:
         if piattaforma.nome() == piattaforma.MAC:
@@ -859,6 +895,10 @@ def autostart_on() -> str:
 
 
 def autostart_off() -> str:
+    ok, perche = _toccabile()
+    if not ok:
+        _togli_senza_scaricare(_piano_server())
+        return f"avvio automatico: file tolti, non scaricati ({perche})"
     _disattiva(_piano_server())
     return "avvio automatico disattivato"
 
@@ -918,6 +958,10 @@ def recap_daily_on(ora: str = "08:45", voce: bool = False) -> str:
     cfg["riepilogo_voce"] = bool(voce)
     config.save_config(cfg)
 
+    ok, perche = _toccabile()
+    if not ok:
+        _scrivi_senza_caricare(piano)
+        return f"riepilogo automatico: file scritti, non caricati ({perche})"
     piano, esito = _attiva(piano)
     if esito is not None and esito.returncode != 0:
         if piattaforma.nome() == piattaforma.MAC:
@@ -929,11 +973,17 @@ def recap_daily_on(ora: str = "08:45", voce: bool = False) -> str:
 
 def recap_daily_off() -> str:
     piano = _piano_riepilogo()
+    ok, perche = _toccabile()
     if piano is not None:
-        _disattiva(piano)
+        if ok:
+            _disattiva(piano)
+        else:
+            _togli_senza_scaricare(piano)
     cfg = config.load_config()
     cfg.pop("riepilogo_ora", None)
     config.save_config(cfg)
+    if not ok:
+        return f"riepilogo automatico: file tolti, non scaricati ({perche})"
     return "riepilogo automatico disattivato"
 
 
@@ -974,6 +1024,33 @@ def uninstall_all() -> list:
         out.append(f"copie di sicurezza dei tuoi settings, da buttare quando vuoi: "
                    f"{len(copie)} in {config.CLAUDE_DIR}")
     return out
+
+
+def _righe_contenitori() -> list:
+    """I contenitori in uso: le cartelle che tengono progetti senza essere un
+    progetto (una sessione aperta li' dentro riceve l'avviso, e ogni loro
+    sottocartella e' un progetto per l'attribuzione). Quelli che Plancia riconosce
+    da sola piu' quelli scritti in config.json, alla chiave `contenitori`: un
+    disco esterno non e' piu' un contenitore se non sta li'."""
+    try:
+        from . import attribuzione, ingest
+        casa = str(config.HOME)
+        tutti = attribuzione.contenitori_avviso(config.HOME, ingest.drive_root())
+        extra = attribuzione.contenitori_extra()
+
+        def breve(p):
+            return "~" + p[len(casa):] if p == casa or p.startswith(casa + os.sep) else p
+
+        righe = [f"ok  contenitori di progetti: {len(tutti)}  "
+                 f"({', '.join(breve(p) for p in tutti)})"]
+        if extra:
+            righe.append("    scritti in config.json: " + ", ".join(breve(p) for p in extra))
+        else:
+            righe.append("    nessuno scritto in config.json: un disco esterno o un'altra "
+                         "cartella dei progetti si aggiunge alla chiave `contenitori`")
+        return righe
+    except Exception as exc:
+        return [f"no  contenitori di progetti: {exc}"]
 
 
 def doctor() -> list:
@@ -1076,6 +1153,7 @@ def doctor() -> list:
                      "(`plancia serve --open`)")
     link = piattaforma.percorso_comando(Path.home())
     lines.append(f"{ok(link.exists())}comando {link}")
+    lines.extend(_righe_contenitori())
     port = config.load_config().get("port", config.DEFAULT_PORT)
     import socket
     with socket.socket() as s:

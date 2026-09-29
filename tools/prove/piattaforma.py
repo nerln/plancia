@@ -317,7 +317,14 @@ def _figlio_lancia(piatt: str, variante: str = "base") -> dict:
                LOCALAPPDATA=str(casa / "AppData" / "Local"),
                CLAUDE_CONFIG_DIR=str(casa / ".claude"), CODEX_HOME=str(casa / ".codex"),
                PLANCIA_HOME=str(casa / ".plancia"), PLANCIA_PIATTAFORMA=piatt,
-               PLANCIA_PROVA_VARIANTE=variante)
+               PLANCIA_PROVA_VARIANTE=variante,
+               # Il figlio gira in una HOME finta ma con `subprocess.run` sostituito da
+               # un registratore: nessun comando parte davvero. Senza questa
+               # variabile la guardia di `piattaforma.esegui` (che non lascia lanciare
+               # launchctl, schtasks e systemctl da una HOME di prova) non farebbe
+               # nemmeno arrivare i comandi al registratore, e la prova non vedrebbe
+               # i comandi che vuole confrontare.
+               PLANCIA_AUTOSTART_FORZA="1")
     try:
         res = subprocess.run([sys.executable, str(Path(__file__).resolve()), "--figlio"],
                              capture_output=True, text=True, env=amb, timeout=180,
@@ -678,11 +685,12 @@ def _prove_costruttori_puri(prova, pf):
           pf.comando_riproduzione("o.wav", "windows", _ha("powershell"))[:5]
           == ["powershell", "-NoProfile", "-NonInteractive", "-InputFormat", "None"]
           and "-InputFormat" not in pf.comando_riproduzione("o.wav", "windows", _ha("pwsh")))
-    prova("processi di contorno: stdin chiuso ovunque, e su Windows CREATE_NO_WINDOW (niente console "
-          "nera sotto pythonw); su un host che non e' Windows nessun creationflags",
+    prova("processi di contorno: stdin chiuso su Windows e Linux, e su Windows CREATE_NO_WINDOW (niente "
+          "console nera sotto pythonw); su macOS niente (afplay parte come nella base); su un host che "
+          "non e' Windows nessun creationflags",
           pf.opzioni_processo("windows", nt=True) == {"stdin": subprocess.DEVNULL, "creationflags": 0x08000000}
           and pf.opzioni_processo("windows", nt=False) == {"stdin": subprocess.DEVNULL}
-          and pf.opzioni_processo("mac") == {"stdin": subprocess.DEVNULL}
+          and pf.opzioni_processo("mac") == {}
           and pf.opzioni_processo("linux", nt=True) == {"stdin": subprocess.DEVNULL})
     prova("voce: la frase di 'manca il motore' dice cosa installare",
           "espeak-ng" in pf.motore_voce_assente("linux")
@@ -1136,10 +1144,15 @@ def _prove_installazione(prova):
             a[0] == "osascript" and "display notification" in " ".join(a))
 
     contorno = [c for p in ("mac", "linux") for v in dati[p].values() if isinstance(v, dict)
-                for c in v.get("comandi", []) if _e_contorno(c)]
-    prova("[mac] [linux] la riproduzione e la notifica partono con stdin=DEVNULL anche fuori da Windows",
+                for c in v.get("comandi", []) if _e_contorno(c)
+                and (c.get("run") or c.get("popen") or [""])[0] != "afplay"]
+    prova("[mac] [linux] la riproduzione (fuori dal Mac) e la notifica partono con stdin=DEVNULL anche fuori da Windows",
           len(contorno) >= 3 and all(c.get("stdin") == "devnull" for c in contorno),
           str(contorno)[:300])
+    afplay = [c for v in dati["mac"].values() if isinstance(v, dict)
+              for c in v.get("comandi", []) if (c.get("run") or c.get("popen") or [""])[0] == "afplay"]
+    prova("[mac] afplay parte come nella base 4a89241: senza stdin (ne' chiuso ne' altro)",
+          len(afplay) >= 1 and all("stdin" not in c for c in afplay), str(afplay)[:300])
     solo_spd = _figlio_lancia("linux", "solo-spd-say")
     prova("[linux] spd-say (in attesa, e staccato) parte con stdin chiuso",
           [c.get("stdin") for c in _comandi(solo_spd, "voce_parla")] == ["devnull"]

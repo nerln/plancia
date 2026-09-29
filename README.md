@@ -121,7 +121,14 @@ opens the browser on it) instead of failing on the busy port. `plancia esporta -
 opens the file with the system's own opener (`open -R`, `os.startfile`, `xdg-open`).
 Folders that hold projects without being one (an external disk, another projects
 folder) go in `config.json` under `contenitori`, a list of paths, next to the ones
-Plancia recognises by itself (`~/dev`, `~/Siti`, the Google Drive folders).
+Plancia recognises by itself (`~/dev`, `~/Siti`, the Google Drive folders). On macOS
+that includes the disks you used to add by hand: an external disk is a container
+only if it is listed there (`"contenitori": ["/Volumes/Disco/dev"]`), and
+`plancia doctor` prints the containers in use. Start at login and the daily recap
+never load launchd, Task Scheduler or systemd jobs from a throwaway environment: if
+the process `HOME` is not the user's real home (or `PLANCIA_HOME` points outside it)
+the files are written but not loaded ("file scritti, non caricati (HOME di prova)").
+`PLANCIA_AUTOSTART_FORZA=1` forces the commands, for a machine where they are stubs.
 The commands Plancia builds for each system are covered by the suite, but Windows and
 Linux have had far less real use than macOS: `plancia doctor` tells you what is
 connected.
@@ -488,7 +495,7 @@ Reads are open: it is your data, already on your disk.
 git config core.hooksPath .githooks
 ```
 
-Turns on the hook that runs `python3 tools/prova.py` before every push: 1393
+Turns on the hook that runs `python3 tools/prova.py` before every push: 1451
 checks in about twenty seconds, against a throwaway archive that never touches
 yours. They cover the schema, the board, the proposals, the search index, the
 recap, the MCP surface and its token budget, every read route of the HTTP API,

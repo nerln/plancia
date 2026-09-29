@@ -123,13 +123,138 @@ def opzioni_processo(piatt=None, nt=None) -> dict:
     processo che ci ha lanciato (per il server MCP e' il canale JSON-RPC, e
     Windows PowerShell lo legge finche' non si chiude), e su Windows senza la
     console nera che il server, girando con pythonw, aprirebbe a ogni chiamata."""
-    opzioni = {"stdin": subprocess.DEVNULL}
+    # Su macOS `afplay` parte come e' sempre partito (stdout e stderr chiusi, lo
+    # stdin ereditato): niente cambia di un byte. Lo stdin chiuso serve a
+    # PowerShell su Windows e ai lettori di Linux.
+    opzioni = {} if _p(piatt) == MAC else {"stdin": subprocess.DEVNULL}
     opzioni.update(opzioni_figlio(piatt, nt))
     return opzioni
 
 
+# --------------------------------------------------------------------------
+# la guardia dell'avvio automatico
+# --------------------------------------------------------------------------
+
+#: I programmi che cambiano lo stato del sistema dell'utente vero: caricano o
+#: scaricano servizi, attivita' pianificate, unita' systemd. Da un ambiente finto
+#: (una HOME di prova) non devono mai partire: `launchctl` lavora nel dominio
+#: `gui/<uid>`, che e' quello dell'utente vero anche con un'altra HOME, e uno
+#: `bootout` di prova ferma i servizi veri (successo davvero, in un collaudo).
+PROGRAMMI_DI_SISTEMA = ("launchctl", "schtasks", "systemctl", "crontab")
+
+#: Per forzare l'esecuzione anche con una HOME diversa da quella vera (un
+#: contenitore, una macchina di prova dove i comandi sono finti): `1`. Le prove
+#: che sostituiscono l'esecutore la impostano; chi non ha sostituito niente non
+#: deve impostarla mai.
+VARIABILE_FORZA = "PLANCIA_AUTOSTART_FORZA"
+
+#: Come si scrive il perche' quando i comandi non partono.
+NON_CARICATO = "HOME di prova"
+
+
+def _casa_vera_windows():
+    """La cartella del profilo dell'utente che esegue il processo, chiesta al
+    sistema con il token del processo (`GetUserProfileDirectoryW`), NON a
+    `USERPROFILE`: quella e' una variabile d'ambiente e un ambiente finto la
+    cambia, come `os.path.expanduser`. None se non si riesce."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        advapi = ctypes.WinDLL("advapi32", use_last_error=True)
+        userenv = ctypes.WinDLL("userenv", use_last_error=True)
+        kernel.GetCurrentProcess.restype = wintypes.HANDLE
+        kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+        advapi.OpenProcessToken.argtypes = [wintypes.HANDLE, wintypes.DWORD,
+                                            ctypes.POINTER(wintypes.HANDLE)]
+        advapi.OpenProcessToken.restype = wintypes.BOOL
+        userenv.GetUserProfileDirectoryW.argtypes = [wintypes.HANDLE, wintypes.LPWSTR,
+                                                     ctypes.POINTER(wintypes.DWORD)]
+        userenv.GetUserProfileDirectoryW.restype = wintypes.BOOL
+        token = wintypes.HANDLE()
+        if not advapi.OpenProcessToken(kernel.GetCurrentProcess(), 0x0008, ctypes.byref(token)):
+            return None
+        try:
+            lunghezza = wintypes.DWORD(0)
+            # la prima chiamata, senza buffer, fallisce e dice quanto serve
+            userenv.GetUserProfileDirectoryW(token, None, ctypes.byref(lunghezza))
+            buf = ctypes.create_unicode_buffer(max(lunghezza.value, 1))
+            if not userenv.GetUserProfileDirectoryW(token, buf, ctypes.byref(lunghezza)):
+                return None
+            return buf.value or None
+        finally:
+            kernel.CloseHandle(token)
+    except Exception:
+        return None
+
+
+def casa_vera():
+    """La casa dell'utente che esegue il processo, letta dal sistema e non
+    dall'ambiente: su POSIX dall'anagrafe degli utenti (`pwd`), su Windows dal
+    token del processo. Un ambiente finto (HOME, USERPROFILE) non la cambia.
+    None se non si riesce a leggerla."""
+    if os.name == "nt":
+        return _casa_vera_windows()
+    try:
+        import pwd
+        return pwd.getpwuid(os.getuid()).pw_dir or None
+    except Exception:
+        return None
+
+
+def _confronto(percorso) -> str:
+    return os.path.normcase(os.path.realpath(os.path.expanduser(str(percorso))))
+
+
+def sistema_toccabile(casa=None, ambiente=None, casa_vera_fn=None):
+    """`(True, "")` se Plancia puo' cambiare il sistema dell'utente (caricare
+    servizi, attivita' pianificate, unita' systemd), `(False, perche)` se sta
+    girando in un ambiente finto.
+
+    Falso se la HOME del processo (`Path.home()`) non e' la casa vera dell'utente,
+    o se `PLANCIA_HOME` punta fuori dalla casa vera, o se la casa vera non si
+    riesce a leggere (nel dubbio non si tocca niente). `PLANCIA_AUTOSTART_FORZA=1`
+    vince su tutto."""
+    env = os.environ if ambiente is None else ambiente
+    if str(env.get(VARIABILE_FORZA, "")).strip() == "1":
+        return True, ""
+    vera = (casa_vera_fn or casa_vera)()
+    if not vera:
+        return False, "casa dell'utente non leggibile"
+    try:
+        qui = casa if casa is not None else Path.home()
+        vera_n = _confronto(vera)
+        if _confronto(qui) != vera_n:
+            return False, NON_CARICATO
+        dati = str(env.get("PLANCIA_HOME", "")).strip()
+        if dati:
+            d = _confronto(dati)
+            if d != vera_n and not d.startswith(vera_n.rstrip(os.sep) + os.sep):
+                return False, NON_CARICATO
+    except Exception:
+        return False, "casa dell'utente non leggibile"
+    return True, ""
+
+
+def _programma(argv) -> str:
+    if not argv:
+        return ""
+    nome_ = os.path.basename(str(argv[0]).replace("\\", "/")).lower()
+    return nome_[:-4] if nome_.endswith(".exe") else nome_
+
+
 def esegui(argv, **kwargs):
-    """`subprocess.run`, senza finestra nera su Windows. Sostituibile dalle prove."""
+    """`subprocess.run`, senza finestra nera su Windows. Sostituibile dalle prove.
+
+    I programmi che cambiano il sistema dell'utente (`PROGRAMMI_DI_SISTEMA`) non
+    partono da una HOME di prova (`sistema_toccabile`): tornano un esito fallito,
+    `127`, senza lanciare niente."""
+    if _programma(argv) in PROGRAMMI_DI_SISTEMA:
+        ok, perche = sistema_toccabile()
+        if not ok:
+            testo = bool(kwargs.get("text") or kwargs.get("universal_newlines"))
+            return subprocess.CompletedProcess(
+                argv, 127, "" if testo else b"", "non eseguito: " + perche)
     for nome, valore in opzioni_figlio().items():
         kwargs.setdefault(nome, valore)
     return subprocess.run(argv, **kwargs)

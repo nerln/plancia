@@ -120,7 +120,14 @@ con `--open` apre il browser su quello) invece di cadere sulla porta occupata.
 `os.startfile`, `xdg-open`). Le cartelle che contengono progetti senza esserlo (un disco
 esterno, un'altra cartella dei progetti) si scrivono in `config.json` alla chiave
 `contenitori`, una lista di percorsi, accanto a quelle che Plancia riconosce da sola
-(`~/dev`, `~/Siti`, le cartelle di Google Drive). I comandi che Plancia costruisce per ogni sistema sono coperti
+(`~/dev`, `~/Siti`, le cartelle di Google Drive). Su macOS vale anche per i dischi che
+prima si scrivevano a mano: un disco esterno è un contenitore solo se sta lì
+(`"contenitori": ["/Volumes/Disco/dev"]`), e `plancia doctor` stampa i contenitori in
+uso. L'avvio automatico e il riepilogo giornaliero non caricano mai lavori di launchd,
+del Task Scheduler o di systemd da un ambiente finto: se la `HOME` del processo non è
+la casa vera dell'utente (o `PLANCIA_HOME` punta fuori) i file si scrivono ma non si
+caricano («file scritti, non caricati (HOME di prova)»). `PLANCIA_AUTOSTART_FORZA=1`
+forza i comandi, per una macchina dove sono finti. I comandi che Plancia costruisce per ogni sistema sono coperti
 dalla suite, ma Windows e Linux hanno avuto molto meno uso reale di macOS: `plancia doctor`
 dice cosa è collegato.
 
@@ -593,7 +600,7 @@ git config core.hooksPath .githooks
 ```
 
 Accende il gancio che fa girare `python3 tools/prova.py` prima di ogni push:
-1393 controlli in una ventina di secondi, su un archivio finto che non tocca
+1451 controlli in una ventina di secondi, su un archivio finto che non tocca
 il tuo.
 
 ## Licenza

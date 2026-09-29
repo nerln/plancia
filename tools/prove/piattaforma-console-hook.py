@@ -248,7 +248,7 @@ def _prove_nessuna_finestra(prova):
     attesi_mac = {
         "git": {"capture_output", "text", "timeout", "cwd"},
         "/x/claude": None,   # piu' di un lancio: si guarda sotto
-        "player": {"stdin", "stdout", "stderr"},
+        "player": {"stdout", "stderr"},   # afplay: come nella base 4a89241, senza stdin
         "whisper-cli": {"capture_output", "text", "timeout"},
         "open": {"capture_output", "timeout"},
     }
@@ -299,8 +299,9 @@ def _prove_opzioni_figlio(prova):
           pf.opzioni_figlio("mac") == {} and pf.opzioni_figlio("linux") == {}
           and pf.opzioni_figlio("windows", nt=False) == {}
           and pf.opzioni_figlio("windows", nt=True) == {"creationflags": NO_WINDOW})
-    prova("opzioni_processo: stdin su NUL sempre, piu' il flag solo su Windows vero",
-          pf.opzioni_processo("mac") == {"stdin": subprocess.DEVNULL}
+    prova("opzioni_processo: stdin su NUL fuori da macOS (su macOS niente, come la base), piu' il flag "
+          "solo su Windows vero",
+          pf.opzioni_processo("mac") == {}
           and pf.opzioni_processo("windows", nt=True) == {"stdin": subprocess.DEVNULL, "creationflags": NO_WINDOW})
 
 
@@ -369,9 +370,21 @@ def _prove_privacy_e_contenitori(prova):
     prova("bin/plancia-hook non ha nessun percorso scritto a mano di una macchina "
           "(/Users/nome, /Volumes/disco, GoogleDrive-<indirizzo>)",
           not re.search(r"/Users/[A-Za-z]|/Volumes/[A-Za-z]|GoogleDrive-[A-Za-z0-9.]*@", hook), "")
-    prova("ne' l'hook ne' attribuzione.py hanno il nome di un disco o di una macchina scritto a mano",
-          "AppsAndFiles" not in hook
-          and "AppsAndFiles" not in (RADICE / "plancia" / "attribuzione.py").read_text("utf-8"))
+    # nessun nome di disco o di volume di nessuna macchina, in nessun file del
+    # repo (le prove comprese): i soli nomi ammessi sono segnaposto
+    nomi_di_volume = set()
+    for cartella, sotto, file in os.walk(str(RADICE)):
+        sotto[:] = [d for d in sotto if d not in (".git", "__pycache__", "node_modules", "vendor")]
+        for nome in file:
+            if nome.endswith((".py", ".md", ".js", ".html", ".css", ".yml", ".sh", ".swift", ".cmd")) \
+                    or nome.startswith("plancia"):
+                try:
+                    testo = (Path(cartella) / nome).read_text("utf-8")
+                except (OSError, UnicodeDecodeError):
+                    continue
+                nomi_di_volume.update(re.findall(r"/Volumes/([A-Za-z0-9._-]+)", testo))
+    prova("nessun nome di disco o di volume scritto nel repo (solo i segnaposto Disco e disco)",
+          nomi_di_volume <= {"Disco", "disco"}, str(sorted(nomi_di_volume)))
 
     casa = Path(tempfile.mkdtemp(prefix="plancia-prova-casa-"))
     drive = casa / "Library" / "CloudStorage" / "GoogleDrive-utente@example.com" / "Il mio Drive"
@@ -854,6 +867,10 @@ def _figlio_doctor(scenario: str) -> None:
     vuoto = casa / "path-vuoto"
     vuoto.mkdir()
     piatt = scenario.split("-")[0]
+    # `pf.esegui` e' sostituito qui sotto da un finto: nessun comando parte. La
+    # guardia dell'avvio automatico (HOME di prova) lascerebbe pero' i comandi
+    # fuori dal finto, e la prova vuole vederli.
+    os.environ["PLANCIA_AUTOSTART_FORZA"] = "1"
     for k in ("HOME", "USERPROFILE"):
         os.environ[k] = str(casa)
     os.environ["PLANCIA_HOME"] = str(casa / "plancia")
