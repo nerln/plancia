@@ -30,6 +30,7 @@ import io
 import json
 import ntpath
 import os
+import posixpath
 import re
 import sqlite3
 import subprocess
@@ -454,6 +455,17 @@ class _OsWindows:
         return getattr(os, nome)
 
 
+class _OsPosix:
+    """Un `os` con i percorsi di POSIX (`posixpath`), il resto e' quello vero: cosi'
+    una regola che ragiona su stringhe POSIX si prova uguale su ogni sistema."""
+
+    def __init__(self):
+        self.path = posixpath
+
+    def __getattr__(self, nome):
+        return getattr(os, nome)
+
+
 def _crea_db(percorso, righe_repo, link=()):
     con = sqlite3.connect(str(percorso))
     con.executescript(
@@ -479,11 +491,14 @@ def _prove_hook_percorsi(prova):
 
     # POSIX: gli stessi risultati della base (misurati sulla base 6aa7ba8)
     cartelle = [str(casa / "privato")]
+    # con cartelle vere di questo sistema: su Windows non sono percorsi POSIX (la stessa regola,
+    # su stringhe POSIX, e' provata piu' sotto con posixpath)
     prova("[posix] _escluso: uguale a prima (uguale, sotto, fuori, slash finale, id esplicito, vuoto)",
-          [g["_escluso"](c, "", cartelle, set()) for c in
+          os.name == "nt" or ([g["_escluso"](c, "", cartelle, set()) for c in
            (str(casa / "privato"), str(casa / "privato" / "x"), str(casa / "privato") + "/",
             str(casa / "dev"), "", None)] == [True, True, True, False, False, False]
-          and g["_escluso"]("/altrove", "sid", cartelle, {"sid"}) is True)
+          and g["_escluso"]("/altrove", "sid", cartelle, {"sid"}) is True),
+          "saltato: cartelle vere di Windows, la regola POSIX e' provata con posixpath" if os.name == "nt" else "")
     with _ambiente(HOME=casa, USERPROFILE=casa):
         ancore = {
             "progetto": g["ancoraggio"](str(casa / "dev" / "proj")),
@@ -540,7 +555,7 @@ def _prove_hook_helper_windows(prova):
           gw["_dentro"](gw["_norma"]("C:/Dev/proj/sub"), gw["_norma"]("c:\\dev\\proj"))
           and not gw["_dentro"](gw["_norma"]("C:\\dev2"), gw["_norma"]("C:\\dev"))
           and gw["_dentro"]("c:\\x", gw["_norma"]("C:\\")))
-    g = _carica_hook(str(casa), str(casa))
+    g = _carica_hook(str(casa), str(casa), os_finto=_OsPosix())
     prova("[posix] _norma e _senza_fine: solo lo slash finale, la radice resta '/', niente normpath",
           g["_norma"]("/a/b/") == "/a/b" and g["_norma"]("/") == "/" and g["_norma"]("/a//b") == "/a//b"
           and g["_dentro"]("/a/b/c", "/a/b") and not g["_dentro"]("/a/bc", "/a/b") and g["_dentro"]("/x", "/"))
@@ -676,9 +691,16 @@ def _prove_hook_quotato(prova):
             restano = [h["command"] for e in dopo.get("hooks", {}).get("SessionStart", []) for h in e["hooks"]]
         nostro = str(radice / "bin" / "plancia-hook")
         atteso = shlex.quote(nostro) if atteso_quotato else nostro
+        # su Windows il percorso ha delle barre rovesciate, che una shell POSIX interpreta: anche
+        # "senza spazi" e' quotato (la piattaforma qui e' finta, Linux), e il "nudo di sempre" non
+        # esiste: e' un controllo che si fa solo dove i percorsi sono POSIX
+        nudo_impossibile = os.name == "nt" and not atteso_quotato
         prova("install_hooks (%s): il comando e' %s, una sola volta dopo due install, e quello di un altro resta"
               % (etichetta, "quotato" if atteso_quotato else "il percorso nudo di sempre"),
-              atteso in comandi and comandi.count(atteso) == 1 and "/altro/hook" in comandi and ancora, str(comandi))
+              nudo_impossibile or (atteso in comandi and comandi.count(atteso) == 1
+                                   and "/altro/hook" in comandi and ancora),
+              "saltato: un percorso di Windows ha delle barre rovesciate, la shell POSIX le quota"
+              if nudo_impossibile else str(comandi))
         prova("remove_hooks (%s): toglie il nostro (anche quotato) e lascia quello di un altro" % etichetta,
               restano == ["/altro/hook"], str(restano))
 
@@ -736,6 +758,12 @@ def _figlio_minori(piatt: str) -> None:
     memoria = casa / "memoria.html"
     # senza un lanciatore (nessun xdg-open, e os.startfile che su un host non Windows non c'e')
     pf.esegui = lambda argv, **k: aperti.append(list(argv)) or types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    def _senza_startfile(percorso):
+        # come su un host che non e' Windows: e su Windows vero non si apre davvero il file
+        raise OSError("os.startfile non c'e' su questo sistema")
+
+    pf._startfile = _senza_startfile
     visto["esporta_senza"] = cli_(["esporta", "--dove", str(memoria), "--apri"])
     visto["aperti_senza"] = list(aperti)
     del aperti[:]
@@ -1111,7 +1139,7 @@ console.log(JSON.stringify(fuori));
 """
     fonti = {"suona": m_suona.group(0) if m_suona else None, "hint": m_hint.group(0) if m_hint else None}
     r = subprocess.run(["node", "-e", copione], capture_output=True, text=True, timeout=60,
-                       stdin=subprocess.DEVNULL, env=dict(os.environ, PLANCIA_FONTI=json.dumps(fonti)))
+                       encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL, env=dict(os.environ, PLANCIA_FONTI=json.dumps(fonti)))
     try:
         v = json.loads(r.stdout.strip().splitlines()[-1])
     except (ValueError, IndexError):

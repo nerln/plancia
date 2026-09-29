@@ -164,7 +164,11 @@ def resolve_path_project(conn, path: str):
     ).fetchall()
     for row in rows:
         base = row["value"]
-        if base and (path == base or path.startswith(base + os.sep)):
+        # `e_dentro` in piu': su Windows il link puo' essere scritto con le barre in avanti o
+        # con altre maiuscole (`C:/dev/proj`), la cwd arriva normalizzata (`C:\\dev\\proj`).
+        # Per un percorso POSIX e' lo stesso confronto di sempre.
+        if base and (path == base or path.startswith(base + os.sep)
+                     or attribuzione.e_dentro(base, path)):
             return row["project_id"]
     return None
 

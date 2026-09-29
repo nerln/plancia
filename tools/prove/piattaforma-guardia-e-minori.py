@@ -29,6 +29,7 @@ import io
 import json
 import ntpath
 import os
+import posixpath
 import re
 import socket
 import subprocess
@@ -82,6 +83,17 @@ class _Finto:
                 delattr(self.oggetto, k)
             else:
                 setattr(self.oggetto, k, v)
+
+
+class _OsPosix:
+    """Un `os` con i percorsi di POSIX (`posixpath`), il resto e' quello vero."""
+
+    def __init__(self):
+        self.path = posixpath
+        self.sep = "/"
+
+    def __getattr__(self, nome):
+        return getattr(os, nome)
 
 
 class _OsWindows:
@@ -314,9 +326,11 @@ def _prove_sistema_toccabile(prova):
         prova("casa_vera su POSIX: la casa dell'anagrafe utenti (pwd), non l'ambiente; una cartella che esiste",
               os.name == "nt" or (pf.casa_vera() is not None and os.path.isdir(pf.casa_vera())), str(pf.casa_vera()))
         with _ambiente(HOME=finta):
-            if os.name != "nt":
-                prova("casa_vera non segue HOME: con HOME finta la casa vera resta quella vera",
-                      pf.casa_vera() != str(finta), str(pf.casa_vera()))
+            # su Windows la casa vera non e' HOME (e' USERPROFILE): il controllo c'e' lo stesso,
+            # dichiarato saltato, cosi' il conteggio non cambia da un sistema all'altro
+            prova("casa_vera non segue HOME: con HOME finta la casa vera resta quella vera",
+                  os.name == "nt" or pf.casa_vera() != str(finta),
+                  "saltato: su Windows HOME non e' la casa" if os.name == "nt" else str(pf.casa_vera()))
 
     # esegui: i programmi di sistema non partono da una HOME di prova
     lanciati = []
@@ -382,7 +396,8 @@ def _prove_doctor_contenitori(prova):
         if not riga:
             prova("[%s] il figlio di doctor gira" % scenario, False, (res.stdout + res.stderr)[-1200:])
             continue
-        righe = json.loads(riga[-1][len("RISULTATO:"):])
+        # su Windows i percorsi escono con la barra rovesciata (`~\dev`): il contenuto e' lo stesso
+        righe = [r.replace("\\", "/") for r in json.loads(riga[-1][len("RISULTATO:"):])]
         i = next((n for n, r in enumerate(righe) if "contenitori di progetti" in r), None)
         cont = righe[i:i + 2] if i is not None else []
         if scenario == "con-extra":
@@ -443,7 +458,14 @@ def _prove_attribuzione_windows_maiuscole(prova):
         prova("[windows] decidi: una cartella generica in un'altra grafia resta generica (non e' la cwd di un progetto)",
               e["da"] == "percorsi" and a._k(e["dir"]) == a._k(proj), str(e))
 
-    # POSIX: uscite identiche a quelle misurate sulla base (le grafie diverse RESTANO diverse)
+    # POSIX: uscite identiche a quelle misurate sulla base (le grafie diverse RESTANO diverse).
+    # Con i percorsi di POSIX (`posixpath`) su ogni sistema: su Windows `os.path.normpath` girerebbe
+    # le barre di stringhe che qui sono POSIX apposta.
+    with _Finto(a, os=_OsPosix()):
+        _prove_attribuzione_posix(prova, a)
+
+
+def _prove_attribuzione_posix(prova, a):
     e1 = a.decidi("/Users/ann/dev/proj", ["/Users/ann/dev/other/a"] * 3, {"/Users/ann/dev/proj", "/Users/ann/dev/other"},
                   set(), set())
     e2 = a.decidi("/Users/ann/dev/proj", ["/Users/ann/dev/proj/a"] * 3 + ["/Users/ann/dev/other/b"] * 2,

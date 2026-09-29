@@ -42,6 +42,13 @@ Le parti:
   nella vista di alfa e' di alfa;
 - config rotta: si usa l'ultima copia valida;
 - il filtro su un archivio grande, con il tempo che costa.
+
+Su Windows i compartimenti sono spenti (`piattaforma.compartimenti_supportati`: ragionano
+su percorsi POSIX). Gira davvero solo la parte "senza compartimenti" (e "con la sola voce
+`predefinito`"): l'hook, il richiamo, l'MCP e la dashboard vedono tutto. Tutto il resto si
+segna "saltato: non supportato su Windows" controllo per controllo, con lo stesso totale
+di macOS e Linux (vedi `_saltati.py`). Le prove del comportamento su Windows sono in
+`windows-hook.py`.
 """
 
 import json
@@ -73,6 +80,21 @@ def _carica_finti():
 
 
 _finti = _carica_finti()
+
+
+def _carica_saltati():
+    """`_saltati.py` (materiale di supporto, non una prova) sta accanto a questo file."""
+    if "_saltati" not in sys.modules:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "_saltati", Path(__file__).resolve().parent / "_saltati.py")
+        modulo = importlib.util.module_from_spec(spec)
+        sys.modules["_saltati"] = modulo
+        spec.loader.exec_module(modulo)
+    return sys.modules["_saltati"]
+
+
+_saltati = _carica_saltati()
 PYTHON = "/usr/bin/python3" if os.path.exists("/usr/bin/python3") else sys.executable
 
 MARCHI = {"alfa": "QUERCIA", "beta": "SALICE", "predefinito": "FAGGIO"}
@@ -90,6 +112,33 @@ def _codifica(p) -> str:
 # ambiente isolato
 # --------------------------------------------------------------------------
 
+#: Il `claude` finto: segna gli argomenti e il prompt ed esce 1. Come `claude -p` vero, se fra
+#: gli argomenti non c'e' un prompt, il prompt e' lo stdin (su Windows Plancia lo passa cosi':
+#: un `claude.cmd` di npm taglia un argomento alla prima riga a capo). Lo stdin si legge solo
+#: quando la riga di comando finisce con un'opzione o con il valore di una opzione, e mai
+#: per piu' di 5 secondi: gli altri chiamanti (il filo del cantiere, Jarvis) hanno un
+#: prompt-argomento o uno stdin che chiudono da soli, e restano come prima.
+_FINTO_CLAUDE = (
+    "import sys, threading\n"
+    "args = sys.argv[1:]\n"
+    "con_valore = ('--model', '--output-format', '--input-format', '--resume',\n"
+    "              '--permission-mode', '--append-system-prompt')\n"
+    "senza_prompt = (not args or args[-1].startswith('-')\n"
+    "                or (len(args) > 1 and args[-2] in con_valore))\n"
+    "letto = []\n"
+    "if '-p' in args and senza_prompt and not sys.stdin.isatty():\n"
+    "    try:\n"
+    "        sys.stdin.reconfigure(encoding='utf-8', errors='replace')\n"
+    "    except Exception:\n"
+    "        pass\n"
+    "    t = threading.Thread(target=lambda: letto.append(sys.stdin.read()), daemon=True)\n"
+    "    t.start()\n"
+    "    t.join(5)\n"
+    "riga = ' '.join(sys.argv) + (' [stdin] ' + ''.join(letto) if letto else '')\n"
+    "open(%r, 'a', encoding='utf-8').write(riga + '\\n')\n"
+    "sys.exit(1)\n")
+
+
 def _ambiente(base: Path) -> dict:
     home = base / "home"
     bin_finto = base / "bin"
@@ -101,8 +150,9 @@ def _ambiente(base: Path) -> dict:
         # inerte: si segna la chiamata ed esce 1 (lo stesso programma su ogni sistema)
         _finti.crea_finto(bin_finto, nome,
                           "import sys\n"
-                          f"open({str(segnale)!r}, 'a').write(' '.join(sys.argv) + '\\n')\n"
-                          "sys.exit(1)\n")
+                          f"open({str(segnale)!r}, 'a', encoding='utf-8')"
+                          ".write(' '.join(sys.argv) + '\\n')\n"
+                          "sys.exit(1)\n" if nome != "claude" else _FINTO_CLAUDE % str(segnale))
     env = dict(os.environ)
     _finti.casa_finta(env, home)
     env.update({
@@ -374,6 +424,7 @@ def _hook(fix, comp: str, cwd=None, evento="SessionStart") -> dict:
 def _hook_payload(fix, payload) -> dict:
     p = subprocess.run([PYTHON, str(RADICE / "bin" / "plancia-hook")],
                        input=json.dumps(payload), capture_output=True, text=True,
+                       encoding="utf-8", errors="replace",
                        env=_env_sub(fix["env"]), timeout=60)
     testo = ""
     try:
@@ -510,6 +561,11 @@ def _rifiuto(esito) -> bool:
 # --------------------------------------------------------------------------
 
 def esegui(prova) -> None:
+    # Su Windows i compartimenti sono spenti (piattaforma.compartimenti_supportati):
+    # gira davvero solo la parte "senza compartimenti", il resto si segna saltato,
+    # controllo per controllo, con lo stesso totale di macOS e Linux (vedi _saltati.py).
+    reale = prova
+    prova = _saltati.Contatore(reale)
     base = Path(tempfile.mkdtemp(prefix="plancia-prova-comp-"))
     server = None
     try:
@@ -558,6 +614,36 @@ def esegui(prova) -> None:
         c, corpo = srv.get("/api/projects", testo=True)
         prova("con la sola voce `predefinito` la dashboard mostra tutto",
               "QUERCIA" in corpo and "FAGGIO" in corpo and "SALICE" in corpo)
+
+        # ---- la risposta a voce, senza compartimenti: il prompt arriva INTERO al modello.
+        # Non c'entra coi compartimenti, quindi si prova anche su Windows: li' un `claude.cmd` di
+        # npm passa da cmd.exe, che taglia un argomento alla prima riga a capo, e Plancia passa
+        # il prompt nello stdin (`piattaforma.prompt_da_stdin`). Prima la piattaforma di chi
+        # gira, poi (su macOS e Linux) la stessa strada con Windows imitato da
+        # PLANCIA_PIATTAFORMA, cosi' anche li' si vede che lo stdin arriva al finto.
+        segnale = base / "claude-chiamato"
+        _prova_voce_intera(prova, srv, segnale, "voce senza compartimenti",
+                           da_stdin=_saltati.WIN)
+        if not _saltati.WIN:
+            fix_win = dict(fix, env=dict(env, PLANCIA_PIATTAFORMA="windows"))
+            srv_win = _Server(fix_win)
+            try:
+                _prova_voce_intera(prova, srv_win, segnale,
+                                   "voce senza compartimenti (Windows imitato, prompt su stdin)",
+                                   da_stdin=True)
+            finally:
+                srv_win.chiudi()
+        else:
+            # lo stesso numero di controlli su ogni sistema (il conteggio dei saltati)
+            for _ in range(_CONTROLLI_VOCE_INTERA):
+                prova("voce senza compartimenti (Windows imitato): saltato su Windows, "
+                      "e' la strada di questo sistema", True, "saltato: e' gia' Windows")
+
+        if _saltati.WIN:
+            # Windows: i compartimenti nominati sono spenti, niente da provare oltre
+            _saltati.salta_il_resto("compartimenti-plancia", prova)
+            _saltati.chiudi("compartimenti-plancia", prova, reale)
+            return
 
         # ---- compartimenti configurati (guardiano spento: E1 non dipende da E3)
         _scrivi_config(env, comp=_config_comp(w))
@@ -971,6 +1057,7 @@ def esegui(prova) -> None:
         prova("nessuna prova ha lanciato un `claude` oltre a quello del lancio proprio "
               "(al piu' uno: il server MCP esce prima che il filo lo lanci)",
               not segnale.exists() or len(segnale.read_text().splitlines()) <= 1)
+        _saltati.chiudi("compartimenti-plancia", prova, reale)
     finally:
         if server is not None:
             server.chiudi()
@@ -1270,6 +1357,43 @@ def _prova_guardie(prova, base: Path) -> None:
                   % comp, MARCHI[comp] in pezzo, pezzo[:200])
     finally:
         srv.chiudi()
+
+
+#: Quanti controlli fa `_prova_voce_intera` (il conteggio dei saltati su Windows).
+_CONTROLLI_VOCE_INTERA = 4
+
+
+def _prova_voce_intera(prova, srv, segnale: Path, etichetta: str, da_stdin: bool) -> None:
+    """Una domanda a voce alla dashboard, e il prompt che il `claude` finto ha ricevuto: tutto,
+    dalla prima riga (le istruzioni) all'ultima (`Domanda: ...`), con il contesto in mezzo.
+    Con un argomento tagliato alla prima riga a capo mancherebbe tutto tranne le istruzioni.
+    `da_stdin`: il prompt deve essere arrivato nello stdin (il finto lo segna con `[stdin]`)
+    e non nella riga di comando."""
+    if segnale.exists():
+        segnale.unlink()
+    c, d = srv.scrivi("POST", "/api/voice/ask", {"domanda": "task", "voce": False, "lang": "it"})
+    passato = segnale.read_text("utf-8") if segnale.exists() else ""
+    if segnale.exists():
+        segnale.unlink()      # i controlli che contano i lanci di `claude` partono da zero
+    cerca = "Risultati di ricerca sull'archivio dell'utente:"
+    pezzo = passato.split(cerca, 1)[1].split("Dati di oggi:", 1)[0] if cerca in passato else ""
+    prova("%s: la domanda arriva al modello (con il contesto)" % etichetta,
+          c == 200 and "Dati di oggi:" in passato, "%s %s" % (c, passato[:200]))
+    prova("%s: il prompt arriva intero, fino all'ultima riga (non tagliato alla prima riga a capo)"
+          % etichetta,
+          "Dati di oggi:" in passato and "Domanda: task" in passato
+          and passato.index("Dati di oggi:") < passato.index("Domanda: task"),
+          passato[-200:])
+    prova("%s: i risultati di ricerca sull'archivio ci sono, di tutti i progetti" % etichetta,
+          cerca in passato and any(m in pezzo for m in MARCHI.values()), pezzo[:200])
+    argv = passato.split(" [stdin] ", 1)[0]
+    if da_stdin:
+        prova("%s: il prompt e' nello stdin, non un argomento (la riga di comando finisce con "
+              "`--model <m>`)" % etichetta,
+              " [stdin] " in passato and argv.split()[-2:-1] == ["--model"], argv[:200])
+    else:
+        prova("%s: il prompt e' un argomento di `claude -p`, come sempre (niente stdin)" % etichetta,
+              bool(passato) and " [stdin] " not in passato and "Sei l'assistente" in argv, argv[:200])
 
 
 def _apri(env):

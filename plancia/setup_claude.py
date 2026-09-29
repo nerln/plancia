@@ -1071,6 +1071,26 @@ def _righe_contenitori() -> list:
         return [f"no  contenitori di progetti: {exc}"]
 
 
+def _righe_compartimenti_windows() -> list:
+    """Su Windows i compartimenti e il guardiano sono spenti: se config.json ne ha
+    (compartimenti nominati, o un guardiano acceso), doctor lo dice, cosi' nessuno
+    crede di essere protetto. Niente su macOS e Linux, e niente su Windows se in
+    config non c'e' niente da spegnere."""
+    if piattaforma.compartimenti_supportati():
+        return []
+    try:
+        cfg = config.load_config()
+        comp = cfg.get("compartimenti")
+        modo = cfg.get("guardiano")
+        nominati = isinstance(comp, dict) and any(k != "predefinito" for k in comp)
+        acceso = isinstance(modo, str) and modo.strip().lower() not in ("", "spento")
+    except Exception:  # noqa: BLE001 - doctor non cade per una config strana
+        return []
+    if not (nominati or acceso):
+        return []
+    return ["no  " + piattaforma.NOTA_COMPARTIMENTI_WINDOWS + " (config.json ne ha)"]
+
+
 def doctor() -> list:
     from . import store
     lines = []
@@ -1129,6 +1149,7 @@ def doctor() -> list:
     lines.append(f"{ok(mcp_installed())}server MCP registrato in ~/.claude.json")
     lines.append(f"{ok(hooks_installed())}hook SessionStart/SessionEnd")
     lines.append(f"{ok(richiamo_installed())}richiamo della memoria (UserPromptSubmit)")
+    lines.extend(_righe_compartimenti_windows())
     from . import codex
     cx = codex.stato()
     lines.append(f"{ok(cx['installato'])}Codex trovato ({cx['sessioni']} sessioni)")

@@ -1443,9 +1443,9 @@ def _prove_file_del_lotto(prova):
                  and yml.count("continue-on-error: true") == 1)
     prova("CI: su windows si lancia `python`; la prova di piattaforma e il front non ammettono rossi, "
           "la suite intera su windows non blocca", ok_ci)
-    prova("CI: perche' la suite intera non blocca su windows lo scrive (non e' ancora girata fino in "
-          "fondo dopo il porting, e il passo ha un tetto di tempo)",
-          "non e' ancora girata fino in fondo su un Windows vero" in yml and "timeout-minutes" in yml)
+    prova("CI: perche' la suite intera non blocca su windows lo scrive (le correzioni del secondo giro non "
+          "sono ancora state viste girare su un Windows vero, e il passo ha un tetto di tempo)",
+          "ancora state viste girare su un Windows vero" in yml and "timeout-minutes" in yml)
 
     for nome, titolo in (("README.md", "## Windows and Linux"), ("README.it.md", "## Windows e Linux")):
         testo = _leggi(nome)

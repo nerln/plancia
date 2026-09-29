@@ -3878,11 +3878,14 @@ def _voce_efficace(v: dict) -> bool:
 # Variabili d'ambiente che, messe nella chiave `env` di un settings, arrivano al
 # processo dell'hook e lo fanno partire altrove o senza le sue librerie: il
 # guardiano legge la config da PLANCIA_HOME (o HOME), importa moduli da PYTHONPATH,
-# e parte con il python che trova in PATH.
+# e parte con il python che trova in PATH. PLANCIA_PIATTAFORMA fa fingere una
+# piattaforma alle prove di Plancia: gli script del guardiano e dell'hook non la
+# guardano (decidono da `os.name`), ma resta fra le negate, perche' una riga che
+# la mette in `env` non ha altro scopo che spegnere i confini.
 _ENV_PERICOLOSE = frozenset((
-    "PLANCIA_HOME", "HOME", "CLAUDE_CONFIG_DIR", "PYTHONPATH", "PYTHONHOME",
-    "PYTHONSTARTUP", "PYTHONUSERBASE", "PYTHONEXECUTABLE", "PYTHONINSPECT",
-    "PYTHONBREAKPOINT", "PATH", "LD_PRELOAD", "LD_LIBRARY_PATH"))
+    "PLANCIA_HOME", "PLANCIA_PIATTAFORMA", "HOME", "CLAUDE_CONFIG_DIR", "PYTHONPATH",
+    "PYTHONHOME", "PYTHONSTARTUP", "PYTHONUSERBASE", "PYTHONEXECUTABLE",
+    "PYTHONINSPECT", "PYTHONBREAKPOINT", "PATH", "LD_PRELOAD", "LD_LIBRARY_PATH"))
 
 
 def _env_pericolose(testo: str) -> dict:

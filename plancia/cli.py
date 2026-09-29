@@ -921,6 +921,10 @@ def cmd_esclusi(args):
 def cmd_guardiano(args):
     """Il registro e lo stato del guardiano dei compartimenti (sola lettura:
     non scrive config.json ne' il registro)."""
+    from . import piattaforma
+    if not piattaforma.compartimenti_supportati():
+        print(piattaforma.NOTA_COMPARTIMENTI_WINDOWS)
+        return 0
     dati = str(config.DATA_DIR)
     try:
         from . import compartimenti

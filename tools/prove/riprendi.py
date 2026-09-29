@@ -701,7 +701,19 @@ def _prova_sessione_cwd_vera(prova):
     cartella = tempfile.mkdtemp(prefix="plancia-prova-riprendi-cwd-")
     os.chdir(cartella)
     try:
-        os.rmdir(cartella)  # la cartella sparisce da sotto al processo
+        try:
+            os.rmdir(cartella)  # la cartella sparisce da sotto al processo
+        except OSError:
+            if os.name != "nt":
+                raise
+            # Windows non lascia cancellare la cartella in cui un processo si trova
+            # (WinError 32): lo scenario non si costruisce. Il controllo c'e' lo
+            # stesso, dichiarato saltato, cosi' il conteggio non cambia.
+            os.chdir(vecchia)
+            os.rmdir(cartella)
+            prova("sessione.corrente con cwd cancellata: cwd è '' (non PWD)", True,
+                  "saltato: Windows non cancella la cartella corrente di un processo")
+            return
         # niente CLAUDE_CODE_SESSION_ID/CLAUDE_PID: si passa comunque dal ramo
         # del ripiego sulla cwd, che è l'unica cosa che questa prova guarda.
         chiavi = ("CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_CHILD_SESSION", "CLAUDE_PID")

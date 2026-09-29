@@ -84,6 +84,7 @@ import os
 import re
 
 from . import compartimenti as C
+from . import piattaforma
 
 PREDEFINITO = C.PREDEFINITO
 #: chi ha segnali di piu' nominati: non e' un nome valido di compartimento
@@ -153,6 +154,11 @@ def attivo(data_dir=None, home=None, claude_dir=None):
     guardiano (`spento`, `solo-registro`, `bloccante`): quella dice se E3 nega,
     questa se Plancia separa cio' che mostra, e basta che i nominati esistano.
     """
+    if not piattaforma.compartimenti_supportati():
+        # Windows: i compartimenti ragionano su percorsi POSIX, sono spenti (vedi
+        # `piattaforma.compartimenti_supportati`). Prima di leggere la config: non
+        # si scrive nemmeno la copia dell'ultima config valida.
+        return None
     data_dir = data_dir or C.percorso_dati()
     c = C.leggi_config(data_dir)
     if c["stato"] == "ok":

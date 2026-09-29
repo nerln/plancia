@@ -48,6 +48,11 @@ dei dati), i settings che neutralizzano il guardiano (`_prove_settings_5`) e i m
 (`_prove_minori_5`: ANSI-C, `cd` con graffe, il tetto dei percorsi, BaseException,
 hang, PYTHONPATH).
 
+Su Windows il guardiano non c'e': `bin/plancia-guardiano` esce subito senza negare niente
+e lo dice una volta per sessione (vedi `windows-hook.py`), e tutte le prove di questo file,
+che ragionano su percorsi e comandi POSIX, si segnano "saltato: non supportato su Windows"
+controllo per controllo, con lo stesso totale di macOS e Linux (vedi `_saltati.py`).
+
 Gli strumenti di sessione si provano con gli id che l'app manda davvero
 (`local_<uuid>`, nomi, `self`, `main`), risolti da un registro dell'app finto
 nella HOME temporanea (`claude-code-sessions/*/*/local_<uuid>.json`), con l'id
@@ -88,6 +93,21 @@ def _carica_finti():
 
 
 _finti = _carica_finti()
+
+
+def _carica_saltati():
+    """`_saltati.py` (materiale di supporto, non una prova) sta accanto a questo file."""
+    if "_saltati" not in sys.modules:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "_saltati", Path(__file__).resolve().parent / "_saltati.py")
+        modulo = importlib.util.module_from_spec(spec)
+        sys.modules["_saltati"] = modulo
+        spec.loader.exec_module(modulo)
+    return sys.modules["_saltati"]
+
+
+_saltati = _carica_saltati()
 GUARDIANO = RADICE / "bin" / "plancia-guardiano"
 PYTHON = "/usr/bin/python3" if os.path.exists("/usr/bin/python3") else sys.executable
 
@@ -3370,7 +3390,11 @@ def _prove_settings_5(prova, a: Ambiente):
     for k, v in (("PLANCIA_HOME", "/tmp/nessuno"), ("HOME", "/tmp/nessuno"),
                  ("CLAUDE_CONFIG_DIR", "/tmp/nessuno"), ("PYTHONPATH", "/tmp/pp"),
                  ("PYTHONHOME", "/tmp/pp"), ("PYTHONSTARTUP", "/tmp/s.py"), ("PATH", "/tmp/bin"),
-                 ("LD_PRELOAD", "/tmp/x.so"), ("DYLD_INSERT_LIBRARIES", "/tmp/x.dylib")):
+                 ("LD_PRELOAD", "/tmp/x.so"), ("DYLD_INSERT_LIBRARIES", "/tmp/x.dylib"),
+                 # con questa gli script di Plancia crederebbero di essere su Windows
+                 # (dove il guardiano e i compartimenti sono spenti): non deve poterla
+                 # mettere una sessione, e nemmeno decidere lei se Plancia e' su Windows
+                 ("PLANCIA_PIATTAFORMA", "windows")):
         r = scrivi({"env": {k: v}})
         prova(f"settings5: Write con env {k}: negato, dice `env`",
               r.negato and "env" in r.motivo and k in r.motivo, repr(r))
@@ -3389,6 +3413,14 @@ def _prove_settings_5(prova, a: Ambiente):
           "negato (l'env dei progetti arriva anche all'hook)", r.negato, repr(r))
     r = pred("Write", {"file_path": str(proj), "content": json.dumps({"env": {"PYTHONPATH": "/x"}})})
     prova("settings5: ...con env PYTHONPATH: negato", r.negato, repr(r))
+    r = pred("Write", {"file_path": str(proj),
+                       "content": json.dumps({"env": {"PLANCIA_PIATTAFORMA": "windows"}})})
+    prova("settings5: settings.local.json di un progetto con env PLANCIA_PIATTAFORMA: negato "
+          "(spegnerebbe il guardiano e i compartimenti alla sessione dopo)",
+          r.negato and "PLANCIA_PIATTAFORMA" in r.motivo, repr(r))
+    r = pred("Edit", {"file_path": str(utente), "old_string": '"theme": "dark"',
+                      "new_string": '"theme": "dark", "env": {"PLANCIA_PIATTAFORMA": "windows"}'})
+    prova("settings5: Edit che aggiunge env PLANCIA_PIATTAFORMA: negato", r.negato, repr(r))
     # quello che resta ammesso
     for nome, extra, hooks in (
             ("env innocua", {"env": {"FOO": "bar", "PYTHONIOENCODING": "utf-8",
@@ -4465,6 +4497,15 @@ def _prove_forma(prova):
 
 
 def esegui(prova):
+    # Su Windows il guardiano non c'e' (bin/plancia-guardiano esce subito e lo dice, vedi
+    # windows-hook.py): tutte le prove qui sotto ragionano su percorsi e comandi POSIX e si
+    # segnano saltate, controllo per controllo (vedi _saltati.py).
+    reale = prova
+    prova = _saltati.Contatore(reale)
+    if _saltati.WIN:
+        _saltati.salta_il_resto("guardiano", prova)
+        _saltati.chiudi("guardiano", prova, reale)
+        return
     _prove_forma(prova)
     _prove_errore_interno(prova)
     a = Ambiente()
@@ -4513,3 +4554,4 @@ def esegui(prova):
         _prove_limiti_6(prova)
     finally:
         a.chiudi()
+    _saltati.chiudi("guardiano", prova, reale)

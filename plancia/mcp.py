@@ -11,7 +11,7 @@ import sys
 import traceback
 
 from . import (actions, briefing, cantiere, compartimenti_viste as viste, config,
-               eventi, lavagna, recap, sessione, store, turni, voice)
+               eventi, lavagna, piattaforma, recap, sessione, store, turni, voice)
 
 PROTOCOL = "2025-06-18"
 SUPPORTED = {"2024-11-05", "2025-03-26", "2025-06-18"}
@@ -743,6 +743,7 @@ def handle(req: dict) -> None:
 
 
 def main() -> int:
+    piattaforma.stdio_utf8()
     config.ensure_dirs()
     conn = store.connect()
     store.init_db(conn)

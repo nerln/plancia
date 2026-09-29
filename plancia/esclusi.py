@@ -52,8 +52,32 @@ def _norm(path) -> str:
     """
     if not path:
         return ""
-    p = os.path.realpath(os.path.expanduser(str(path)))
-    return p.rstrip(os.sep) or os.sep
+    return _senza_fine(os.path.realpath(os.path.expanduser(str(path))))
+
+
+def _senza_fine(p: str) -> str:
+    """`p` senza il separatore finale, ma la radice resta la radice: `/` su POSIX,
+    `C:\\` su Windows (con `rstrip` diventerebbe `C:`, che e' la cartella corrente di
+    quell'unita', non la sua radice). Su macOS e Linux e' `p.rstrip('/') or '/'`."""
+    if os.path.dirname(p) == p:
+        return p
+    return p.rstrip(os.sep + (os.path.altsep or "")) or p
+
+
+def _uguale(a: str, b: str) -> bool:
+    """Due percorsi gia' normalizzati sono la stessa cartella? Su Windows le
+    maiuscole e il tipo di barra non contano; su macOS e Linux e' `a == b`."""
+    return os.path.normcase(a) == os.path.normcase(b)
+
+
+def _sotto(p: str, base: str) -> bool:
+    """`p` sta sotto `base` (e non e' `base`)? Sui confini di cartella. Su Windows
+    con `normcase` (maiuscole e barre); la radice (`/`, `C:\\`) contiene tutto. Su macOS e
+    Linux e' `p.startswith(base + '/')`, com'e' sempre stato."""
+    p, base = os.path.normcase(p), os.path.normcase(base)
+    if os.path.dirname(base) == base:
+        return p != base and p.startswith(base)
+    return p.startswith(base + os.sep)
 
 
 def _codifica(path_normalizzato: str) -> str:
@@ -99,8 +123,16 @@ def _grafia_vera(path_assoluto: str):
     conosce, e si prende quella.
     """
     risolto = os.path.realpath(path_assoluto)
-    pezzi = [p for p in Path(risolto).parts if p not in (os.sep, "")]
-    corrente = os.sep
+    # La radice e i pezzi si separano con le regole del sistema (`os.path`), non con
+    # `pathlib`: su Windows la radice e' un'unita' (`C:\\`) o una condivisione di rete, e
+    # cercarla come un nome dentro `\\` (la radice dell'unita' corrente) non la trova
+    # mai: ogni cartella esclusa risultava «inesistente» e l'intera config, fail-closed,
+    # invalida. Su macOS e Linux la radice e' `/` e i pezzi sono quelli di sempre.
+    unita, resto = os.path.splitdrive(risolto)
+    seps = os.sep + (os.path.altsep or "")
+    radice = unita + (os.sep if resto[:1] and resto[0] in seps else "")
+    pezzi = [p for p in re.split("[" + re.escape(seps) + "]", resto) if p]
+    corrente = radice or os.sep
     if not os.path.isdir(corrente):
         return None
     for pezzo in pezzi:
@@ -112,7 +144,7 @@ def _grafia_vera(path_assoluto: str):
         if trovato is None:
             return None
         corrente = os.path.join(corrente, trovato)
-    return corrente.rstrip(os.sep) or os.sep
+    return _senza_fine(corrente)
 
 
 def valida(cfg: dict):
@@ -141,7 +173,7 @@ def valida(cfg: dict):
         return False, "sessioni_escluse deve essere una lista di stringhe", [], []
 
     protette = [str(config.HOME), str(config.CLAUDE_DIR), str(config.DATA_DIR)]
-    protette_norm = [os.path.realpath(p).rstrip(os.sep) or os.sep for p in protette]
+    protette_norm = [_senza_fine(os.path.realpath(p)) for p in protette]
 
     cartelle = []
     for grezza in grezze_cartelle:
@@ -151,10 +183,10 @@ def valida(cfg: dict):
         vera = _grafia_vera(assoluto)
         if vera is None:
             return False, f"cartella_esclusa inesistente: {grezza!r}", [], []
-        if vera == os.sep:
+        if os.path.dirname(vera) == vera:  # la radice: "/" su POSIX, "C:\\" su Windows
             return False, "cartella_esclusa non può essere '/'", [], []
         for p in protette_norm:
-            if vera == p or p.startswith(vera + os.sep):
+            if _uguale(vera, p) or _sotto(p, vera):
                 return False, (f"cartella_esclusa troppo ampia (contiene una cartella "
                                f"di sistema di Plancia): {grezza!r}"), [], []
         cartelle.append(vera)
@@ -257,7 +289,7 @@ def percorso_escluso(path, esclusi: dict) -> bool:
     if not path or not esclusi["cartelle"]:
         return False
     p = _norm(path)
-    return any(p == c or p.startswith(c + os.sep) for c in esclusi["cartelle"])
+    return any(_uguale(p, c) or _sotto(p, c) for c in esclusi["cartelle"])
 
 
 def progetto_escluso(nome_cartella: str, esclusi: dict) -> bool:
@@ -270,6 +302,10 @@ def progetto_escluso(nome_cartella: str, esclusi: dict) -> bool:
     """
     if not nome_cartella or not esclusi["codifiche"]:
         return False
+    if os.path.normcase("A") != "A":  # Windows: le maiuscole non contano
+        nome_cartella = nome_cartella.lower()
+        return any(nome_cartella == c.lower() or nome_cartella.startswith(c.lower() + "-")
+                   for c in esclusi["codifiche"])
     return any(nome_cartella == c or nome_cartella.startswith(c + "-")
                for c in esclusi["codifiche"])
 

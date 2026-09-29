@@ -19,13 +19,22 @@ un Windows imitato, senza lanciare niente di vero:
 4. il padre di un progetto e le radici dei progetti si riconoscono anche con un
    percorso di Windows (rovesci, maiuscole, barra finale);
 5. i programmi finti che le prove costruiscono (`_finti.crea_finto`) partono
-   davvero su questo sistema, e vi arrivano gli argomenti.
+   davvero su questo sistema, e vi arrivano gli argomenti;
+6. (secondo giro, run 36582338633) le cartelle escluse con la lettera di unita': la
+   radice di `C:\\` non e' una cartella dentro `\\`, e ogni `cartelle_escluse` risultava
+   «inesistente» (config invalida, fail-closed: niente entrava piu' nell'archivio);
+   il progetto di una cwd si riconosce anche con il link scritto con altre barre o
+   altre maiuscole. Provati con un `os` di Windows imitato su un albero finto;
+7. (terzo giro) il prompt di `claude -p` (il riepilogo e la risposta a voce) su Windows va
+   nello stdin, non come argomento: un `claude.cmd` di npm passa da cmd.exe, che taglia un
+   argomento alla prima riga a capo. Su macOS e Linux la riga di comando e' quella di sempre.
 
 Per lanciare da sola: `python3 tools/prove/windows-testo.py`.
 """
 
 import ast
 import contextlib
+import ntpath
 import os
 import sqlite3
 import subprocess
@@ -228,6 +237,61 @@ def _prove_utf8(prova):
           .split("def main(")[1].split("build_parser()")[0])
 
 
+@contextlib.contextmanager
+def _piattaforma_env(nome):
+    vecchia = os.environ.get("PLANCIA_PIATTAFORMA")
+    os.environ["PLANCIA_PIATTAFORMA"] = nome
+    try:
+        yield
+    finally:
+        if vecchia is None:
+            os.environ.pop("PLANCIA_PIATTAFORMA", None)
+        else:
+            os.environ["PLANCIA_PIATTAFORMA"] = vecchia
+
+
+def _prove_prompt_da_stdin(prova):
+    """`recap.claude_text` (il riepilogo, la risposta a voce): il prompt e' un argomento su
+    macOS e Linux, com'e' sempre stato, e va nello stdin su Windows. Il prompt di prova ha
+    piu' righe e i caratteri che cmd.exe interpreta."""
+    from plancia import piattaforma as pf, recap
+
+    prova("prompt_da_stdin: si' su Windows, no su macOS e Linux",
+          pf.prompt_da_stdin("windows") is True and pf.prompt_da_stdin("mac") is False
+          and pf.prompt_da_stdin("linux") is False)
+
+    prompt = 'Sei l\'assistente.\nDati: {"a": "x & y | %PATH% ^ \\"q\\""}\nDomanda: cosa?'
+    chiamate = []
+
+    def run_finto(argv, **kw):
+        chiamate.append((list(argv), kw))
+        return subprocess.CompletedProcess(argv, 0, "risposta\n", "")
+
+    vecchi = recap.claude_bin, recap.subprocess.run
+    recap.claude_bin = lambda: "/x/claude"
+    recap.subprocess.run = run_finto
+    try:
+        esiti = {}
+        for piatt in ("mac", "linux", "windows"):
+            with _piattaforma_env(piatt):
+                testo = recap.claude_text(prompt, timeout=5)
+            esiti[piatt] = (testo,) + chiamate[-1]
+    finally:
+        recap.claude_bin, recap.subprocess.run = vecchi
+
+    for piatt in ("mac", "linux"):
+        testo, argv, kw = esiti[piatt]
+        prova("claude_text su %s: il prompt e' l'ultimo argomento di `claude -p --model <m>`, "
+              "senza stdin (la riga di comando di sempre)" % piatt,
+              testo == "risposta" and argv[:3] == ["/x/claude", "-p", "--model"] and len(argv) == 5
+              and argv[-1] == prompt and "input" not in kw, str((argv, sorted(kw))))
+    testo, argv, kw = esiti["windows"]
+    prova("claude_text su Windows: nessun prompt fra gli argomenti (`claude -p --model <m>`), "
+          "il prompt intero, con le righe a capo e & | %, e' nello stdin",
+          testo == "risposta" and argv[:3] == ["/x/claude", "-p", "--model"] and len(argv) == 4
+          and prompt not in argv and kw.get("input") == prompt, str((argv, sorted(kw))))
+
+
 def _prove_porta_occupata(prova):
     """Una seconda copia del server sulla stessa porta non si aggancia (su Windows,
     con `SO_REUSEADDR`, si agganciava)."""
@@ -279,10 +343,152 @@ def _prove_finti(prova):
           _finti.path_con("/x/finti").split(os.pathsep)[0] == "/x/finti")
 
 
+class _PathNt:
+    """`ntpath` con le sole funzioni che toccano il disco sostituite da un albero
+    finto: `realpath` normalizza soltanto, `isdir` guarda l'albero."""
+
+    def __init__(self, sistema):
+        self._s = sistema
+
+    def __getattr__(self, nome):
+        return getattr(ntpath, nome)
+
+    def realpath(self, p):
+        return ntpath.normpath(p)
+
+    def isdir(self, p):
+        return self._s.cerca(p) is not None
+
+
+class _EntrataFinta:
+    def __init__(self, name):
+        self.name = name
+
+
+class _OsNtFinto:
+    """Un `os` che si comporta da Windows su un albero di cartelle finto
+    (`{"C:\\": {"Users": {"Ann": {"Privato": {}}}}}`), il resto e' quello vero."""
+
+    sep = "\\"
+    name = "nt"
+
+    def __init__(self, albero):
+        self.albero = albero
+        self.path = _PathNt(self)
+
+    def cerca(self, p):
+        unita, resto = ntpath.splitdrive(p)
+        nodo = None
+        for chiave, valore in self.albero.items():
+            if ntpath.normcase(chiave.rstrip("\\")) == ntpath.normcase(unita):
+                nodo = valore
+        if nodo is None:
+            return None
+        for pezzo in [x for x in resto.replace("/", "\\").split("\\") if x]:
+            trovato = next((v for k, v in nodo.items() if k.lower() == pezzo.lower()), None)
+            if trovato is None:
+                return None
+            nodo = trovato
+        return nodo
+
+    def scandir(self, p):
+        nodo = self.cerca(p)
+        if nodo is None:
+            raise FileNotFoundError(p)
+        return [_EntrataFinta(k) for k in nodo]
+
+    def __getattr__(self, nome):
+        return getattr(os, nome)
+
+
+def _prove_esclusi_windows(prova):
+    from plancia import config, esclusi
+
+    albero = {"C:\\": {"Users": {"Ann": {"Privato": {"Sotto": {}}, "Progetti": {}, ".plancia": {}}}}}
+    finto = _OsNtFinto(albero)
+    vecchi = esclusi.os
+    esclusi.os = finto
+    try:
+        vera = esclusi._grafia_vera("C:/users/ann/PRIVATO")
+        prova("esclusi._grafia_vera su Windows: la lettera di unita' non e' una cartella dentro la radice; "
+              "torna la grafia vera di ogni pezzo",
+              vera == "C:\\Users\\Ann\\Privato", str(vera))
+        prova("esclusi._grafia_vera su Windows: una cartella che non esiste da' None",
+              esclusi._grafia_vera("C:\\Users\\Ann\\Non-c-e") is None
+              and esclusi._grafia_vera("D:\\Users") is None)
+        prova("esclusi._senza_fine: la radice dell'unita' resta `C:\\`, una cartella perde la barra finale",
+              esclusi._senza_fine("C:\\") == "C:\\" and esclusi._senza_fine("C:\\Users\\") == "C:\\Users"
+              and esclusi._senza_fine("C:\\Users") == "C:\\Users")
+
+        home = "C:\\Users\\Ann"
+        vecchie = config.HOME, config.CLAUDE_DIR, config.DATA_DIR
+        config.HOME, config.CLAUDE_DIR, config.DATA_DIR = home, home + "\\.claude", home + "\\.plancia"
+        try:
+            ok, err, cartelle, _ = esclusi.valida({"cartelle_escluse": ["C:/users/ann/privato"]})
+            prova("esclusi.valida su Windows: una cartella esclusa esistente e' valida, nella grafia vera",
+                  ok and cartelle == ["C:\\Users\\Ann\\Privato"], str((ok, err, cartelle)))
+            ok2, err2, *_ = esclusi.valida({"cartelle_escluse": ["C:\\Users\\Ann\\Non-c-e"]})
+            prova("esclusi.valida su Windows: una cartella che non esiste e' ancora «inesistente»",
+                  not ok2 and "inesistente" in (err2 or ""), str(err2))
+            ok3, err3, *_ = esclusi.valida({"cartelle_escluse": ["C:\\"]})
+            prova("esclusi.valida su Windows: la radice dell'unita' non si esclude",
+                  not ok3, str(err3))
+            ok4, err4, *_ = esclusi.valida({"cartelle_escluse": ["C:\\Users"]})
+            prova("esclusi.valida su Windows: una cartella che contiene la casa e' troppo ampia",
+                  not ok4 and "troppo ampia" in (err4 or ""), str(err4))
+        finally:
+            config.HOME, config.CLAUDE_DIR, config.DATA_DIR = vecchie
+
+        esc = {"cartelle": ["C:\\Users\\Ann\\Privato"], "codifiche": ["C--Users-Ann-Privato"], "sessioni": set()}
+        prova("esclusi.percorso_escluso su Windows: la cartella, le sue sottocartelle, con barre e maiuscole "
+              "diverse; non una cartella che comincia allo stesso modo",
+              esclusi.percorso_escluso("c:/USERS/ann/privato", esc)
+              and esclusi.percorso_escluso("C:\\Users\\Ann\\Privato\\Sotto\\a.py", esc)
+              and not esclusi.percorso_escluso("C:\\Users\\Ann\\Privato2", esc)
+              and not esclusi.percorso_escluso("C:\\Users\\Ann", esc))
+        prova("esclusi.progetto_escluso su Windows: il nome codificato della cartella non distingue le maiuscole",
+              esclusi.progetto_escluso("c--users-ann-privato", esc)
+              and esclusi.progetto_escluso("C--Users-Ann-Privato-sotto", esc)
+              and not esclusi.progetto_escluso("C--Users-Ann-Privato2", esc))
+    finally:
+        esclusi.os = vecchi
+
+    # macOS e Linux: la radice e' `/`, `_senza_fine` e `_sotto` sono quelli di sempre
+    prova("esclusi su POSIX: la radice resta `/`, una cartella perde la barra finale, `_sotto` sui confini",
+          esclusi._senza_fine("/") == "/" and esclusi._senza_fine("/a/b/") == "/a/b"
+          and esclusi._sotto("/a/b/c", "/a/b") and not esclusi._sotto("/a/bc", "/a/b")
+          and not esclusi._sotto("/a/b", "/a/b") and esclusi._uguale("/a/b", "/a/b")
+          and not esclusi._uguale("/a/B", "/a/b") if os.name != "nt" else True,
+          "saltato: percorsi POSIX" if os.name == "nt" else "")
+
+
+def _prove_resolve_path_windows(prova):
+    """Un link `path` scritto a mano (barre in avanti, altre maiuscole) e la cwd che
+    arriva normalizzata da Windows sono la stessa cartella."""
+    from plancia import ingest, store
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys=ON")
+    store.init_db(conn)
+    pid = store.upsert_project(conn, "proj-w", "proj-w", auto=0, _force=True)
+    store.link_project(conn, pid, "path", "C:/Dev/Proj")
+    conn.commit()
+    trovato = [ingest.resolve_path_project(conn, p) for p in (
+        "c:\\dev\\proj", "C:\\DEV\\Proj\\src\\a.py", "C:/dev/proj/sub", "C:\\dev\\proj2", "D:\\dev\\proj")]
+    conn.close()
+    prova("ingest.resolve_path_project: il link scritto con le barre in avanti e altre maiuscole trova la cwd "
+          "di Windows (e non una cartella che comincia allo stesso modo, ne' un'altra unita')",
+          trovato == [pid, pid, pid, None, None], str(trovato))
+
+
 def esegui(prova):
+    _prove_esclusi_windows(prova)
+    _prove_resolve_path_windows(prova)
     _prove_attribuzione(prova)
     _prove_padre_windows(prova)
     _prove_utf8(prova)
+    _prove_prompt_da_stdin(prova)
     _prove_porta_occupata(prova)
     _prove_finti(prova)
 

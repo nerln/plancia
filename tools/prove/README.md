@@ -46,6 +46,16 @@ raccoglie `_finti.py` (accanto a questo file, non e' una prova):
   script, com'e' sempre stato;
 - un programma finto scritto come file con `#!/bin/sh` non parte: `_finti.crea_finto`
   lo scrive in Python, con lo shebang su macOS e Linux e con un `.cmd` su Windows.
+- un `claude.cmd` (npm) taglia un argomento alla prima riga a capo: Plancia passa il
+  prompt di `claude -p` nello stdin su Windows (`piattaforma.prompt_da_stdin`), e un
+  `claude` finto che deve vedere il prompt lo legge da stdin quando la riga di comando
+  non ne ha uno (vedi `_FINTO_CLAUDE` in `compartimenti-plancia.py`).
+
+Per provare su un altro sistema il ramo di Windows di uno script di `bin/` (il guardiano,
+l'hook) serve `_come_windows.py`, che gli fa credere `os.name == "nt"`. La variabile
+`PLANCIA_PIATTAFORMA` fa fingere una piattaforma alle sole prove di piattaforma (i comandi
+che Plancia costruisce): il guardiano, l'hook e `piattaforma.compartimenti_supportati` non
+la guardano, perche' chi scrive un `settings.json` puo' metterla in `env`.
 
 Un controllo che su un sistema non si puo' fare (un `chmod 000` che su Windows non
 rende illeggibile un file) passa con `dettaglio` che comincia per `saltato`, il perche'

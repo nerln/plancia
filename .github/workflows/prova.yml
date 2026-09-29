@@ -17,17 +17,26 @@
 # - il front (tools/prova-front.py) su Windows BLOCCA come sugli altri sistemi: al
 #   primo giro completo (run 36573487970) ha dato 442 passate e 0 fallite su tutti
 #   e due i Python, ed e' stato visto verde, non dedotto.
-# - la suite intera (tools/prova.py) su Windows gira ma NON blocca. Al primo giro
-#   completo il passo cadeva in tre punti: percorsi finti alla POSIX che su Windows
-#   si normalizzano con la barra rovesciata, la casa finta della prova
-#   d'installazione (su Windows `Path.home()` legge USERPROFILE, non HOME) e uno
-#   script di bin/ lanciato senza interprete (WinError 193). Quelle prove sono
-#   state portate, ma la suite non e' ancora girata fino in fondo su un Windows vero
-#   dopo la correzione: tutto quello che viene dopo il server MCP (l'hook, il richiamo,
-#   i lotti di tools/prove/) non e' mai stato visto li', e molti lotti sono stati
-#   scritti e provati solo su macOS e Linux. Finche' non si vede un giro verde il passo
-#   resta rosso senza fermare il resto, con un tetto di tempo perche' una prova appesa
-#   non tenga il collaudo per ore. Su Linux e macOS il rosso blocca come sempre.
+# - la suite intera (tools/prova.py) su Windows gira fino in fondo ma per ora NON blocca.
+#   Il primo giro completo (run 36573487970) cadeva in tre punti (percorsi finti alla
+#   POSIX, la casa finta dell'installazione, uno script di bin/ lanciato senza
+#   interprete); dopo la correzione il giro del 29/09 (run 36582338633, commit 477b56d)
+#   e' arrivato in fondo con 2964 passate e 1070 fallite. Le 1070 erano: 898 nel
+#   guardiano e 141 nei compartimenti (che su Windows non sono supportati: ora spenti nel
+#   codice e le loro prove sono "saltato: non supportato su Windows", controllo per
+#   controllo, con lo stesso totale degli altri sistemi), e 31 in altri moduli: l'hook di
+#   sessione che nella prova usciva senza briefing (la prova lo lanciava senza `-X utf8`,
+#   che invece gli hook scritti da `plancia install` hanno gia': con stdout in cp1252 la
+#   freccia del briefing non si scriveva, e ora l'hook e' indipendente dalla tabella di
+#   caratteri; vedi tools/prove/windows-hook.py), le cartelle escluse con la lettera di
+#   unita', il link di un progetto scritto con altre barre, e prove con aspettative POSIX
+#   o di un sistema che non e' Windows. La risposta a voce e il riepilogo su Windows
+#   passano il prompt a `claude -p` da stdin (un `claude.cmd` di npm taglia l'argomento
+#   alla prima riga a capo). Quelle correzioni sono provate con un Windows imitato
+#   sul Mac, ma NON sono ancora state viste girare su un Windows vero: finche' non si
+#   vede un giro verde il passo resta rosso senza fermare il resto, con un tetto di tempo
+#   perche' una prova appesa non tenga il collaudo per ore. Al primo giro verde si toglie
+#   `continue-on-error`. Su Linux e macOS il rosso blocca come sempre.
 # - non e' verificato che setup-python fornisca Python 3.9 su macos-latest
 #   (arm64): se al primo giro quel job non parte, escludere la combinazione con
 #   `exclude` (3.9 resta provato su Linux e Windows).
