@@ -13,7 +13,8 @@ struct Radice: View {
     var body: some View {
         @Bindable var a = archivio
         let sezione = Binding<Sezione?>(
-            get: { archivio.sezione },
+            // durante la ricerca il contenuto e' Risultati: nessuna voce resta evidenziata
+            get: { archivio.ricerca.trimmed.isEmpty ? archivio.sezione : nil },
             set: { if let s = $0 { archivio.vai(s) } })
 
         NavigationSplitView {

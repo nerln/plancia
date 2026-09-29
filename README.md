@@ -44,7 +44,7 @@ git clone https://github.com/nerln/plancia.git ~/dev/plancia
 cd ~/dev/plancia
 ./bin/plancia install      # command, MCP server, hooks, skills, autostart
 ./bin/plancia init         # builds your project map from repos, folders, memory
-./mac/build.sh --install   # builds Plancia.app into /Applications
+./mac/build.sh --install   # builds Plancia.app into /Applications (macOS 26 or later)
 ```
 
 `plancia uninstall` puts everything back. Your data stays in `~/.plancia/`.
@@ -140,8 +140,12 @@ connected.
 
 ## The three ways in
 
-**The app.** A native window, a menu bar item, and the voice. It supervises the
-backend, so there is nothing to start by hand. `plancia://recap`,
+**The app.** A native SwiftUI window (2.0, macOS 26 or later): a sidebar with
+Today, Tasks, Projects, Social, Memory and Archive, the system search field,
+an inspector on the right for whatever you select, and Settings for language
+and appearance. Plus a menu bar item and the voice. It supervises the
+backend, so there is nothing to start by hand. On macOS 13 to 15 the 1.1.0
+app is the last one that runs; the dashboard in the browser works everywhere. `plancia://recap`,
 `plancia://jarvis`, `plancia://ask?q=…`, `plancia://open?view=projects` and
 `plancia://pdf` are
 URL actions you can bind to a system shortcut, Raycast or Shortcuts.
@@ -531,11 +535,11 @@ available under "Guide".
 
 ## Requirements
 
-macOS 13 or later (or Windows or Linux, see above), Python 3.9+, Claude Code. Xcode command line tools only if you
-want to build the app. `gh` is optional and only used to read your repos.
+Python 3.9+ and Claude Code, on macOS 13 or later, Windows or Linux (see above). The native Mac app
+needs macOS 26 or later, and the Xcode command line tools to build it. `gh` is optional and only used to read your repos.
 
 The native Mac app 2.0 is SwiftUI and needs macOS 26 or later. On macOS 13 to 15 stay on the 1.1.0 app,
-or use the dashboard in the browser (it installs as a web app).
+or use the dashboard in the browser (it installs as a web app). The web dashboard is unchanged in 2.0.
 
 ## Security
 
