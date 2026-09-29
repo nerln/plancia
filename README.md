@@ -49,6 +49,90 @@ cd ~/dev/plancia
 
 `plancia uninstall` puts everything back. Your data stays in `~/.plancia/`.
 
+## Windows and Linux
+
+macOS comes first: that is where the native app lives. The rest of Plancia is
+Python and a local web server, so it also runs on Windows and Linux, with the
+dashboard in your browser. You need Python 3.9+ and Claude Code or Codex.
+
+Windows (PowerShell):
+
+```powershell
+git clone https://github.com/nerln/plancia.git $HOME/plancia
+cd $HOME/plancia
+python bin/plancia install       # command, MCP server, hooks, skills, autostart
+python bin/plancia init          # builds your project map
+python bin/plancia serve --open  # the dashboard, in your browser
+```
+
+Linux:
+
+```bash
+git clone https://github.com/nerln/plancia.git ~/dev/plancia
+cd ~/dev/plancia
+python3 bin/plancia install
+python3 bin/plancia init
+python3 bin/plancia serve --open
+```
+
+`install` also writes a `plancia` command. On Windows it is a `plancia.cmd` shim
+in `%LOCALAPPDATA%\Plancia\bin`, and it tells you to add that folder to your PATH
+if it is not there yet; `bin/plancia.cmd` does the same job from inside a clone.
+On Linux it is a link in `~/.local/bin`. `plancia uninstall` puts everything back.
+If `python` is not on your PATH (the python.org installer does not add it by
+default, and `python` can be the Microsoft Store stub), use `py -3 bin/plancia
+install` instead. `pip install` is not a supported route yet: the package does not carry the
+dashboard files or the `bin/` scripts, so use the clone.
+
+What works the same: the dashboard, the `plancia_*` MCP tools in Claude Code and
+Codex, the session hooks and the memory recall, the skills, search, the recap,
+Resume (it opens a terminal in the right folder), and starting the server at every
+login.
+
+What each system uses underneath:
+
+| | macOS | Windows | Linux |
+|---|---|---|---|
+| start at login, daily recap | launchd | Task Scheduler, or the Startup folder if that is refused | systemd `--user`, or `~/.config/autostart` |
+| Resume opens | Terminal | Windows Terminal, else a new console window | the first of x-terminal-emulator, gnome-terminal, konsole, xterm |
+| clipboard | `pbcopy` | `clip` | wl-copy, xclip or xsel |
+| spoken recap | `say` | the built-in speech synthesizer | espeak-ng (or espeak) and an audio player |
+| notification | `osascript` | PowerShell balloon | `notify-send`, if installed |
+
+What does not exist outside macOS: the native app, its menu bar item, the
+`plancia://` URL actions and the hands-free voice panel. `plancia jarvis "..."`
+from a terminal still works. If a piece is missing on your machine the rest
+carries on: no notification tool means no notification, and no clipboard tool
+means nothing is copied. With no speech engine, `plancia say`, `plancia voice
+prova`, `plancia recap --speak`, `plancia ask --speak` and `plancia jarvis --speak`
+say so and what to install, the MCP `speak`
+action answers `letto: false` with the reason, and `plancia doctor` reports the
+voice as missing. The dashboard keeps working too: the recap, "Ask" and Jarvis
+answer with the text and a `voce: null` field plus a `nota_voce` explaining that
+there is no speech engine, and only the playback is skipped ("Listen" shows
+that note instead of a generic error). Outside macOS the voice engine is reported by
+its real name (`System.Speech`, `espeak-ng`) and the voice list comes from it. On Windows,
+Resume needs Windows Terminal for a lost task when `claude` is a `.cmd` file (an
+npm install): its multi-line prompt cannot be handed to `cmd.exe` safely, and
+Resume says so instead of opening a broken command. On Windows the server starts at login but is not restarted after a crash, and
+its errors are not logged (launchd on macOS and systemd on Linux do restart it).
+A second `plancia serve` while the login one is running says so (and with `--open`
+opens the browser on it) instead of failing on the busy port. `plancia esporta --apri`
+opens the file with the system's own opener (`open -R`, `os.startfile`, `xdg-open`).
+Folders that hold projects without being one (an external disk, another projects
+folder) go in `config.json` under `contenitori`, a list of paths, next to the ones
+Plancia recognises by itself (`~/dev`, `~/Siti`, the Google Drive folders). On macOS
+that includes the disks you used to add by hand: an external disk is a container
+only if it is listed there (`"contenitori": ["/Volumes/Disco/dev"]`), and
+`plancia doctor` prints the containers in use. Start at login and the daily recap
+never load launchd, Task Scheduler or systemd jobs from a throwaway environment: if
+the process `HOME` is not the user's real home (or `PLANCIA_HOME` points outside it)
+the files are written but not loaded ("file scritti, non caricati (HOME di prova)").
+`PLANCIA_AUTOSTART_FORZA=1` forces the commands, for a machine where they are stubs.
+The commands Plancia builds for each system are covered by the suite, but Windows and
+Linux have had far less real use than macOS: `plancia doctor` tells you what is
+connected.
+
 ## The three ways in
 
 **The app.** A native window, a menu bar item, and the voice. It supervises the
@@ -396,7 +480,7 @@ available under "Guide".
 
 ## Requirements
 
-macOS 13 or later, Python 3.9+, Claude Code. Xcode command line tools only if you
+macOS 13 or later (or Windows or Linux, see above), Python 3.9+, Claude Code. Xcode command line tools only if you
 want to build the app. `gh` is optional and only used to read your repos.
 
 ## Security
@@ -411,7 +495,7 @@ Reads are open: it is your data, already on your disk.
 git config core.hooksPath .githooks
 ```
 
-Turns on the hook that runs `python3 tools/prova.py` before every push: 1483
+Turns on the hook that runs `python3 tools/prova.py` before every push: 1852
 checks in about twenty seconds, against a throwaway archive that never touches
 yours. They cover the schema, the board, the proposals, the search index, the
 recap, the MCP surface and its token budget, every read route of the HTTP API,

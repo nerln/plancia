@@ -37,14 +37,13 @@ un'euristica, e lo dice nel motivo.
 
 import json
 import os
-import shlex
 import socket
 import subprocess
 import time
 from datetime import datetime
 from pathlib import Path
 
-from . import cantiere, codex, config, eventi, recap, richiamo, store
+from . import cantiere, codex, config, eventi, piattaforma, recap, richiamo, store
 
 # Quanto vecchio può essere l'ultimo tocco a un rollout Codex perché lo si
 # consideri ancora "viva": non è un segnale diretto (non c'è modo scriptabile
@@ -89,22 +88,9 @@ def _parse_ts(s):
 # --------------------------------------------------------------------------
 
 def _pid_vivo(pid) -> bool:
-    """True se `pid` è un processo vivo su questa macchina."""
-    try:
-        pid = int(pid)
-    except (TypeError, ValueError):
-        return False
-    if pid <= 0:
-        return False
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True  # il processo c'è, semplicemente non è nostro
-    except OSError:
-        return False
-    return True
+    """True se `pid` è un processo vivo su questa macchina. Passa da
+    `piattaforma.pid_vivo`: su Windows mandare un segnale a un processo lo uccide."""
+    return piattaforma.pid_vivo(pid)
 
 
 def _registro_sessioni_claude() -> list:
@@ -177,7 +163,8 @@ def _claude_vivo(session_id):
         return False
     try:
         out = subprocess.run([exe, "agents", "--json"], capture_output=True, text=True,
-                             stdin=subprocess.DEVNULL, timeout=25)
+                             stdin=subprocess.DEVNULL, timeout=25,
+                             **piattaforma.opzioni_figlio())
         dati = json.loads(out.stdout or "[]")
     except Exception:
         return None
@@ -371,8 +358,8 @@ def comando(task, stato_calcolato, conn=None) -> list:
     return [exe, prompt]
 
 
-def _applescript_quote(testo: str) -> str:
-    return '"%s"' % testo.replace("\\", "\\\\").replace('"', '\\"')
+# La ricetta per aprire un terminale sta in piattaforma.py, una per sistema.
+_applescript_quote = piattaforma.applescript_quote
 
 
 _APRI_TIMEOUT_SECONDI = 15
@@ -383,23 +370,34 @@ def apri(task, conn=None) -> dict:
 
     Non è un run di `cantiere`: non scrive in `runs`, non passa da
     `riconcilia()`. Il lanciatore è sostituibile con `PLANCIA_TERMINALE`
-    (un comando a cui viene passato, come unico argomento, `cd <cwd> && `
-    seguito dalla riga già quotata con `shlex.join`); di default apre
-    Terminal.app con AppleScript. Per "viva" non lancia niente: torna solo
-    il messaggio da mettere negli appunti (lo fa la UI).
+    (un comando a cui viene passato, come unico argomento, la riga `cd <cwd> && `
+    seguita dal comando già quotato: con `shlex` su macOS e Linux, con
+    `list2cmdline` e `cd /d` su Windows); di default apre il terminale del
+    sistema (`piattaforma.piano_terminale`): Terminal.app con AppleScript su
+    macOS, Windows Terminal o una console nuova su Windows, il primo terminale
+    che c'è su Linux. Per "viva" non lancia niente: torna solo il messaggio da
+    mettere negli appunti (lo fa la UI).
 
-    Il lanciatore (`osascript` o `PLANCIA_TERMINALE`) parte con
-    `stdin=DEVNULL` e lo stdout catturato, mai ereditato: `osascript -e
-    'tell application "Terminal" to do script ...'` stampa da solo il
-    riferimento della scheda aperta, e ogni altro sottoprocesso di questo
-    modulo (recap, ingest, jarvis, cantiere) cattura la sua uscita per lo
-    stesso motivo. Qui conta ancora di più perché L3-RIPRENDI-UI chiamerà
-    `apri()` da dentro il server MCP (mcp.py), dove lo stdin del processo È
-    il trasporto stdio del protocollo JSON-RPC: ereditarlo darebbe al
-    lanciatore un canale che non gli appartiene, e una riga sullo stdout non
-    catturata finirebbe nel flusso del protocollo. `timeout` copre il caso
-    di un `PLANCIA_TERMINALE` (o un `osascript` bloccato) che non torna mai:
-    senza, la chiamata resterebbe appesa per sempre.
+    Su Windows il testo del task (il titolo, il prompt) non passa mai da una
+    riga di `cmd.exe`: `wt.exe` riceve un argomento per ogni pezzo (con il `;`
+    scappato) e senza `wt` il comando parte direttamente in una console nuova,
+    nella cartella giusta.
+
+    macOS e il lanciatore `PLANCIA_TERMINALE` partono con `stdin=DEVNULL` e lo
+    stdout catturato, mai ereditato, e con un `timeout`: `osascript -e 'tell
+    application "Terminal" to do script ...'` stampa da solo il riferimento
+    della scheda aperta, e ogni altro sottoprocesso di questo modulo (recap,
+    ingest, jarvis, cantiere) cattura la sua uscita per lo stesso motivo. Qui
+    conta ancora di più perché L3-RIPRENDI-UI chiamerà `apri()` da dentro il
+    server MCP (mcp.py), dove lo stdin del processo È il trasporto stdio del
+    protocollo JSON-RPC: ereditarlo darebbe al lanciatore un canale che non gli
+    appartiene, e una riga sullo stdout non catturata finirebbe nel flusso del
+    protocollo. Il `timeout` copre il caso di un `PLANCIA_TERMINALE` (o un
+    `osascript` bloccato) che non torna mai: senza, la chiamata resterebbe
+    appesa per sempre. Un terminale di Linux o di Windows, invece, resta vivo
+    finché la finestra è aperta: parte staccato (`piattaforma.avvia_distaccato`,
+    sempre con stdin, stdout e stderr chiusi) e non si aspetta, quindi lì il
+    timeout non c'è.
     """
     proprio = conn is None
     if proprio:
@@ -417,20 +415,40 @@ def apri(task, conn=None) -> dict:
         if proprio:
             conn.close()
 
-    riga = "cd %s && %s" % (shlex.quote(cwd), shlex.join(argv))
+    riga = piattaforma.riga_shell(cwd, argv)
     lanciatore = os.environ.get("PLANCIA_TERMINALE")
+    piano = None
     if lanciatore:
         comando_lancio = [lanciatore, riga]
     else:
-        script = "tell application \"Terminal\" to do script %s" % _applescript_quote(riga)
-        comando_lancio = ["osascript", "-e", script]
+        piano = piattaforma.piano_terminale(cwd, argv)
+        comando_lancio = piano["argv"] if piano else None
     esito = {"stato": s["stato"], "argv": argv, "cwd": cwd, "riga": riga}
-    try:
-        subprocess.run(comando_lancio, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                       stderr=subprocess.PIPE, text=True, check=False,
-                       timeout=_APRI_TIMEOUT_SECONDI)
-    except subprocess.TimeoutExpired:
-        esito["errore"] = "il lanciatore non ha risposto entro %ss" % _APRI_TIMEOUT_SECONDI
+    if comando_lancio is None:
+        esito["errore"] = ((piano or {}).get("errore")
+                           or "nessun terminale trovato: installa uno fra x-terminal-emulator, "
+                              "gnome-terminal, konsole o xterm, oppure imposta PLANCIA_TERMINALE")
+        esito["lanciato"] = False
+        return esito
+    if lanciatore or piattaforma.nome() == piattaforma.MAC:
+        # `osascript` (o il lanciatore finto delle prove) torna subito: qui si
+        # aspetta il suo esito, con un tetto.
+        try:
+            piattaforma.esegui(comando_lancio, stdin=subprocess.DEVNULL,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                               text=True, check=False, timeout=_APRI_TIMEOUT_SECONDI)
+        except subprocess.TimeoutExpired:
+            esito["errore"] = "il lanciatore non ha risposto entro %ss" % _APRI_TIMEOUT_SECONDI
+    else:
+        # Un terminale di Linux (xterm, x-terminal-emulator) resta in primo piano
+        # finche' la finestra e' aperta: aspettarlo, con un tetto, lo ucciderebbe
+        # allo scadere. Si stacca e non si aspetta.
+        try:
+            piattaforma.avvia_distaccato(comando_lancio, cwd=piano["cwd"],
+                                         nuova_console=piano["nuova_console"])
+        except OSError as exc:
+            esito["errore"] = "non riesco ad aprire il terminale: %s" % exc
+            esito["lanciato"] = False
     return esito
 
 

@@ -233,12 +233,13 @@ def sync(conn, keywords, progress=None, full=False, escl=None) -> int:
 # registrazione del server MCP dentro Codex
 # --------------------------------------------------------------------------
 
-BLOCCO = """
-[mcp_servers.plancia]
-command = "{cmd}"
-args = ["--agente", "codex"]
-startup_timeout_sec = 30
-"""
+def _blocco() -> str:
+    """Il blocco da scrivere: su macOS e Linux `command` e' lo script, su Windows
+    l'interprete e lo script passa in testa agli `args` (vedi
+    `piattaforma.blocco_mcp_toml`)."""
+    from . import piattaforma, setup_claude
+    return piattaforma.blocco_mcp_toml(
+        piattaforma.argv_script(setup_claude.MCP_CMD), ["--agente", "codex"])
 # --agente codex e' il segnale con cui il server, lanciato da qui, sa di
 # essere dentro Codex e non dentro Claude Code: lo legge plancia/sessione.py
 # da sys.argv per scegliere come cercare la sessione (rollout piu' recente
@@ -315,12 +316,12 @@ def registra_mcp() -> str:
         testo = _togli_blocco_plancia(testo)
         if not testo.endswith("\n"):
             testo += "\n"
-        CONFIG_TOML.write_text(testo + BLOCCO.format(cmd=setup_claude.MCP_CMD), "utf-8")
+        CONFIG_TOML.write_text(testo + _blocco(), "utf-8")
         return "server MCP aggiornato in Codex (flag --agente codex)"
     setup_claude.backup(CONFIG_TOML)
     if not testo.endswith("\n"):
         testo += "\n"
-    CONFIG_TOML.write_text(testo + BLOCCO.format(cmd=setup_claude.MCP_CMD), "utf-8")
+    CONFIG_TOML.write_text(testo + _blocco(), "utf-8")
     return f"server MCP registrato in {CONFIG_TOML}"
 
 

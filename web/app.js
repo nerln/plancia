@@ -395,13 +395,13 @@ const cartellaCorta = (p) => {
 
 const kilo = (n) => n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1000 ? Math.round(n / 1000) + 'k' : String(n ?? 0);
 
-function toast(msg, bad) {
+function toast(msg, bad, ms) {
   const el = $('#toast');
   el.textContent = msg;
   el.className = 'toast' + (bad ? ' bad' : '');
   el.hidden = false;
   clearTimeout(el._t);
-  el._t = setTimeout(() => { el.hidden = true; }, 2600);
+  el._t = setTimeout(() => { el.hidden = true; }, ms || 2600);
 }
 
 // LOTTO-L4-MEMORIA (correzione del critico, punto "la spia"): route() deve
@@ -839,6 +839,9 @@ async function generaRecap(rigenera) {
     r.lang = lang;
     const d = await api('/api/recap', { method: 'POST', body: { lang, voce: true } });
     r.data = d; r.voce = d.motore || null; r.audio = d.url || null;
+    // senza un motore vocale il server risponde col testo e una nota che dice cosa
+    // installare: "Ascolta" la mostra al posto di un generico "audio non pronto"
+    r.notaVoce = d.nota_voce || null;
     r.inCorso = false;
     if (state.view === 'oggi') await route();
     if (rigenera) toast(T('riepilogo aggiornato'));
@@ -848,9 +851,9 @@ async function generaRecap(rigenera) {
   }
 }
 
-function suona(url) {
+function suona(url, notaVoce) {
   const p = $('#player');
-  if (!url) return toast(T('audio non pronto'), true);
+  if (!url) return notaVoce ? toast(notaVoce, true, 9000) : toast(T('audio non pronto'), true);
   p.src = url;
   p.play().then(() => aggiornaBottoneVoce(true)).catch(() => toast(T('non riesco a riprodurre'), true));
   p.onended = () => aggiornaBottoneVoce(false);
@@ -2394,7 +2397,7 @@ document.addEventListener('click', async (ev) => {
       } else if (name === 'recap-gen') {
         state.recap.data = null; await generaRecap(true);
       } else if (name === 'recap-play') {
-        suona(state.recap && state.recap.audio);
+        suona(state.recap && state.recap.audio, state.recap && state.recap.notaVoce);
       } else if (name === 'recap-stop') {
         const p = $('#player'); p.pause(); p.currentTime = 0; aggiornaBottoneVoce(false);
       } else if (name === 'chiedi-veloce') {
@@ -2613,6 +2616,15 @@ document.addEventListener('keydown', (ev) => {
 
 palette.addEventListener('click', (ev) => { if (ev.target === palette) closePalette(); });
 $('#btn-search').addEventListener('click', openPalette);
+// La scorciatoia di ricerca e' Cmd+K sul Mac e Ctrl+K altrove (il gestore accetta
+// tutte e due): il suggerimento nella barra dice quella giusta.
+(function suggerimentoScorciatoia() {
+  const fuoriMac = !/mac|iphone|ipad/i.test(
+    (navigator.userAgentData && navigator.userAgentData.platform)
+    || navigator.platform || navigator.userAgent || '');
+  const kbd = $('#btn-search kbd');
+  if (kbd && fuoriMac) kbd.textContent = 'Ctrl+K';
+})();
 $('#btn-lang').addEventListener('click', async () => {
   UILANG = UILANG === 'it' ? 'en' : 'it';
   storageSet('plancia-ui', UILANG);

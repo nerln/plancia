@@ -11,7 +11,7 @@ import shutil
 import subprocess
 from datetime import datetime, timedelta, timezone
 
-from . import config, proposte, store
+from . import config, piattaforma, proposte, store
 from .voce_testo import per_voce
 
 SOSTANZA = ("AND ((SELECT COUNT(*) FROM sessions s WHERE s.project_id=p.id) >= 3 OR p.id IN (SELECT project_id FROM project_links WHERE kind IN ('repo','memory')))")
@@ -370,7 +370,8 @@ def claude_text(prompt: str, timeout: int = 120) -> str:
     env.setdefault("CLAUDE_CODE_DISABLE_TERMINAL_TITLE", "1")
     try:
         res = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
-                             cwd=str(config.DATA_DIR), env=env)
+                             cwd=str(config.DATA_DIR), env=env,
+                             **piattaforma.opzioni_figlio())
     except Exception:
         return ""
     if res.returncode != 0:

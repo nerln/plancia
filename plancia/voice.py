@@ -1,8 +1,15 @@
 """Voce: sintesi, riproduzione e ascolto.
 
 Due motori. Voicebox se il suo backend locale risponde, perché è la voce clonata
-e regge bene le lingue. Altrimenti le voci di sistema di macOS, che ci sono
-sempre, non chiedono niente e partono in un decimo di secondo.
+e regge bene le lingue. Altrimenti le voci di sistema, che non chiedono niente e
+partono in un decimo di secondo: `say` su macOS, il sintetizzatore di Windows
+(System.Speech, via PowerShell), `espeak-ng` o `espeak` su Linux. I comandi li
+costruisce `piattaforma`. Dove non c'è niente di tutto questo la voce lo dice
+(`NessunMotoreVoce`) e il resto continua: da CLI e da MCP (`parla`) il testo
+arriva e la risposta dice che la voce manca; dalla dashboard (`api.py`, che
+cattura `NessunMotoreVoce`) il riepilogo, "Chiedi" e Jarvis rispondono col testo,
+con `voce: null` e una `nota_voce` (la dashboard non ha una voce sua nel browser,
+riproduce il file che il server produce, e senza file salta solo l'ascolto).
 """
 
 import hashlib
@@ -14,8 +21,14 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from . import config
+from . import config, piattaforma
 from .voce_testo import per_voce
+
+
+class NessunMotoreVoce(RuntimeError):
+    """Su questa macchina non c'è modo di sintetizzare o riprodurre la voce. Il
+    messaggio dice cosa installare."""
+
 
 VOICEBOX = "http://127.0.0.1:17493"
 # Pocket-TTS di Kyutai, se qualcuno lo tiene acceso. Misurato su questo Mac in
@@ -38,10 +51,6 @@ PREFERITE = {
 _voci = None
 
 
-def _play_cmd():
-    return ["afplay"]
-
-
 # --------------------------------------------------------------------------
 # voci di sistema
 # --------------------------------------------------------------------------
@@ -50,9 +59,24 @@ def voci_sistema() -> list:
     global _voci
     if _voci is None:
         _voci = []
+        if not piattaforma.voce_sistema_presente():
+            # fuori da macOS non c'e' `say -v ?`: si chiede al motore che c'e'
+            # (System.Speech su Windows, espeak su Linux). Se non risponde
+            # l'elenco resta vuoto e `stato()` dice perche'.
+            try:
+                argv = piattaforma.comando_elenco_voci()
+                if argv:
+                    res = piattaforma.esegui(argv, capture_output=True, text=True,
+                                             timeout=20, stdin=subprocess.DEVNULL)
+                    if res.returncode == 0:
+                        _voci.extend(piattaforma.voci_da_elenco(res.stdout))
+            except Exception:
+                pass
+            return _voci
         try:
-            out = subprocess.run(["say", "-v", "?"], capture_output=True, text=True,
-                                 timeout=10).stdout
+            # le voci si elencano con `say -v ?`: c'è solo su macOS
+            out = piattaforma.esegui(["say", "-v", "?"], capture_output=True, text=True,
+                                     timeout=10).stdout
         except Exception:
             out = ""
         for line in out.splitlines():
@@ -66,6 +90,10 @@ def voce_per(lang: str) -> str:
     scelta = config.load_config().get("voce_sistema", {})
     if isinstance(scelta, dict) and scelta.get(lang):
         return scelta[lang]
+    if not piattaforma.voce_sistema_presente():
+        # fuori da macOS non c'è un elenco di voci da cui scegliere: la voce è
+        # quella predefinita del sistema (o quella scritta in voce_sistema)
+        return ""
     nomi = {n for n, _ in voci_sistema()}
     for pref in PREFERITE.get(lang, []):
         if pref in nomi:
@@ -79,9 +107,12 @@ def voce_per(lang: str) -> str:
 def sintesi_say(testo: str, lang: str, out: Path) -> Path:
     voce = voce_per(lang)
     rate = str(config.load_config().get("velocita_voce", 185))
-    subprocess.run(["say", "-v", voce, "-r", rate, "-o", str(out),
-                    "--data-format=LEI16@22050", testo],
-                   capture_output=True, timeout=180, check=True)
+    argv = piattaforma.comando_sintesi(testo, lang, voce, rate, out)
+    if argv is None:
+        raise NessunMotoreVoce(piattaforma.motore_voce_assente())
+    # stdin chiuso: PowerShell erediterebbe altrimenti il canale del server MCP
+    piattaforma.esegui(argv, capture_output=True, timeout=180, check=True,
+                       stdin=subprocess.DEVNULL)
     return out
 
 
@@ -180,7 +211,8 @@ def voicebox_avvia(attesa=25) -> bool:
     if voicebox_vivo():
         return True
     try:
-        subprocess.run(["open", "-a", "Voicebox"], capture_output=True, timeout=15)
+        subprocess.run(["open", "-a", "Voicebox"], capture_output=True, timeout=15,
+                       **piattaforma.opzioni_figlio())
     except Exception:
         return False
     scaduto = time.time() + attesa
@@ -279,7 +311,8 @@ def sintesi(testo: str, lang: str = "it", motore: str = None, cache=True,
         if motore == "voicebox":
             raise RuntimeError("Voicebox non risponde su 127.0.0.1:17493")
         sintesi_say(testo, lang, out)
-        usato = "say"
+        # il nome vero del motore: `say` su macOS, System.Speech o espeak fuori
+        usato = piattaforma.motore_sistema() or "say"
     return {"file": str(out), "motore": usato, "lingua": lang}
 
 
@@ -289,8 +322,12 @@ _riproduzione = None
 def riproduci(path, attendi=False):
     global _riproduzione
     ferma()
-    _riproduzione = subprocess.Popen(_play_cmd() + [str(path)],
-                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    argv = piattaforma.comando_riproduzione(path)
+    if argv is None:
+        raise NessunMotoreVoce(piattaforma.motore_voce_assente())
+    # senza stdin ne' console: vedi `piattaforma.opzioni_processo`
+    _riproduzione = subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                     **piattaforma.opzioni_processo())
     if attendi:
         _riproduzione.wait()
     return _riproduzione.pid
@@ -304,9 +341,40 @@ def ferma():
 
 
 def parla(testo: str, lang: str = "it", motore: str = None, attendi=True) -> dict:
-    info = sintesi(testo, lang, motore)
-    riproduci(info["file"], attendi=attendi)
-    return info
+    """Dice `testo` ad alta voce. Fuori da macOS non solleva mai per colpa della
+    voce: se non c'è un motore, o se c'è ma fallisce o non risponde, torna
+    `{"motore": "nessuno", "file": None, "errore": <cosa è andato storto>}`, così
+    il resto (il testo del riepilogo, l'esito di un comando) arriva lo stesso. Su
+    macOS un `say` che fallisce solleva ancora, come prima.
+
+    Vale per chi chiama `parla` (la CLI e il server MCP). Chi chiama `sintesi`
+    direttamente, come il server web (`api.py`), riceve `NessunMotoreVoce` e lo
+    cattura da sé."""
+    try:
+        info = sintesi(testo, lang, motore)
+        riproduci(info["file"], attendi=attendi)
+        return info
+    except NessunMotoreVoce as exc:
+        # Solo Linux: `spd-say` sa dire una frase ma non scriverla in un file.
+        argv = piattaforma.comando_dire(per_voce(testo, lang), lang, attendi)
+        if argv:
+            try:
+                if attendi:
+                    piattaforma.esegui(argv, capture_output=True, timeout=180,
+                                       stdin=subprocess.DEVNULL)
+                else:
+                    piattaforma.avvia_distaccato(argv)
+                return {"file": None, "motore": "spd-say", "lingua": lang}
+            except Exception:
+                pass
+        return {"file": None, "motore": "nessuno", "lingua": lang, "errore": str(exc)}
+    except (subprocess.SubprocessError, OSError) as exc:
+        # il motore c'e' ma non va (PowerShell che esce con un errore o si pianta,
+        # un lettore audio che manca davvero): fuori da macOS la voce non ferma il resto
+        if piattaforma.nome() == piattaforma.MAC:
+            raise
+        return {"file": None, "motore": "nessuno", "lingua": lang,
+                "errore": "la voce non ha funzionato: %s" % (exc,)}
 
 
 # --------------------------------------------------------------------------
@@ -325,7 +393,8 @@ def trascrivi(path, lang: str = "it") -> str:
         try:
             res = subprocess.run([exe, path, "--language", lang, "--output_format", "txt",
                                   "--output_dir", str(AUDIO_DIR)],
-                                 capture_output=True, text=True, timeout=300)
+                                 capture_output=True, text=True, timeout=300,
+                                 **piattaforma.opzioni_figlio())
             if res.returncode == 0:
                 txt = AUDIO_DIR / (Path(path).stem + ".txt")
                 if txt.exists():
@@ -357,7 +426,7 @@ def _multipart_transcribe(path: str) -> str:
 
 def stato() -> dict:
     cfg = config.load_config()
-    return {
+    fuori = {
         "motore": motore_scelto(),
         "lingua": cfg.get("lingua", "it"),
         "voce_attuale": voce_per(cfg.get("lingua", "it")),
@@ -366,3 +435,16 @@ def stato() -> dict:
         "voci_sistema": len(voci_sistema()),
         "lingue_disponibili": sorted({loc[:2] for _, loc in voci_sistema()}),
     }
+    if piattaforma.nome() != piattaforma.MAC:
+        # Windows e Linux: il motore col suo nome vero, e se l'elenco delle voci
+        # e' vuoto il perche' (senza, il pannello delle voci sembra rotto)
+        fuori["motore_sistema"] = piattaforma.motore_sistema()
+        if fuori["voci_sistema"]:
+            fuori["nota_voci"] = None
+        elif fuori["motore_sistema"] is None:
+            fuori["nota_voci"] = piattaforma.motore_voce_assente()
+        else:
+            fuori["nota_voci"] = ("il motore %s non ha dato un elenco di voci: si usa "
+                                  "la voce predefinita del sistema"
+                                  % fuori["motore_sistema"])
+    return fuori

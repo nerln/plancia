@@ -259,6 +259,24 @@ def prossimi_raggruppati(conn) -> dict:
 # HTTP
 # --------------------------------------------------------------------------
 
+def _sintesi_o_nota(testo, lang, *args, **kwargs):
+    """`(info, None)` con il file audio, oppure `(None, nota)` quando su questa
+    macchina non c'e' un motore vocale (Linux senza espeak-ng, Windows senza
+    PowerShell). La voce e' un di piu': senza, la risposta con il testo parte lo
+    stesso, e `nota` dice cosa installare."""
+    try:
+        return voice.sintesi(testo, lang, *args, **kwargs), None
+    except voice.NessunMotoreVoce as exc:
+        return None, str(exc)
+
+
+def _senza_voce(risposta, nota) -> dict:
+    """Il testo resta, la voce manca: `voce` a null e `nota_voce` col perche'."""
+    risposta["voce"] = None
+    risposta["nota_voce"] = nota
+    return risposta
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "Plancia/1.0"
     protocol_version = "HTTP/1.1"
@@ -558,11 +576,19 @@ class Handler(BaseHTTPRequestHandler):
                 testo = (body.get("testo") or "").strip()
                 if not testo:
                     raise actions.BadInput("serve un testo")
-                info = voice.sintesi(testo, recap.lang_or_default(body.get("lang")),
-                                     body.get("motore"))
+                lang = recap.lang_or_default(body.get("lang"))
+                info, nota = _sintesi_o_nota(testo, lang, body.get("motore"))
+                if info is None:
+                    return self._json(_senza_voce(
+                        {"testo": testo, "lingua": lang}, nota))
                 info["url"] = "/audio/" + Path(info["file"]).name
                 if body.get("riproduci"):
-                    voice.riproduci(info["file"])
+                    try:
+                        voice.riproduci(info["file"])
+                    except voice.NessunMotoreVoce as exc:
+                        # il file c'e' ma il server non ha un lettore audio
+                        info["riprodotto"] = False
+                        info["nota_voce"] = str(exc)
                 return self._json(info)
             if path == "/api/voice/stop" and method == "POST":
                 voice.ferma()
@@ -665,10 +691,14 @@ class Handler(BaseHTTPRequestHandler):
                 nativa = body.get("voce_nativa") and esito["motore"] == "say"
                 if not esito.get("muto") and body.get("voce", True) and \
                         esito.get("risposta") and not nativa:
-                    info = voice.sintesi(esito["risposta"], lang, subito=True)
-                    esito["url"] = "/audio/" + Path(info["file"]).name
-                    esito["file"] = info["file"]
-                    esito["motore"] = info["motore"]
+                    info, nota = _sintesi_o_nota(esito["risposta"], lang, subito=True)
+                    if info is None:
+                        esito["motore"] = None
+                        _senza_voce(esito, nota)
+                    else:
+                        esito["url"] = "/audio/" + Path(info["file"]).name
+                        esito["file"] = info["file"]
+                        esito["motore"] = info["motore"]
                 return self._json(esito)
             if path == "/api/voice/ask" and method == "POST":
                 domanda = (body.get("domanda") or "").strip()
@@ -678,18 +708,24 @@ class Handler(BaseHTTPRequestHandler):
                 risposta = recap.answer(domanda, lang, conn)
                 out = {"domanda": domanda, "risposta": risposta, "lingua": lang}
                 if body.get("voce", True):
-                    info = voice.sintesi(risposta, lang, subito=True)
-                    out["url"] = "/audio/" + Path(info["file"]).name
-                    out["file"] = info["file"]
-                    out["motore"] = info["motore"]
+                    info, nota = _sintesi_o_nota(risposta, lang, subito=True)
+                    if info is None:
+                        _senza_voce(out, nota)
+                    else:
+                        out["url"] = "/audio/" + Path(info["file"]).name
+                        out["file"] = info["file"]
+                        out["motore"] = info["motore"]
                 return self._json(out)
             if path == "/api/recap" and method == "POST":
                 data = recap.build(conn, body.get("day"), body.get("lang"), body.get("engine"))
                 if body.get("voce", True):
-                    info = voice.sintesi(data["testo"], data["lingua"], subito=True)
-                    data["url"] = "/audio/" + Path(info["file"]).name
-                    data["file"] = info["file"]
-                    data["motore"] = info["motore"]
+                    info, nota = _sintesi_o_nota(data["testo"], data["lingua"], subito=True)
+                    if info is None:
+                        _senza_voce(data, nota)
+                    else:
+                        data["url"] = "/audio/" + Path(info["file"]).name
+                        data["file"] = info["file"]
+                        data["motore"] = info["motore"]
                 data.pop("dati", None)
                 return self._json(data)
             if path == "/api/sync" and method == "POST":

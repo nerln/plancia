@@ -10,9 +10,81 @@ from datetime import datetime, timedelta, timezone
 from . import __version__, actions, briefing, config, store
 
 
+#: Quanto si aspetta la risposta di `/api/status` prima di dire che nessuno
+#: risponde: un server di Plancia sotto carico puo' metterci qualche secondo.
+_ATTESA_STATO = 8
+
+
+def _chi_ascolta(port):
+    """Chi risponde su 127.0.0.1:`port`: "plancia" se e' un server di Plancia (lo
+    dice l'intestazione `Server`), "altro" se risponde qualcos'altro, "muto" se la
+    porta e' aperta ma nessuno risponde in tempo (un Plancia sotto carico, per
+    esempio: il timeout e' largo apposta), None se la porta e' libera."""
+    import socket
+    import urllib.error
+    import urllib.request
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=0.5):
+            pass
+    except OSError:
+        return None
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/status",
+                                    timeout=_ATTESA_STATO) as res:
+            intestazioni = res.headers
+    except urllib.error.HTTPError as exc:
+        intestazioni = exc.headers
+    except Exception as exc:
+        motivo = getattr(exc, "reason", exc)
+        if isinstance(exc, (socket.timeout, TimeoutError)) or isinstance(
+                motivo, (socket.timeout, TimeoutError)):
+            return "muto"
+        return "altro"
+    return "plancia" if (intestazioni.get("Server") or "").startswith("Plancia") else "altro"
+
+
+def _porta_occupata(port, chi="altro") -> int:
+    if chi == "muto":
+        print(f"la porta {port} e' occupata, forse da Plancia che non risponde: "
+              "riprova fra un momento, oppure scegli un'altra porta con "
+              "`plancia serve --port N`.", file=sys.stderr)
+        return 1
+    print(f"la porta {port} e' occupata da un altro programma (non e' Plancia): "
+          "scegli un'altra porta con `plancia serve --port N`.", file=sys.stderr)
+    return 1
+
+
+def _gia_in_ascolto(port, apri) -> int:
+    url = f"http://127.0.0.1:{port}"
+    print(f"Plancia e' gia' in ascolto su {url}")
+    if apri:
+        webbrowser.open(url)
+    return 0
+
+
 def cmd_serve(args):
+    """Avvia la dashboard. Se un server di Plancia gira gia' sulla porta (quello
+    dell'avvio automatico) lo dice, e con `--open` apre il browser su quello,
+    invece di cadere con un traceback sulla porta occupata."""
     from . import api
-    api.serve(port=args.port, open_browser=args.open, sync_first=not args.no_sync)
+    port = int(args.port or config.load_config().get("port", config.DEFAULT_PORT))
+    chi = _chi_ascolta(port)
+    if chi == "plancia":
+        return _gia_in_ascolto(port, args.open)
+    if chi in ("altro", "muto"):
+        return _porta_occupata(port, chi)
+    try:
+        api.serve(port=args.port, open_browser=args.open, sync_first=not args.no_sync)
+    except OSError as exc:
+        # la porta si e' occupata fra il controllo e l'avvio (EADDRINUSE: 98 su
+        # Linux, 48 su macOS, WinError 10048 su Windows)
+        import errno
+        if exc.errno in (errno.EADDRINUSE, 10048) or getattr(exc, "winerror", None) == 10048:
+            chi = _chi_ascolta(port)
+            if chi == "plancia":
+                return _gia_in_ascolto(port, args.open)
+            return _porta_occupata(port, chi if chi == "muto" else "altro")
+        raise
 
 
 def cmd_sync(args):
@@ -52,15 +124,38 @@ def cmd_recap(args):
         cmd_notifica("Plancia", data["testo"])
     if args.speak or (args.daily and config.load_config().get("riepilogo_voce")):
         info = voice.parla(data["testo"], data["lingua"], args.voce, attendi=not args.background)
-        print(f"\n[voce: {info['motore']} · {info['file']}]", file=sys.stderr)
+        if info["motore"] == "nessuno":
+            print("\n[voce non disponibile: %s]" % _perche_senza_voce(info), file=sys.stderr)
+        else:
+            print(f"\n[voce: {info['motore']} · {info['file']}]", file=sys.stderr)
+
+
+def _perche_senza_voce(info) -> str:
+    """Perché `voice.parla` non ha detto niente (motore "nessuno"): la frase con
+    cosa installare, non un "[nessuno] None"."""
+    return info.get("errore") or "nessun motore vocale su questa macchina"
+
+
+def _avvisa_se_muto(info):
+    """La risposta e' gia' stampata: se la voce non ha detto niente (nessun motore,
+    o un motore che non ha funzionato) lo si dice su stderr, non si tace."""
+    if info and info.get("motore") == "nessuno":
+        print("\n[voce non disponibile: %s]" % _perche_senza_voce(info), file=sys.stderr)
 
 
 def cmd_notifica(titolo, testo):
+    """Una notifica di sistema (`piattaforma.comando_notifica`). Dove non si sa
+    farne una, e' silenziosa: niente notifica e' meglio di un errore."""
     import subprocess
+    from . import piattaforma
     testo = testo.replace('"', "'")[:220]
-    subprocess.run(["osascript", "-e",
-                    f'display notification "{testo}" with title "{titolo}"'],
-                   capture_output=True, timeout=20)
+    argv = piattaforma.comando_notifica(titolo, testo)
+    if not argv:
+        return
+    try:
+        piattaforma.esegui(argv, capture_output=True, timeout=20, stdin=subprocess.DEVNULL)
+    except Exception:
+        pass
 
 
 def cmd_ask(args):
@@ -69,8 +164,9 @@ def cmd_ask(args):
     risposta = recap.answer(domanda, args.lang)
     print(risposta)
     if args.speak:
-        voice.parla(risposta, recap.lang_or_default(args.lang), args.voce,
-                    attendi=not args.background)
+        info = voice.parla(risposta, recap.lang_or_default(args.lang), args.voce,
+                           attendi=not args.background)
+        _avvisa_se_muto(info)
 
 
 def cmd_jarvis(args):
@@ -81,14 +177,18 @@ def cmd_jarvis(args):
     if esito.get("azione"):
         print(f"  azione: {esito['azione']}")
     if args.speak and not esito.get("muto"):
-        voice.parla(esito["risposta"], esito.get("lingua", "it"), attendi=True)
+        info = voice.parla(esito["risposta"], esito.get("lingua", "it"), attendi=True)
+        _avvisa_se_muto(info)
 
 
 def cmd_say(args):
     from . import recap, voice
     testo = " ".join(args.testo)
     info = voice.parla(testo, recap.lang_or_default(args.lang), args.voce, attendi=True)
-    print(f"[{info['motore']}] {info['file']}")
+    if info["motore"] == "nessuno":
+        print("non ho detto niente: %s" % _perche_senza_voce(info), file=sys.stderr)
+        return 1
+    print(f"[{info['motore']}]" + (f" {info['file']}" if info.get("file") else ""))
 
 
 def cmd_voice(args):
@@ -106,7 +206,11 @@ def cmd_voice(args):
                  "es": "Plancia está lista. Te leo el resumen cuando quieras."}.get(
                      lang, "Plancia is ready.")
         info = voice.parla(frase, lang, args.voce, attendi=True)
-        print(f"[{info['motore']} · {voice.voce_per(lang)}] ok")
+        if info["motore"] == "nessuno":
+            print("prova non riuscita, nessuna voce: %s" % _perche_senza_voce(info),
+                  file=sys.stderr)
+            return 1
+        print(f"[{info['motore']} · {voice.voce_per(lang) or 'voce predefinita'}] ok")
 
 
 def cmd_task(args):
@@ -228,6 +332,11 @@ def cmd_riprendi(args):
             if esito.get("stato") == "viva":
                 print(f"  messaggio (da mettere negli appunti a mano): {esito['messaggio']}")
             else:
+                if esito.get("lanciato") is False:
+                    # non e' partito niente: dirlo, non scrivere "lanciato"
+                    print(f"  non lanciato: {esito.get('errore') or 'nessun terminale'}")
+                    print(f"  da lanciare a mano: {esito.get('riga', '')}")
+                    return 1
                 print(f"  lanciato: {esito.get('riga', '')}")
                 if esito.get("errore"):
                     print(f"  attenzione: {esito['errore']}")
@@ -529,8 +638,12 @@ def cmd_esporta(args):
     print("\nsul telefono: AirDrop questo file, poi aprilo e «Aggiungi a schermata Home».")
     print("vive lì e non chiede niente alla rete. per aggiornarlo, rifallo e rimandalo.")
     if args.apri:
-        import subprocess
-        subprocess.run(["open", "-R", str(percorso)], check=False)
+        # `open -R` su macOS, `os.startfile` su Windows, `xdg-open` su Linux: dove
+        # non si riesce il file c'e' lo stesso, e lo si dice senza un traceback
+        from . import piattaforma
+        aperto, perche = piattaforma.apri_file(percorso)
+        if not aperto:
+            print(f"non sono riuscito ad aprirlo: {perche}", file=sys.stderr)
 
 
 def cmd_init(args):
@@ -552,6 +665,10 @@ def cmd_install(args):
         print("·", line)
     print("\nOra: `plancia sync` e poi `plancia serve --open`.")
     print("Le sessioni di Claude Code già aperte vanno riavviate per vedere i tool plancia_*.")
+    from . import piattaforma
+    if piattaforma.nome() != piattaforma.MAC:
+        print("Su Windows e Linux la dashboard si apre nel browser: "
+              f"http://127.0.0.1:{config.load_config().get('port', config.DEFAULT_PORT)}")
 
 
 def cmd_uninstall(args):
@@ -873,7 +990,7 @@ def build_parser():
 
     s = sub.add_parser("esporta", help="il cervello in un file solo, per il telefono")
     s.add_argument("--dove", help="dove scriverlo (predefinito ~/.plancia/memoria.html)")
-    s.add_argument("--apri", action="store_true", help="mostra il file nel Finder")
+    s.add_argument("--apri", action="store_true", help="mostra il file: nel Finder su macOS, aperto con il programma predefinito su Windows e Linux")
     s.set_defaults(func=cmd_esporta)
 
     s = sub.add_parser("init", help="costruisce la mappa dei progetti dai tuoi dati")

@@ -16,8 +16,10 @@ Qui dentro non si tocca il database: sono funzioni pure, così si possono provar
 senza costruire un archivio. Chi le usa è `ingest`.
 """
 
+import json
 import os
 import re
+import ntpath
 
 from . import config
 
@@ -30,31 +32,87 @@ from . import config
 #: `*.py` e `file.py:42`: quello che resta è la cartella, che è quello che serve.
 _CORPO = r"[^\s'\"`;|&$()<>\\*?{}\[\]:,]*"
 _INIZIO = r"(?:/Users/|/Volumes/)"
-QUOTATO = re.compile(r"""['"](""" + _INIZIO + r"""[^'"]*)['"]""")
-NUDO = re.compile(_INIZIO + _CORPO)
+#: Windows: `C:\Users\x\progetto` o `C:/Users/x/progetto`, su qualsiasi unita'. Nel
+#: corpo il rovescio e' un separatore, non una fuga come nella shell. La lettera
+#: deve aprire un token: all'inizio del comando, dopo uno spazio, una virgoletta,
+#: una parentesi, un `=` o un operatore. Non e' un disco `https://` (la lettera ne
+#: segue un'altra) e non lo e' una lettera con i due punti in mezzo a
+#: un'espressione: `sed 's/a:\/b\/c/x/'`.
+_INIZIO_WIN = r"(?<![^\s'\"`(=;|&<>])[A-Za-z]:[\\/]"
+#: UNC: `\\server\condivisione\...`, con il nome del server e quello della
+#: condivisione. Anche dentro un comando.
+_INIZIO_UNC = r"(?<![\\\w])\\\\(?=[^\s'\"\\/]+[\\/][^\s'\"\\/])"
+_CORPO_WIN = r"[^\s'\"`;|&$()<>*?{}\[\]:,]*"
+QUOTATO = re.compile(r"""['"]((?:""" + _INIZIO + "|" + _INIZIO_WIN + "|" + _INIZIO_UNC
+                     + r""")[^'"]*)['"]""")
+NUDO = re.compile(_INIZIO + _CORPO + "|" + _INIZIO_WIN + _CORPO_WIN
+                  + "|" + _INIZIO_UNC + _CORPO_WIN)
+#: Basta la testa di un percorso di Windows per sapere se un comando ne contiene.
+NUDO_WIN_ANCHE = re.compile(_INIZIO_WIN + "|" + _INIZIO_UNC)
+#: Un percorso assoluto di Windows (lettera e due punti, oppure UNC).
+ASSOLUTO_WIN = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\)")
+#: Un separatore, dell'una o dell'altra famiglia.
+SEPARATORE = re.compile(r"[\\/]")
 #: I glob cominciano a valere dal primo carattere speciale: sopra c'è la cartella.
 GLOB = re.compile(r"[*?\[{]")
 #: Le cartelle usa e getta dei collaudi, che nascono e muoiono ogni giro.
 TEMPORANEA = re.compile(
-    r"^(/private)?/(tmp|var/folders)(/|$)|(^|/)drift-[a-z0-9_]+(/|$)")
+    r"^(/private)?/(tmp|var/folders)(/|$)|(^|[\\/])drift-[a-z0-9_]+([\\/]|$)"
+    r"|[\\/](?i:AppData[\\/]Local[\\/]Temp)([\\/]|$)")
 
 CHIAVI_PERCORSO = ("file_path", "path", "notebook_path")
 CHIAVI_GLOB = ("pattern", "glob")
 
 
+def e_assoluto(valore) -> bool:
+    """Un percorso assoluto POSIX (`/...`) o di Windows (`C:\\...`, `C:/...`, UNC).
+    Si guarda la forma, non il sistema su cui si gira: il transcript di una
+    sessione di Windows si puo' leggere anche altrove."""
+    return isinstance(valore, str) and (
+        valore.startswith("/") or bool(ASSOLUTO_WIN.match(valore)))
+
+
 def _pulisci(percorso: str) -> str:
     percorso = percorso.strip().rstrip(".,;:)]}'\"")
     if len(percorso) > 1:
-        percorso = percorso.rstrip("/")
+        if ASSOLUTO_WIN.match(percorso):
+            # `C:\` e `C:/` sono la radice dell'unita': la barra finale resta
+            resto = percorso.rstrip("\\/")
+            percorso = resto if len(resto) > 2 else percorso[:3]
+        else:
+            percorso = percorso.rstrip("/")
     return percorso
+
+
+def _k(percorso: str) -> str:
+    """Un percorso come si CONFRONTA: normalizzato e, dove il sistema non distingue
+    le maiuscole (Windows), tutto minuscolo con una sola forma di separatore. Su
+    macOS e Linux `normcase` non fa niente: e' `os.path.normpath` di sempre. Si
+    confronta con questo e si restituisce la grafia originale."""
+    return os.path.normcase(os.path.normpath(percorso))
+
+
+def _dirname(percorso: str) -> str:
+    """La cartella che contiene `percorso`, con le regole della famiglia di
+    percorsi a cui appartiene."""
+    if ASSOLUTO_WIN.match(percorso):
+        return ntpath.dirname(percorso)
+    return os.path.dirname(percorso)
+
+
+def _livelli(percorso: str) -> int:
+    """Quanti separatori ha un percorso (`/Users/x/p` ne ha 3, `C:\\Users\\x\\p`
+    pure). Serve a scartare `/Users/x` da solo e simili: non e' ancora un progetto."""
+    return len(SEPARATORE.findall(percorso)) if ASSOLUTO_WIN.match(percorso) \
+        else percorso.count("/")
 
 
 def base_di_glob(valore: str) -> str:
     """La cartella sopra il primo carattere di glob: `/a/b/*.py` → `/a/b`."""
     m = GLOB.search(valore)
     testa = valore[:m.start()] if m else valore
-    if not m and not testa.endswith("/"):
-        testa = os.path.dirname(testa) or testa
+    if not m and not testa.endswith(("/", "\\") if ASSOLUTO_WIN.match(testa) else "/"):
+        testa = _dirname(testa) or testa
     return _pulisci(testa)
 
 
@@ -65,7 +123,8 @@ def percorsi_da_comando(comando: str) -> list:
     spazi, e la radice del Drive si chiama «Il mio Drive». Cercando prima i
     token nudi, quella diventerebbe tre percorsi diversi e nessuno buono.
     """
-    if not comando or "/Users/" not in comando and "/Volumes/" not in comando:
+    if not comando or ("/Users/" not in comando and "/Volumes/" not in comando
+                       and not NUDO_WIN_ANCHE.search(comando)):
         return []
     fuori, resto = [], []
     fine = 0
@@ -76,9 +135,9 @@ def percorsi_da_comando(comando: str) -> list:
     resto.append(comando[fine:])
     for m in NUDO.finditer(" ".join(resto)):
         fuori.append(_pulisci(m.group(0)))
-    # `/Users/eugenionerelli` da solo non è un posto: sotto ai tre livelli non
+    # `/Users/nome` da solo non è un posto: sotto ai tre livelli non
     # c'è ancora nessun progetto.
-    return [p for p in fuori if p.count("/") >= 3]
+    return [p for p in fuori if _livelli(p) >= 3]
 
 
 def percorsi_da_tool_use(blocco: dict) -> list:
@@ -89,13 +148,13 @@ def percorsi_da_tool_use(blocco: dict) -> list:
     fuori = []
     for chiave in CHIAVI_PERCORSO:
         valore = dentro.get(chiave)
-        if isinstance(valore, str) and valore.startswith("/"):
+        if e_assoluto(valore):
             fuori.append(_pulisci(valore))
     for chiave in CHIAVI_GLOB:
         valore = dentro.get(chiave)
-        if isinstance(valore, str) and valore.startswith("/"):
+        if e_assoluto(valore):
             base = base_di_glob(valore)
-            if base.count("/") >= 2:
+            if _livelli(base) >= 2:
                 fuori.append(base)
     comando = dentro.get("command")
     if isinstance(comando, str):
@@ -117,8 +176,8 @@ def radici_generiche(home=None, drive=None) -> set:
         os.path.normpath(os.path.join(home, "dev/siti")),
         os.path.normpath(os.path.join(home, "Documents/Codex")),
         os.path.normpath(str(config.DATA_DIR)),
-        "/Volumes/AppsAndFiles/dev",
     }
+    fuori.update(contenitori_extra())
     if drive:
         fuori.add(os.path.normpath(str(drive)))
         fuori.add(os.path.normpath(os.path.join(str(drive), "Lavoro")))
@@ -126,14 +185,44 @@ def radici_generiche(home=None, drive=None) -> set:
     return fuori
 
 
+def contenitori_extra() -> list:
+    """I contenitori scritti a mano in config.json (chiave `contenitori`, una lista
+    di percorsi): un disco esterno, un'altra cartella dei progetti. Nessun percorso
+    di nessuna macchina sta nel codice. Una chiave scritta male vale come assente."""
+    try:
+        dati = json.loads(config.CONFIG_FILE.read_text("utf-8"))
+    except Exception:
+        return []
+    voci = dati.get("contenitori") if isinstance(dati, dict) else None
+    if not isinstance(voci, list):
+        return []
+    return [os.path.normpath(os.path.expanduser(v)) for v in voci
+            if isinstance(v, str) and v.strip()]
+
+
 #: Le cartelle sotto cui ogni sottocartella immediata è un progetto a sé.
 def contenitori(home=None, drive=None) -> list:
     home = str(home or config.HOME)
     fuori = [os.path.join(home, "dev"), os.path.join(home, "Siti"),
-             os.path.join(home, "dev/siti"), "/Volumes/AppsAndFiles/dev"]
+             os.path.join(home, "dev/siti")]
     if drive:
         fuori += [os.path.join(str(drive), "Lavoro"), os.path.join(str(drive), "Personale")]
+    fuori += contenitori_extra()
     return [os.path.normpath(p) for p in fuori]
+
+
+def contenitori_avviso(home=None, drive=None) -> list:
+    """I contenitori per l'avviso di `bin/plancia-hook` ("questa sessione e' aperta
+    in una cartella contenitore"): quelli di `contenitori()` piu' la radice del
+    Drive, che non e' un progetto e nemmeno la casa di uno. L'hook non importa il
+    pacchetto e ricalcola la stessa lista da solo: una prova li confronta."""
+    fuori = ([os.path.normpath(str(drive))] if drive else []) + contenitori(home, drive)
+    visti, elenco = set(), []
+    for p in fuori:
+        if p not in visti:
+            visti.add(p)
+            elenco.append(p)
+    return elenco
 
 
 def radici_note(conn=None, home=None, drive=None) -> set:
@@ -175,9 +264,11 @@ def radici_note(conn=None, home=None, drive=None) -> set:
             for voce in voci:
                 if voce.is_dir() and not voce.name.startswith("."):
                     fuori.add(os.path.normpath(voce.path))
+    generiche_k = {_k(g) for g in generiche}
+    fuori_sempre_k = [_k(b) for b in fuori_sempre]
     return {r for r in fuori
-            if r and r != os.sep and r not in generiche
-            and not any(r == b or r.startswith(b + os.sep) for b in fuori_sempre)}
+            if r and r != os.sep and _k(r) not in generiche_k
+            and not any(_k(r) == b or _k(r).startswith(b + os.sep) for b in fuori_sempre_k)}
 
 
 # ---------------------------------------------------------------------------
@@ -190,8 +281,10 @@ def categoria(cwd: str, interne=None) -> str:
         return "progetto"
     normale = os.path.normpath(cwd)
     interne = interne if interne is not None else {os.path.normpath(str(config.DATA_DIR))}
+    confronto = _k(normale)
     for base in interne:
-        if base and (normale == base or normale.startswith(base + os.sep)):
+        base = _k(base) if base else base
+        if base and (confronto == base or confronto.startswith(base + os.sep)):
             return "interna"
     if TEMPORANEA.search(normale):
         return "temporanea"
@@ -202,11 +295,22 @@ def radice_di(percorso: str, radici_ordinate) -> str:
     """La radice nota più profonda che contiene questo percorso."""
     if not percorso:
         return None
-    normale = os.path.normpath(percorso)
+    normale = _k(percorso)
     for radice in radici_ordinate:
-        if normale == radice or normale.startswith(radice + os.sep):
+        r = _k(radice)
+        if normale == r or normale.startswith(r + os.sep):
             return radice
     return None
+
+
+def _uniche(radici) -> list:
+    """Le radici normalizzate, una sola per ogni modo di scriverla (dove le
+    maiuscole non contano) e nella grafia della prima incontrata."""
+    viste = {}
+    for r in radici:
+        if r:
+            viste.setdefault(_k(r), os.path.normpath(r))
+    return list(viste.values())
 
 
 def conta(percorsi, radici) -> dict:
@@ -216,7 +320,7 @@ def conta(percorsi, radici) -> dict:
     numero di volte vince quella toccata per prima, che è quasi sempre quella da
     cui si è partiti.
     """
-    ordinate = sorted({os.path.normpath(r) for r in radici if r}, key=len, reverse=True)
+    ordinate = sorted(_uniche(radici), key=len, reverse=True)
     fuori = {}
     for i, percorso in enumerate(percorsi):
         radice = radice_di(percorso, ordinate)
@@ -254,7 +358,7 @@ def decidi(cwd, percorsi, radici, generiche=None, interne=None) -> dict:
     contato) e `categoria`.
     """
     generiche = generiche if generiche is not None else radici_generiche()
-    generiche = {os.path.normpath(g) for g in generiche if g}
+    generiche = {_k(g) for g in generiche if g}
     cwd_n = os.path.normpath(cwd) if cwd else ""
     cat = categoria(cwd_n, interne)
     conteggi = conta(percorsi or [], radici)
@@ -268,9 +372,9 @@ def decidi(cwd, percorsi, radici, generiche=None, interne=None) -> dict:
         esito["da"] = "cwd" if cwd_n else "nessuno"
         return esito
 
-    ordinate = sorted({os.path.normpath(r) for r in radici if r}, key=len, reverse=True)
+    ordinate = sorted(_uniche(radici), key=len, reverse=True)
     cwd_radice = radice_di(cwd_n, ordinate) if cwd_n else None
-    cwd_nota = bool(cwd_radice) and cwd_n not in generiche
+    cwd_nota = bool(cwd_radice) and _k(cwd_n) not in generiche
 
     if not cwd_nota:
         if radice:
@@ -278,7 +382,7 @@ def decidi(cwd, percorsi, radici, generiche=None, interne=None) -> dict:
         return esito
 
     esito["dir"], esito["da"] = cwd_radice, "cwd"
-    if radice and radice != cwd_radice and totale and quante / totale >= SOGLIA_SCAVALCO:
+    if radice and _k(radice) != _k(cwd_radice) and totale and quante / totale >= SOGLIA_SCAVALCO:
         esito["dir"], esito["da"] = radice, "percorsi"
     return esito
 

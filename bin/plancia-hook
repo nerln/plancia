@@ -5,6 +5,7 @@ Claude il briefing già pronto.
 Deve essere veloce e non deve mai fallire: se qualcosa va storto esce zero e
 in silenzio, perché un hook rotto blocca ogni sessione.
 """
+import glob
 import json
 import os
 import re
@@ -23,6 +24,36 @@ MAX_CONTEXT = 2600
 # di chi ha scritto config.json a mano.
 _ID_VALIDO = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+
+
+# Il modulo dei percorsi del sistema (posixpath o ntpath). Le prove lo sostituiscono
+# con ntpath per provare la regola di Windows su un altro sistema.
+_P = os.path
+
+
+def _senza_fine(p):
+    """`p` senza il separatore finale, ma la radice resta la radice ("/", "C:\\")."""
+    if _P.dirname(p) == p:
+        return p
+    return p.rstrip(_P.sep + (_P.altsep or "")) or p
+
+
+def _norma(p):
+    """Un percorso come si confronta: senza separatore finale e, su Windows, con
+    una sola forma di separatore e le maiuscole tutte uguali. Su macOS e Linux e'
+    `p` senza lo slash finale, com'e' sempre stato."""
+    if _P.altsep:
+        p = _P.normcase(_P.normpath(p))
+    return _senza_fine(p)
+
+
+def _dentro(p, base):
+    """`p` e' `base` o sta sotto `base`? Tutti e due gia' passati da `_norma`."""
+    if p == base:
+        return True
+    if _P.dirname(base) == base:  # la radice: tutto quello che comincia cosi'
+        return p.startswith(base)
+    return p.startswith(base + _P.sep)
 
 
 def _cartelle_e_sessioni_escluse():
@@ -91,7 +122,7 @@ def _cartelle_e_sessioni_escluse():
     home = os.path.expanduser("~")
     claude_dir = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(home, ".claude")
     try:
-        protette = [os.path.realpath(p).rstrip("/") or "/" for p in (home, claude_dir, DATA)]
+        protette = [_norma(os.path.realpath(p)) for p in (home, claude_dir, DATA)]
     except Exception:
         return [], set(), False
 
@@ -101,7 +132,7 @@ def _cartelle_e_sessioni_escluse():
             assoluto = os.path.expanduser(c)
             if not os.path.isabs(assoluto):
                 return [], set(), False
-            p = os.path.realpath(assoluto).rstrip("/") or "/"
+            p = _norma(os.path.realpath(assoluto))
         except Exception:
             return [], set(), False
         # esclusi._grafia_vera() controlla solo che ogni componente esista,
@@ -110,9 +141,9 @@ def _cartelle_e_sessioni_escluse():
         # config.json che esclusi.valida() accetterebbe.
         if not os.path.exists(p):
             return [], set(), False
-        if p == "/":
+        if _P.dirname(p) == p:  # la radice ("/", "C:\\") non si esclude
             return [], set(), False
-        if any(p == prot or prot.startswith(p + "/") for prot in protette):
+        if any(_dentro(prot, p) for prot in protette):
             return [], set(), False
         cartelle.append(p)
 
@@ -133,22 +164,51 @@ def _escluso(cwd, session_id, cartelle, sessioni):
     if not cwd or not cartelle:
         return False
     try:
-        p = os.path.realpath(os.path.expanduser(cwd)).rstrip("/") or "/"
+        p = _norma(os.path.realpath(os.path.expanduser(cwd)))
     except Exception:
         return False
-    return any(p == c or p.startswith(c + "/") for c in cartelle)
+    return any(_dentro(p, c) for c in cartelle)
 
 
 # Le cartelle che contengono progetti ma non sono progetti. Una sessione aperta
 # qui dentro lavora a distanza dentro le cartelle figlie senza esserci mai
 # entrata: e' cosi' che si perdono le tracce, ed e' cosi' che il contenitore
 # "Senza progetto" era arrivato a 162 sessioni.
-CONTENITORI = [
-    os.path.expanduser("~/Library/CloudStorage/GoogleDrive-eugenio.nerelli99@gmail.com/Il mio Drive"),
-    os.path.expanduser("~/dev"),
-    os.path.expanduser("~/Siti"),
-    "/Volumes/AppsAndFiles/dev",
-]
+#
+# Nessun percorso scritto a mano: sono calcolati con la stessa regola di
+# plancia/attribuzione.contenitori_avviso() (questo script non importa il
+# pacchetto, quindi la regola vive in due posti; tools/prove/piattaforma-console-
+# hook.py li confronta su una casa finta e fallisce se non sono d'accordo).
+def _contenitori(casa=None):
+    casa = casa or os.path.expanduser("~")
+    fuori = []
+    # ogni cartella di Google Drive ("Il mio Drive" dentro CloudStorage) e le
+    # sue due cartelle di primo livello; `dev`, `Siti`, `dev/siti` sotto casa
+    drive = sorted(glob.glob(os.path.join(
+        casa, "Library", "CloudStorage", "GoogleDrive-*", "Il mio Drive")))
+    if drive:
+        fuori.append(drive[0])
+    fuori += [os.path.join(casa, "dev"), os.path.join(casa, "Siti"),
+              os.path.join(casa, "dev", "siti")]
+    if drive:
+        fuori += [os.path.join(drive[0], "Lavoro"), os.path.join(drive[0], "Personale")]
+    # chi ne ha altri (un disco esterno, un'altra cartella) li scrive in
+    # config.json, chiave "contenitori": una lista di percorsi. Una chiave
+    # scritta male non e' un errore, e' come non averla: e' solo un avviso.
+    try:
+        with open(CONFIG, encoding="utf-8") as fh:
+            extra = json.load(fh).get("contenitori")
+    except Exception:
+        extra = None
+    if isinstance(extra, list):
+        fuori += [os.path.expanduser(c) for c in extra if isinstance(c, str) and c.strip()]
+    visti, elenco = set(), []
+    for c in fuori:
+        n = os.path.normpath(c)
+        if n not in visti:
+            visti.add(n)
+            elenco.append(n)
+    return elenco
 
 
 def ancoraggio(cwd):
@@ -160,7 +220,7 @@ def ancoraggio(cwd):
     """
     if not cwd:
         return ""
-    cwd = cwd.rstrip("/")
+    cwd = _norma(cwd)
 
     import sqlite3
     noti = {}
@@ -177,15 +237,16 @@ def ancoraggio(cwd):
             "where l.kind = 'path'"
         ).fetchall()
         for percorso, chiave in righe:
-            noti[percorso.rstrip("/")] = chiave
+            noti[_norma(percorso)] = chiave
     finally:
         con.close()
 
     # Un contenitore non e' mai la casa di un progetto, per legge della radice:
     # si controlla prima, cosi' un contenitore registrato per sbaglio come
     # percorso di progetto non zittisce l'avviso (e' successo con ~/dev).
-    if cwd in [c.rstrip("/") for c in CONTENITORI]:
-        figli = sorted({v for k, v in noti.items() if k.startswith(cwd + "/")})
+    contenitori = {_norma(c) for c in _contenitori()}
+    if cwd in contenitori:
+        figli = sorted({v for k, v in noti.items() if _dentro(k, cwd) and k != cwd})
         elenco = ("  Progetti registrati qui dentro: " + ", ".join(figli)) if figli else ""
         return (
             "\n\nATTENZIONE: questa sessione e' aperta in una cartella contenitore, "
@@ -202,10 +263,8 @@ def ancoraggio(cwd):
     # La corrispondenza piu' specifica vince: con `~/dev` registrato come
     # percorso di un progetto, `~/dev/stiva` risultava ancorata a quello invece
     # che a stiva. I contenitori non contano mai come percorso di progetto.
-    contenitori = {c.rstrip("/") for c in CONTENITORI}
     candidati = [(percorso, chiave) for percorso, chiave in noti.items()
-                 if percorso not in contenitori
-                 and (cwd == percorso or cwd.startswith(percorso + "/"))]
+                 if percorso not in contenitori and _dentro(cwd, percorso)]
     if candidati:
         percorso, chiave = max(candidati, key=lambda pc: len(pc[0]))
         return f"\n\nSessione ancorata al progetto `{chiave}` ({percorso})."
