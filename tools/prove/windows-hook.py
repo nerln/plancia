@@ -657,6 +657,12 @@ def _prove_la_variabile_non_decide(prova):
         if windows_vero:
             prova("guardiano con PLANCIA_PIATTAFORMA=%s su Windows: resta spento e lo dice" % opposto,
                   avvisa and not _nega(r), r.stdout.decode("utf-8", "replace")[:200])
+            # gemella della seconda prova del ramo POSIX: stesso numero di controlli ovunque
+            prova("guardiano con PLANCIA_PIATTAFORMA=%s su Windows: non scrive il registro dei "
+                  "negati (spento, non nega niente)" % opposto,
+                  not (dati / "guardiano.log").exists() or "negato" not in
+                  (dati / "guardiano.log").read_text("utf-8", "replace"),
+                  str(sorted(p.name for p in dati.iterdir())))
         else:
             prova("guardiano con PLANCIA_PIATTAFORMA=%s su macOS/Linux: nega ancora (bloccante), "
                   "non spento" % opposto,
