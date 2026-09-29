@@ -18,6 +18,21 @@ import shutil
 import sys
 from datetime import datetime, timedelta, timezone
 
+# Sicura (29/09/2026): questo script CANCELLA le tabelle dell'archivio che trova e
+# riscrive config.json. Senza PLANCIA_HOME, o con PLANCIA_HOME sulla cartella dati
+# vera, lavorerebbe sull'archivio di chi lo lancia: e' successo una volta con un
+# `--help`. Si ferma prima di importare Plancia.
+if __name__ == "__main__":
+    _casa = os.environ.get("PLANCIA_HOME", "")
+    _vera = os.path.realpath(os.path.expanduser("~/.plancia"))
+    if (len(sys.argv) > 1 or not _casa
+            or os.path.realpath(os.path.expanduser(_casa)) == _vera):
+        sys.stderr.write(
+            "uso: PLANCIA_HOME=<cartella di prova> python3 tools/demo-data.py\n"
+            "Cancella e riscrive l'archivio in PLANCIA_HOME: senza PLANCIA_HOME, o con\n"
+            "PLANCIA_HOME su ~/.plancia, non parte. Non accetta opzioni.\n")
+        sys.exit(2)
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from plancia import richiamo, slot, store  # noqa: E402
