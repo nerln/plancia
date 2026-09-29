@@ -91,6 +91,10 @@
   --amber: #e8934e;
   --amber-soft: rgba(232, 147, 78, .12);
   --amber-line: rgba(232, 147, 78, .3);
+  /* il crema dello scafo del marchio: quello dell'icona e del favicon
+     (#f4efe6). La fascia dei vetri è --amber, lo stesso ambra dell'icona. Il
+     sito ha un tema solo, scuro, quindi il crema si legge sempre. */
+  --crema: #f4efe6;
   --codex: #8fb8d9;
   --nominal: #5cb87f;
 
@@ -170,6 +174,8 @@ header.barra .wrap { display: flex; align-items: center; gap: var(--s5); height:
 .marchio { display: flex; align-items: center; gap: 10px; text-decoration: none; }
 .marchio .nome { font-family: var(--serif); font-size: 19px; letter-spacing: -.01em; }
 .bussola { width: 22px; height: 22px; flex: none; }
+.bussola .scafo { fill: var(--crema); }
+.bussola .vetri { fill: var(--amber); }
 
 nav.menu { display: flex; gap: var(--s5); margin-left: auto; align-items: center; }
 nav.menu a { color: var(--text-2); text-decoration: none; font-size: var(--t-md); transition: color 140ms; }

@@ -52,6 +52,14 @@ Cosa deve restare vero, e perché:
 - I due favicon (sito e dashboard) e i due marchi accanto al nome portano lo
   stesso segno degli SVG (gli stessi percorsi, carattere per carattere), non
   una copia disegnata a parte.
+- I marchi hanno anche i COLORI dell'icona (LOTTO ICONA-PLANCIA-5): scafo crema
+  (quello del favicon), fascia dei vetri in ambra piena, niente ambra attenuata
+  con opacity per lo scafo (usciva marrone). I colori stanno nei token del CSS
+  (--marchio-scafo e --marchio-vetri nella dashboard, con lo scafo scuro nel tema
+  chiaro dove il crema sparirebbe; --crema e --amber nel sito, che ha il solo tema
+  scuro), non nel markup. Il riquadro scuro del favicon ha un bordo sottile
+  chiaro e poco contrastato, perché su una scheda scura del browser (#111) il
+  blu notte non si distingueva dal fondo.
 """
 
 import json
@@ -258,6 +266,79 @@ def _riquadro_acceso(png, da, a):
                 trovati[2] = x if trovati[2] is None else max(trovati[2], x)
                 trovati[3] = y if trovati[3] is None else max(trovati[3], y)
     return tuple(trovati) if trovati[0] is not None else None
+
+
+def _senza_commenti(css):
+    return re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+
+
+def _blocco_css(css, apertura):
+    """Il testo tra le graffe del primo blocco CSS che comincia con `apertura`
+    (`:root`, `html[data-resolved="light"] {`), commenti tolti. Vuoto se non c'è."""
+    css = _senza_commenti(css)
+    i = css.find(apertura)
+    if i < 0:
+        return ""
+    inizio = css.find("{", i)
+    if inizio < 0:
+        return ""
+    livello = 0
+    for j in range(inizio, len(css)):
+        if css[j] == "{":
+            livello += 1
+        elif css[j] == "}":
+            livello -= 1
+            if livello == 0:
+                return css[inizio + 1:j]
+    return ""
+
+
+def _colore_variabile(blocco, nome):
+    """L'esadecimale (senza #, minuscolo) di `--<nome>: #rrggbb;` dentro un blocco."""
+    m = re.search(r"--%s\s*:\s*#([0-9a-fA-F]{6})\s*;" % re.escape(nome), blocco)
+    return m.group(1).lower() if m else None
+
+
+def _riempimento(css, selettore, blocchi):
+    """Il colore (esadecimale) che la regola `<selettore> { fill: ... }` da' a un
+    elemento, risolvendo `var(--x)` nel primo dei `blocchi` che dichiara --x (il
+    tema chiaro prima, poi :root). None se la regola o la variabile non ci sono."""
+    m = re.search(r"(?<![\w-])%s\s*\{([^}]*)\}" % re.escape(selettore), _senza_commenti(css))
+    if not m:
+        return None
+    f = re.search(r"fill\s*:\s*([^;]+)", m.group(1))
+    if not f:
+        return None
+    valore = f.group(1).strip()
+    v = re.fullmatch(r"var\(--([\w-]+)\)", valore)
+    if v:
+        for blocco in blocchi:
+            colore = _colore_variabile(blocco, v.group(1))
+            if colore:
+                return colore
+        return None
+    h = re.fullmatch(r"#([0-9a-fA-F]{6})", valore)
+    return h.group(1).lower() if h else None
+
+
+def _luminanza(esadecimale):
+    def canale(v):
+        v /= 255
+        return v / 12.92 if v <= 0.03928 else ((v + 0.055) / 1.055) ** 2.4
+    r, g, b = (int(esadecimale[i:i + 2], 16) for i in (0, 2, 4))
+    return 0.2126 * canale(r) + 0.7152 * canale(g) + 0.0722 * canale(b)
+
+
+def _contrasto(a, b):
+    """Rapporto di contrasto WCAG fra due colori esadecimali."""
+    chiaro, scuro = sorted((_luminanza(a), _luminanza(b)), reverse=True)
+    return (chiaro + 0.05) / (scuro + 0.05)
+
+
+def _mescola(sopra, sotto, opacita):
+    """Il colore che si vede di `sopra` a `opacita` su `sotto` (esadecimali)."""
+    return "".join("%02x" % round(opacita * int(sopra[i:i + 2], 16) + (1 - opacita) * int(sotto[i:i + 2], 16))
+                   for i in (0, 2, 4))
 
 
 def _numero_swift(swift, nome):
@@ -589,11 +670,50 @@ def esegui(prova, radice):
               "scale(.03125)" in svg and bool(posizioni) and ingrandito == float(posizioni[0]),
               f"favicon={ingrandito} icon={posizioni}")
 
+        # Il riquadro scuro del favicon ha un bordo chiaro e sottile: su una scheda
+        # scura del browser (#111) il blu notte pieno (#12161f) non si distingueva dal
+        # fondo. Lo stroke sta DENTRO il viewBox (rect inset di metà stroke, largo 32
+        # meno lo stroke), altrimenti il viewBox ne taglierebbe metà.
+        m_rect = re.search(r"<rect\b([^>]*?)/?>", svg)
+        rect = dict(re.findall(r"([\w-]+)='([^']*)'", m_rect.group(1))) if m_rect else {}
+        m_traccia = re.fullmatch(r"%23([0-9a-fA-F]{6})", rect.get("stroke", ""))
+        traccia = m_traccia.group(1).lower() if m_traccia else None
+        m_fondo = re.fullmatch(r"%23([0-9a-fA-F]{6})", rect.get("fill", ""))
+        fondo_rect = m_fondo.group(1).lower() if m_fondo else None
+        try:
+            spessore = float(rect.get("stroke-width", "nan"))
+            opacita = float(rect.get("stroke-opacity", "nan"))
+            x, y, larghezza, altezza = (float(rect.get(k, "nan")) for k in ("x", "y", "width", "height"))
+        except ValueError:
+            spessore = opacita = x = y = larghezza = altezza = float("nan")
+        prova(f"{relativo}: il riquadro del favicon ha un bordo chiaro e sottile (stroke di 1 unità, chiaro, "
+              "a bassa opacità) tutto dentro il viewBox",
+              traccia is not None and _luminanza(traccia) >= 0.6
+              and 1 <= spessore <= 2 and 0.12 <= opacita <= 0.35
+              and abs(x - spessore / 2) < 1e-6 and abs(y - spessore / 2) < 1e-6
+              and abs(larghezza - (32 - spessore)) < 1e-6 and abs(altezza - (32 - spessore)) < 1e-6,
+              f"riquadro={rect}")
+        if traccia and fondo_rect and opacita == opacita:
+            sul_scuro = _mescola(traccia, "111111", opacita)
+            sul_riquadro = _mescola(traccia, fondo_rect, opacita)
+            stacco_scuro = _contrasto(sul_scuro, "111111")
+            stacco_riquadro = _contrasto(sul_riquadro, fondo_rect)
+        else:
+            stacco_scuro = stacco_riquadro = None
+        prova(f"{relativo}: il bordo del favicon stacca dal fondo #111 (contrasto almeno 1,5) senza diventare "
+              "un contorno duro sul riquadro (al più 2,5)",
+              stacco_scuro is not None and stacco_scuro >= 1.5 and stacco_riquadro <= 2.5,
+              f"bordo su #111={stacco_scuro and round(stacco_scuro, 2)} bordo sul riquadro={stacco_riquadro and round(stacco_riquadro, 2)}")
+
     # Il marchio dentro le pagine (accanto al nome) è lo stesso segno del favicon:
     # se resta un segno diverso, l'icona nel Dock e il marchio nella finestra
     # sembrano di due prodotti diversi.
-    for relativo, classe in (("web/index.html", "brand-mark"), ("site/index.html", "bussola")):
-        m = re.search(r'<svg[^>]*class="%s"[^>]*>(.*?)</svg>' % classe, _leggi(radice, relativo), re.S)
+    # Per ognuno: la pagina, la classe del marchio, il suo CSS, e se quel CSS ha un tema
+    # chiaro (la dashboard sì, il sito è solo scuro).
+    for relativo, classe, foglio, con_chiaro in (("web/index.html", "brand-mark", "web/style.css", True),
+                                                 ("site/index.html", "bussola", "site/style.css", False)):
+        pagina = _leggi(radice, relativo)
+        m = re.search(r'<svg[^>]*class="%s"[^>]*>(.*?)</svg>' % classe, pagina, re.S)
         corpo = m.group(1) if m else ""
         prova(f"{relativo}: il marchio accanto al nome (.{classe}) porta i percorsi degli SVG dell'icona",
               bool(corpo) and bool(percorsi_svg) and all(d in corpo for d in percorsi_svg.values())
@@ -618,8 +738,61 @@ def esegui(prova, radice):
             ok_marchio, dettaglio = False, "trasformazione del marchio non riconosciuta"
         prova(f"{relativo}: il segno nel marchio sta dentro la scatola con almeno il 3 per cento di margine per lato, "
               "centrato in orizzontale (la prua non tocca il bordo)", ok_marchio, dettaglio)
-        prova(f"{relativo}: il marchio attenua una parte una volta sola (opacity, senza stroke-opacity)",
-              bool(corpo) and "opacity" in corpo and "stroke-opacity" not in corpo)
+
+        # I colori del marchio sono quelli dell'icona (ICONA-PLANCIA-5): scafo crema,
+        # fascia dei vetri in ambra piena. Prima lo scafo era l'ambra a opacity .62 e
+        # veniva marrone, non crema. I colori si leggono dal favicon (che li ha dall'icona)
+        # e dal CSS, dove stanno come token: nel markup non c'è nessun colore.
+        colori_favicon = re.findall(
+            r"<path[^>]*fill='%23([0-9a-fA-F]{6})'",
+            (re.search(r'<link rel="icon" href="data:image/svg\+xml,([^"]*)">', pagina) or [None, ""])[1])
+        crema = colori_favicon[0].lower() if len(colori_favicon) >= 2 else None
+        ambra = colori_favicon[1].lower() if len(colori_favicon) >= 2 else None
+        stile = _leggi(radice, foglio)
+        tema_scuro = _blocco_css(stile, ":root")
+        tema_chiaro = _blocco_css(stile, 'html[data-resolved="light"] {') if con_chiaro else ""
+        regole = {c: (re.search(r"(?<![\w-])\.%s\s+\.%s\s*\{([^}]*)\}" % (re.escape(classe), c),
+                                _senza_commenti(stile)) or [None, ""])[1]
+                  for c in ("scafo", "vetri")}
+        prova(f"{relativo}: il marchio non attenua lo scafo: niente opacity né stroke-opacity, né nel markup né "
+              "nelle regole dei suoi due pezzi (l'ambra sbiadita usciva marrone)",
+              bool(corpo) and "opacity" not in corpo
+              and all(r and "opacity" not in r for r in regole.values()),
+              f"regole={regole}")
+        prova(f"{relativo}: il marchio ha un pezzo .scafo e un pezzo .vetri (uno solo per classe), con i "
+              "percorsi degli SVG dell'icona (nave e vetri), e nessun colore scritto nel markup",
+              len(re.findall(r'<path class="scafo" d="', corpo)) == 1
+              and len(re.findall(r'<path class="vetri" d="', corpo)) == 1
+              and percorsi_svg.get("nave") is not None and percorsi_svg.get("vetri") is not None
+              and f'<path class="scafo" d="{percorsi_svg["nave"]}"' in corpo
+              and f'<path class="vetri" d="{percorsi_svg["vetri"]}"' in corpo
+              and "fill=" not in corpo and "currentColor" not in corpo)
+        scafo_scuro = _riempimento(stile, f".{classe} .scafo", [tema_scuro])
+        vetri_scuro = _riempimento(stile, f".{classe} .vetri", [tema_scuro])
+        fondo_scuro = _colore_variabile(tema_scuro, "ink-0")
+        prova(f"{relativo}: nel tema scuro lo scafo del marchio è il crema dell'icona (quello del favicon), "
+              "non l'ambra, e si legge sul fondo (contrasto almeno 3)",
+              scafo_scuro is not None and scafo_scuro == crema and scafo_scuro != AMBRA
+              and fondo_scuro is not None and _contrasto(scafo_scuro, fondo_scuro) >= 3,
+              f"scafo={scafo_scuro} crema del favicon={crema} fondo={fondo_scuro}")
+        prova(f"{relativo}: nel tema scuro la fascia dei vetri del marchio è l'ambra piena dell'icona",
+              vetri_scuro is not None and vetri_scuro == AMBRA == ambra,
+              f"vetri={vetri_scuro} ambra del favicon={ambra}")
+        if con_chiaro:
+            # Nel chiaro il crema sparirebbe: lo scafo deve essere un colore che si legge sul
+            # fondo chiaro (contrasto almeno 3 con --ink-0 chiaro, la soglia dei grafici) e non
+            # il crema; la fascia resta l'ambra piena, che sta dentro lo scafo e non sul fondo.
+            scafo_chiaro = _riempimento(stile, f".{classe} .scafo", [tema_chiaro, tema_scuro])
+            vetri_chiaro = _riempimento(stile, f".{classe} .vetri", [tema_chiaro, tema_scuro])
+            fondo_chiaro = _colore_variabile(tema_chiaro, "ink-0")
+            prova(f"{relativo}: nel tema chiaro lo scafo del marchio non è il crema e si legge sul fondo chiaro "
+                  "(contrasto almeno 3 con --ink-0)",
+                  scafo_chiaro is not None and scafo_chiaro != crema and fondo_chiaro is not None
+                  and _contrasto(scafo_chiaro, fondo_chiaro) >= 3,
+                  f"scafo={scafo_chiaro} fondo={fondo_chiaro}")
+            prova(f"{relativo}: nel tema chiaro la fascia dei vetri resta l'ambra piena dell'icona",
+                  vetri_chiaro is not None and vetri_chiaro == AMBRA,
+                  f"vetri={vetri_chiaro}")
 
     misure = _dimensioni_png(radice / "site" / "img" / "icon.png")
     prova("site/img/icon.png è un PNG quadrato di almeno 180 px (per apple-touch-icon)",
