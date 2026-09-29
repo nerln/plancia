@@ -56,6 +56,30 @@ _ORDINE_TASK = (
 )
 
 
+def _batch_non_valido(batch) -> bool:
+    """Un batch vuoto o con virgole/spazi non sarebbe annullabile (vedi
+    `set_parent`)."""
+    return not isinstance(batch, str) or not batch.strip() or "," in batch or \
+        any(c.isspace() for c in batch)
+
+
+def _rifiuto_padre(conn, figlio, padre):
+    """Il motivo per cui `padre` non può fare da padre a `figlio`, o None se
+    va bene. Le stesse regole per `set_parent` e per `riordina_progetto`."""
+    if figlio["id"] == padre["id"]:
+        return "il figlio e il padre sono lo stesso progetto"
+    if padre["auto"]:
+        return f"'{padre['key']}' è un progetto automatico: non può fare da padre"
+    if padre["parent_id"]:
+        return f"'{padre['key']}' ha già un padre: la profondità massima è 1"
+    n_figli = conn.execute(
+        "SELECT COUNT(*) FROM projects WHERE parent_id=?", (figlio["id"],)
+    ).fetchone()[0]
+    if n_figli:
+        return f"'{figlio['key']}' ha già dei figli: diventerebbero nipoti del padre"
+    return None
+
+
 def set_parent(conn, figlio_key, padre_key, batch) -> dict:
     """Assegna un padre a un progetto.
 
@@ -66,8 +90,7 @@ def set_parent(conn, figlio_key, padre_key, batch) -> dict:
     # eventi.leggi(tipo=...) spezza il filtro sulle virgole (eventi.py:131):
     # un batch con la virgola non sarebbe più annullabile per intero, e uno
     # vuoto o fatto di spazi non è distinguibile da "nessun batch".
-    if not isinstance(batch, str) or not batch.strip() or "," in batch or \
-            any(c.isspace() for c in batch):
+    if _batch_non_valido(batch):
         return {"ok": False,
                 "motivo": "batch non valido: vuoto o con virgole/spazi (non sarebbe annullabile)"}
     figlio = _progetto_esatto(conn, figlio_key)
@@ -76,20 +99,9 @@ def set_parent(conn, figlio_key, padre_key, batch) -> dict:
     padre = _progetto_esatto(conn, padre_key)
     if not padre:
         return {"ok": False, "motivo": f"progetto inesistente: {padre_key}"}
-    if figlio["id"] == padre["id"]:
-        return {"ok": False, "motivo": "il figlio e il padre sono lo stesso progetto"}
-    if padre["auto"]:
-        return {"ok": False,
-                "motivo": f"'{padre['key']}' è un progetto automatico: non può fare da padre"}
-    if padre["parent_id"]:
-        return {"ok": False,
-                "motivo": f"'{padre['key']}' ha già un padre: la profondità massima è 1"}
-    n_figli = conn.execute(
-        "SELECT COUNT(*) FROM projects WHERE parent_id=?", (figlio["id"],)
-    ).fetchone()[0]
-    if n_figli:
-        return {"ok": False,
-                "motivo": f"'{figlio['key']}' ha già dei figli: diventerebbero nipoti del padre"}
+    rifiuto = _rifiuto_padre(conn, figlio, padre)
+    if rifiuto:
+        return {"ok": False, "motivo": rifiuto}
 
     prima = figlio["parent_id"]
     dopo = padre["id"]
@@ -102,17 +114,100 @@ def set_parent(conn, figlio_key, padre_key, batch) -> dict:
             "prima": prima, "dopo": dopo}
 
 
-def annulla(conn, batch) -> int:
-    """Rimette il `parent_id` precedente per ogni evento del batch, in
-    ordine inverso rispetto a come sono stati scritti. Torna quante righe
-    ha rimesso.
+# Gli stati che il riordino può scrivere. Sono un sottoinsieme di
+# `actions.PROJECT_STATES` (che ha anche "in pausa" e "idea"): un riordino
+# decide se un progetto è vivo, chiuso bene o messo da parte, non ne
+# mette in pausa uno. Ripetuti qui invece di importare actions.py, che
+# trascinerebbe briefing.py (vedi il commento su `_ORDINE_TASK`).
+STATI_RIORDINO = ("attivo", "archiviato", "concluso")
 
-    Salta le righe che un batch più recente ha già cambiato: se dopo
-    `set_parent(op6, vesuvius, 'vecchio')` arriva `set_parent(op6, delta,
-    'nuovo')`, `annulla('vecchio')` non deve scavalcare 'nuovo' riportando
-    op6 a vesuvius. Si confronta il `parent_id` attuale con il `dopo`
-    registrato in quell'evento: solo se combaciano il valore è ancora quello
-    lasciato da questo batch, ed è sicuro rimettere `prima`.
+
+def con_nota(sommario, nota) -> str:
+    """Il sommario di un progetto con `nota` aggiunta in coda, su una riga a
+    parte. Idempotente: se la riga c'è già, torna il sommario com'era (un
+    secondo `--applica` dello stesso file non la ripete)."""
+    sommario = sommario or ""
+    if not nota or nota in sommario.splitlines():
+        return sommario
+    return f"{sommario}\n{nota}" if sommario else nota
+
+
+def riordina_progetto(conn, figlio_key, batch, padre_key=None, stato=None, nota=None) -> dict:
+    """Cambia in un colpo solo padre, stato e nota (`summary`) di un progetto,
+    con UN evento `padre:<batch>` che porta i valori di prima e di dopo di
+    ognuno: `annulla(batch)` disfa così tutto insieme, campo per campo.
+
+    Tutto o niente: se il padre viene rifiutato, lo stato non cambia. Un
+    valore uguale a quello che c'è già non conta come cambiamento; se nessun
+    campo cambia non si scrive nessun evento (`cambiato: False`).
+    """
+    if _batch_non_valido(batch):
+        return {"ok": False,
+                "motivo": "batch non valido: vuoto o con virgole/spazi (non sarebbe annullabile)"}
+    figlio = _progetto_esatto(conn, figlio_key)
+    if not figlio:
+        return {"ok": False, "motivo": f"progetto inesistente: {figlio_key}"}
+    if stato and stato not in STATI_RIORDINO:
+        return {"ok": False,
+                "motivo": f"stato non valido: '{stato}'. Ammessi: {', '.join(STATI_RIORDINO)}"}
+    parent_prima = figlio["parent_id"]
+    parent_dopo = parent_prima
+    padre = None
+    if padre_key:
+        padre = _progetto_esatto(conn, padre_key)
+        if not padre:
+            return {"ok": False, "motivo": f"progetto inesistente: {padre_key}"}
+        rifiuto = _rifiuto_padre(conn, figlio, padre)
+        if rifiuto:
+            return {"ok": False, "motivo": rifiuto}
+        parent_dopo = padre["id"]
+    stato_prima = figlio["status"]
+    stato_dopo = stato or stato_prima
+    nota_prima = figlio["summary"] or ""
+    nota_dopo = con_nota(nota_prima, nota) if nota else nota_prima
+
+    if (parent_dopo, stato_dopo, nota_dopo) == (parent_prima, stato_prima, nota_prima):
+        return {"ok": True, "cambiato": False, "figlio": figlio["key"],
+                "padre": padre["key"] if padre else None}
+
+    conn.execute(
+        "UPDATE projects SET parent_id=?, status=?, summary=?, updated_at=? WHERE id=?",
+        (parent_dopo, stato_dopo, nota_dopo, store.now(), figlio["id"]))
+    cosa = []
+    if parent_dopo != parent_prima:
+        cosa.append(f"sotto {padre['name']}")
+    if stato_dopo != stato_prima:
+        cosa.append(f"stato {stato_dopo}")
+    if nota_dopo != nota_prima:
+        cosa.append("nota")
+    eventi.scrivi(f"padre:{batch}", f"{figlio['name']}: {', '.join(cosa)}", figlio["key"],
+                  {"batch": batch, "figlio": figlio["key"],
+                   "prima": parent_prima, "dopo": parent_dopo,
+                   "stato_prima": stato_prima, "stato_dopo": stato_dopo,
+                   "nota_prima": nota_prima, "nota_dopo": nota_dopo})
+    conn.commit()
+    return {"ok": True, "cambiato": True, "figlio": figlio["key"],
+            "padre": padre["key"] if padre else None,
+            "prima": parent_prima, "dopo": parent_dopo,
+            "stato_prima": stato_prima, "stato_dopo": stato_dopo}
+
+
+def annulla(conn, batch) -> int:
+    """Rimette i valori di prima per ogni evento del batch, in ordine
+    inverso rispetto a come sono stati scritti. Torna quanti progetti ha
+    toccato.
+
+    Campo per campo, e solo se il campo è ancora quello lasciato da questo
+    batch: se dopo `set_parent(op6, vesuvius, 'vecchio')` arriva
+    `set_parent(op6, delta, 'nuovo')`, `annulla('vecchio')` non deve
+    scavalcare 'nuovo' riportando op6 a vesuvius. Si confronta il valore
+    attuale (`parent_id`, `status`, `summary`) con il `dopo` registrato in
+    quell'evento: solo se combaciano è sicuro rimettere `prima`. Lo stesso
+    vale per lo stato e per la nota di `riordina_progetto`: uno stato
+    cambiato a mano o da un altro batch dopo di questo non viene toccato,
+    anche se il padre invece torna com'era. Gli eventi di prima di
+    `riordina_progetto` non portano stato né nota: per loro si rimette solo
+    il padre, come sempre.
     """
     righe = eventi.leggi(tipo=f"padre:{batch}", limite=100000)
     ripristinati = 0
@@ -125,10 +220,23 @@ def annulla(conn, batch) -> int:
         figlio = _progetto_esatto(conn, figlio_key)
         if not figlio:
             continue
-        if figlio["parent_id"] != dati.get("dopo"):
+        rimesso = {}
+        # Un campo che l'evento non ha cambiato (prima == dopo) non conta
+        # come "rimesso": uno stato cambiato senza toccare il padre non deve
+        # far dire che è tornato anche il padre.
+        if figlio["parent_id"] == dati.get("dopo") and dati.get("prima") != dati.get("dopo"):
+            rimesso["parent_id"] = dati.get("prima")
+        if ("stato_dopo" in dati and figlio["status"] == dati["stato_dopo"]
+                and dati.get("stato_prima") != dati["stato_dopo"]):
+            rimesso["status"] = dati.get("stato_prima")
+        if ("nota_dopo" in dati and (figlio["summary"] or "") == dati["nota_dopo"]
+                and dati.get("nota_prima") != dati["nota_dopo"]):
+            rimesso["summary"] = dati.get("nota_prima") or ""
+        if not rimesso:
             continue
-        conn.execute("UPDATE projects SET parent_id=?, updated_at=? WHERE id=?",
-                     (dati.get("prima"), ts, figlio["id"]))
+        colonne = ", ".join(f"{c}=?" for c in rimesso)
+        conn.execute(f"UPDATE projects SET {colonne}, updated_at=? WHERE id=?",
+                     (*rimesso.values(), ts, figlio["id"]))
         ripristinati += 1
     conn.commit()
     return ripristinati
