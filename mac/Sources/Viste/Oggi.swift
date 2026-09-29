@@ -41,10 +41,14 @@ private struct LancioDaConfermare: Identifiable {
     let taskId: Int?
 }
 
-private struct Esito {
+private struct Esito: Identifiable {
+    let id = UUID()
     let testo: String
     let errore: Bool
 }
+
+/// Dove sta il messaggio dell'ultima azione: sotto l'ultima sezione che si vede.
+private enum PosizionePiede { case riepilogo, prossimi, proposte }
 
 // MARK: - i gruppi di Prossimi
 
@@ -57,6 +61,9 @@ private struct GruppoProssimi: Identifiable {
 /// Sette righe in tutto, poi "Mostra altri".
 private let tettoProssimi = 7
 
+/// La larghezza di lettura della colonna.
+private let larghezzaLettura: CGFloat = 720
+
 // MARK: - la vista
 
 struct VistaOggi: View {
@@ -64,7 +71,7 @@ struct VistaOggi: View {
 
     @State private var mostraTutti = false
     @State private var riepilogoAperto = false
-    @State private var inLettura = false
+    @State private var lettura: Task<Void, Never>?
     @State private var occupate: Set<String> = []
     @State private var esito: Esito?
     @State private var daConfermare: LancioDaConfermare?
@@ -76,6 +83,11 @@ struct VistaOggi: View {
             } else {
                 colonna
             }
+        }
+        .task(id: esito?.id) {
+            guard esito != nil else { return }
+            try? await Task.sleep(nanoseconds: 8_000_000_000)
+            if !Task.isCancelled { esito = nil }
         }
         .confirmationDialog(
             tr("Avviare un lancio in background?", "Start a background run?"),
@@ -95,19 +107,26 @@ struct VistaOggi: View {
 
     // MARK: struttura
 
+    /// La colonna di lettura: i margini laterali portano il contenuto a 720 punti al
+    /// massimo, ma la barra di scorrimento resta sul bordo della finestra.
     private var colonna: some View {
-        Form {
-            if let testo = testoRiepilogo {
-                Section { rigaRiepilogo(testo) }
+        GeometryReader { g in
+            Form {
+                if let testo = testoRiepilogo {
+                    Section {
+                        rigaRiepilogo(testo)
+                    } footer: {
+                        piede(.riepilogo)
+                    }
+                }
+                sezioneProssimi
+                if !archivio.proposte.isEmpty {
+                    sezioneProposte
+                }
             }
-            sezioneProssimi
-            if !archivio.proposte.isEmpty {
-                sezioneProposte
-            }
+            .formStyle(.grouped)
+            .contentMargins(.horizontal, max(0, (g.size.width - larghezzaLettura) / 2), for: .scrollContent)
         }
-        .formStyle(.grouped)
-        .frame(maxWidth: 720)
-        .frame(maxWidth: .infinity)
     }
 
     // MARK: riepilogo
@@ -134,10 +153,18 @@ struct VistaOggi: View {
             .accessibilityLabel(testo)
 
             Button {
-                Task { await leggi() }
+                if let l = lettura {
+                    l.cancel()
+                    Player.shared.stop()
+                } else {
+                    lettura = Task {
+                        await leggi()
+                        lettura = nil
+                    }
+                }
             } label: {
-                Label(inLettura ? tr("Ferma", "Stop") : tr("Leggi", "Read aloud"),
-                      systemImage: inLettura ? "stop.fill" : "speaker.wave.2")
+                Label(lettura != nil ? tr("Ferma", "Stop") : tr("Leggi", "Read aloud"),
+                      systemImage: lettura != nil ? "stop.fill" : "speaker.wave.2")
             }
             .controlSize(.small)
         }
@@ -156,38 +183,52 @@ struct VistaOggi: View {
         return g.filter { !$0.righe.isEmpty }
     }
 
-    private var sezioneProssimi: some View {
+    /// Una sezione per area, con "Prossimi" come titolo sopra la prima: niente righe di
+    /// intestazione dentro il riquadro, ogni area ha il suo.
+    @ViewBuilder private var sezioneProssimi: some View {
         let tutti = gruppi
         let totale = tutti.reduce(0) { $0 + $1.righe.count }
-        var restanti = mostraTutti ? Int.max : tettoProssimi
-        var visibili: [GruppoProssimi] = []
-        for g in tutti where restanti > 0 {
-            let n = min(g.righe.count, restanti)
-            restanti -= n
-            visibili.append(GruppoProssimi(id: g.id, nome: g.nome, righe: Array(g.righe.prefix(n))))
-        }
+        let tetto = mostraTutti ? Int.max : tettoProssimi
+        let visibili = ritaglia(tutti, a: tetto)
         let mostrate = visibili.reduce(0) { $0 + $1.righe.count }
 
-        return Section {
-            if tutti.isEmpty {
+        if tutti.isEmpty {
+            Section {
                 Text(tr("Niente in arrivo", "Nothing coming up")).foregroundStyle(.secondary)
+            } header: {
+                Text(tr("Prossimi", "Up next")).font(.headline)
             }
-            ForEach(visibili) { g in
-                Text(g.nome)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .accessibilityAddTraits(.isHeader)
-                ForEach(g.righe, id: \.identita) { r in rigaProssimo(r) }
-            }
-            if totale > mostrate {
-                Button(tr("Mostra altri \(totale - mostrate)", "Show \(totale - mostrate) more")) {
-                    mostraTutti = true
-                }
-                .buttonStyle(.link)
-            }
-        } header: {
-            Text(tr("Prossimi", "Up next"))
         }
+        ForEach(Array(visibili.enumerated()), id: \.element.id) { i, g in
+            Section {
+                ForEach(g.righe, id: \.identita) { r in rigaProssimo(r) }
+                if i == visibili.count - 1 && totale > mostrate {
+                    Button(tr("Mostra altri \(totale - mostrate)", "Show \(totale - mostrate) more")) {
+                        mostraTutti = true
+                    }
+                    .buttonStyle(.link)
+                }
+            } header: {
+                VStack(alignment: .leading, spacing: 12) {
+                    if i == 0 { Text(tr("Prossimi", "Up next")).font(.headline) }
+                    Text(g.nome).font(.subheadline).foregroundStyle(.secondary)
+                }
+            } footer: {
+                if i == visibili.count - 1 { piede(.prossimi) }
+            }
+        }
+    }
+
+    /// Le prime `n` righe in tutto, area per area.
+    private func ritaglia(_ g: [GruppoProssimi], a n: Int) -> [GruppoProssimi] {
+        var restanti = n
+        var fuori: [GruppoProssimi] = []
+        for gr in g where restanti > 0 {
+            let k = min(gr.righe.count, restanti)
+            restanti -= k
+            fuori.append(GruppoProssimi(id: gr.id, nome: gr.nome, righe: Array(gr.righe.prefix(k))))
+        }
+        return fuori
     }
 
     private func rigaProssimo(_ r: RigaProssimo) -> some View {
@@ -211,6 +252,9 @@ struct VistaOggi: View {
                         .font(.callout)
                         .monospacedDigit()
                         .foregroundStyle(scaduta ? Color.red : Color.secondary)
+                        .accessibilityLabel(scaduta
+                            ? tr("Scaduto il \(Tempo.giorno(s))", "Overdue since \(Tempo.giorno(s))")
+                            : tr("Scade il \(Tempo.giorno(s))", "Due \(Tempo.giorno(s))"))
                 }
                 Image(systemName: "chevron.right")
                     .font(.caption.weight(.semibold))
@@ -243,9 +287,19 @@ struct VistaOggi: View {
         } header: {
             Text(tr("Proposte", "Suggestions"))
         } footer: {
-            if let e = esito {
-                Text(e.testo).foregroundStyle(e.errore ? Color.red : Color.secondary)
-            }
+            piede(.proposte)
+        }
+    }
+
+    private var doveIlPiede: PosizionePiede {
+        if !archivio.proposte.isEmpty { return .proposte }
+        if !gruppi.isEmpty { return .prossimi }
+        return .riepilogo
+    }
+
+    @ViewBuilder private func piede(_ dove: PosizionePiede) -> some View {
+        if dove == doveIlPiede, let e = esito {
+            Text(e.testo).foregroundStyle(e.errore ? Color.red : Color.secondary)
         }
     }
 
@@ -288,18 +342,13 @@ struct VistaOggi: View {
     // MARK: azioni
 
     private func leggi() async {
-        if inLettura {
-            Player.shared.stop()
-            return
-        }
-        inLettura = true
         esito = nil
-        defer { inLettura = false }
         do {
             let r = try await archivio.cliente.scrivi(
                 "POST", "/api/recap",
                 corpo: ["voce": true, "lang": Lingua.condivisa.codice],
                 compartimento: archivio.compartimento, timeout: 120)
+            try Task.checkCancellation()
             if let f = r["file"]?.testo, !f.isEmpty {
                 Player.shared.play(path: f)
             } else if let u = r["url"]?.testo, let url = URL(string: Conf.base + u) {
@@ -313,9 +362,11 @@ struct VistaOggi: View {
                               errore: true)
                 return
             }
-            while Player.shared.isPlaying {
+            while Player.shared.isPlaying && !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 400_000_000)
             }
+        } catch is CancellationError {
+            Player.shared.stop()
         } catch {
             esito = Esito(testo: error.localizedDescription, errore: true)
         }
