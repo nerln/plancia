@@ -1444,18 +1444,17 @@ def _prove_file_del_lotto(prova):
             # su windows `python`, mai `python3`
             and all("python3" not in s["run"] for s in passi
                     if "Windows" in str(s.get("name")) and "run" in s)
-            # quello che non blocca e' solo la suite, e solo su windows: il front,
-            # visto verde su windows al primo giro completo, blocca come gli altri
-            and sorted(s["run"] for s in non_bloccano) == ["python tools/prova.py"]
-            and all(s.get("if") == "runner.os == 'Windows'" for s in non_bloccano))
+            # niente non blocca: la suite intera su windows e' stata vista verde
+            # (run 36635628748) e blocca come il front e la piattaforma
+            and not non_bloccano)
     else:
         ok_ci = ("python tools/prove/piattaforma.py" in yml and "python3 tools/prove/piattaforma.py" in yml
-                 and yml.count("continue-on-error: true") == 1)
-    prova("CI: su windows si lancia `python`; la prova di piattaforma e il front non ammettono rossi, "
-          "la suite intera su windows non blocca", ok_ci)
-    prova("CI: perche' la suite intera non blocca su windows lo scrive (le correzioni del secondo giro non "
-          "sono ancora state viste girare su un Windows vero, e il passo ha un tetto di tempo)",
-          "ancora state viste girare su un Windows vero" in yml and "timeout-minutes" in yml)
+                 and "continue-on-error" not in yml)
+    prova("CI: su windows si lancia `python`; piattaforma, suite intera e front non ammettono rossi "
+          "su nessun sistema", ok_ci)
+    prova("CI: il commento dice su quale giro la suite intera e' stata vista verde su Windows, e il "
+          "passo ha un tetto di tempo",
+          "run 36635628748" in yml and "4118 passate e 0 fallite" in yml and "timeout-minutes" in yml)
 
     for nome, titolo in (("README.md", "## Windows and Linux"), ("README.it.md", "## Windows e Linux")):
         testo = _leggi(nome)
