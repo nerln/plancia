@@ -1524,6 +1524,15 @@ def _simula_windows() -> int:
 
 
 if __name__ == "__main__":
+    # Lanciato da solo (come fa il collaudo di Windows) lo stdout e' nella tabella
+    # della console, cp1252: una riga NO con una freccia o un accento nel
+    # dettaglio alzava UnicodeEncodeError e nascondeva il fallimento vero.
+    # Stesso rimedio di tools/prova.py.
+    for _flusso in (sys.stdout, sys.stderr):
+        try:
+            _flusso.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
     if "--figlio" in sys.argv:
         _figlio()
         sys.exit(0)
