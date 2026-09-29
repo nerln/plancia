@@ -66,6 +66,21 @@ import urllib.request
 from pathlib import Path
 
 RADICE = Path(__file__).resolve().parent.parent.parent
+
+
+def _carica_finti():
+    """`_finti.py` (materiale di supporto, non una prova) sta accanto a questo file."""
+    if "_finti" not in sys.modules:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "_finti", Path(__file__).resolve().parent / "_finti.py")
+        modulo = importlib.util.module_from_spec(spec)
+        sys.modules["_finti"] = modulo
+        spec.loader.exec_module(modulo)
+    return sys.modules["_finti"]
+
+
+_finti = _carica_finti()
 if str(RADICE) not in sys.path:
     sys.path.insert(0, str(RADICE))
 
@@ -124,7 +139,7 @@ def _prova_no_sync(prova, porta_preferita) -> None:
         # HOME/CLAUDE_CONFIG_DIR a cartelle vuote, un sync che partisse per
         # errore non troverebbe niente da indicizzare comunque, ma soprattutto
         # non tocca mai i dati veri di chi lancia la prova.
-        env["HOME"] = str(casa)
+        _finti.casa_finta(env, casa)
         env["CLAUDE_CONFIG_DIR"] = str(casa / "claude-vuota")
         (casa / "claude-vuota").mkdir(parents=True, exist_ok=True)
         # Forza il periodo del ticker a un secondo invece dei minuti veri
@@ -194,7 +209,7 @@ def _prova_contratto_http_no_sync(prova, porta_preferita) -> None:
 
         env = dict(os.environ)
         env["PLANCIA_HOME"] = str(casa)
-        env["HOME"] = str(casa)
+        _finti.casa_finta(env, casa)
         env["CLAUDE_CONFIG_DIR"] = str(casa / "claude-vuota")
         (casa / "claude-vuota").mkdir(parents=True, exist_ok=True)
         env["PLANCIA_TICKER_SECONDI"] = "1"

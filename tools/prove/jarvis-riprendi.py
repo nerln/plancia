@@ -32,6 +32,21 @@ import time
 from pathlib import Path
 
 RADICE = Path(__file__).resolve().parent.parent.parent
+
+
+def _carica_finti():
+    """`_finti.py` (materiale di supporto, non una prova) sta accanto a questo file."""
+    if "_finti" not in sys.modules:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "_finti", Path(__file__).resolve().parent / "_finti.py")
+        modulo = importlib.util.module_from_spec(spec)
+        sys.modules["_finti"] = modulo
+        spec.loader.exec_module(modulo)
+    return sys.modules["_finti"]
+
+
+_finti = _carica_finti()
 if str(RADICE) not in sys.path:
     sys.path.insert(0, str(RADICE))
 
@@ -93,11 +108,8 @@ def _script_claude_finto() -> str:
     global _CARTELLA_CLAUDE_FINTO
     if _CARTELLA_CLAUDE_FINTO is None:
         _CARTELLA_CLAUDE_FINTO = Path(tempfile.mkdtemp(prefix="plancia-prova-claude-finto-jarvis-"))
-    script = _CARTELLA_CLAUDE_FINTO / "claude-finto.sh"
-    if not script.exists():
-        script.write_text("#!/bin/sh\nexit 0\n", "utf-8")
-        script.chmod(0o755)
-    return str(script)
+    return _finti.crea_finto(_CARTELLA_CLAUDE_FINTO, "claude-finto",
+                             "import sys\nsys.exit(0)\n")
 
 
 @contextlib.contextmanager
@@ -149,10 +161,12 @@ def esegui(prova) -> None:
     host_vero = socket.gethostname()
 
     lancio = tmp / "lanciato.txt"
-    lanciatore = tmp / "finto-terminale.sh"
-    lanciatore.write_text(
-        "#!/bin/sh\nprintf '%s' \"$1\" > " + json.dumps(str(lancio)) + "\n", "utf-8")
-    lanciatore.chmod(0o755)
+    # scrive il suo unico argomento su un file (lo stesso programma su ogni sistema)
+    lanciatore = _finti.crea_finto(
+        tmp, "finto-terminale",
+        "import sys\n"
+        f"open({str(lancio)!r}, 'w', encoding='utf-8').write("
+        "sys.argv[1] if len(sys.argv) > 1 else '')\n")
 
     try:
         conn = store.connect()
@@ -232,9 +246,9 @@ def _prova_copia_appunti_fallita(prova, actions, jarvis, conn, host_vero, lancia
                               session_id="sid-jarvis-viva-nocopia",
                               cwd="/tmp/prova-jarvis-viva-nocopia",
                               agent="claude", host=host_vero)
-    agents_json = lanciatore.parent / "agents-viva-nocopia.json"
+    agents_json = Path(lanciatore).parent / "agents-viva-nocopia.json"
     agents_json.write_text(json.dumps([{"sessionId": "sid-jarvis-viva-nocopia"}]), "utf-8")
-    clipboard_rotto = lanciatore.parent / "clipboard-che-non-esiste-xyz"
+    clipboard_rotto = Path(lanciatore).parent / "clipboard-che-non-esiste-xyz"
 
     # La frase di successo ("l'ho copiata/copiato negli appunti") non deve
     # comparire: la risposta corretta parla comunque di appunti, ma per dire
@@ -265,9 +279,8 @@ def _prova_copia_appunti_codice_diverso_da_zero(prova, actions, jarvis, conn, ho
                               agent="claude", host=host_vero)
     agents_json = tmp / "agents-viva-exit1.json"
     agents_json.write_text(json.dumps([{"sessionId": "sid-jarvis-viva-exit1"}]), "utf-8")
-    clipboard_fallisce = tmp / "clipboard-exit1.sh"
-    clipboard_fallisce.write_text("#!/bin/sh\ncat >/dev/null\nexit 1\n", "utf-8")
-    clipboard_fallisce.chmod(0o755)
+    clipboard_fallisce = _finti.crea_finto(
+        tmp, "clipboard-exit1", "import sys\nsys.stdin.read()\nsys.exit(1)\n")
 
     with _ambiente(PLANCIA_AGENTS_JSON=str(agents_json), PLANCIA_CLIPBOARD=str(clipboard_fallisce)):
         r = jarvis._esegui(f"riprendi task {t_viva['id']}", "it", conn)
@@ -292,9 +305,8 @@ def _prova_lancio_in_errore(prova, actions, jarvis, conn, host_vero, tmp) -> Non
     parola italiana "lanciatore"."""
     from plancia import riprendi
 
-    lanciatore_lento = tmp / "terminale-lento.sh"
-    lanciatore_lento.write_text("#!/bin/sh\nsleep 5\n", "utf-8")
-    lanciatore_lento.chmod(0o755)
+    lanciatore_lento = _finti.crea_finto(tmp, "terminale-lento",
+                                         "import time\ntime.sleep(5)\n")
 
     prefissi_attesi = {
         "it": "non sono riuscito a lanciarlo",

@@ -371,7 +371,7 @@ def claude_text(prompt: str, timeout: int = 120) -> str:
     try:
         res = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
                              cwd=str(config.DATA_DIR), env=env,
-                             **piattaforma.opzioni_figlio())
+                             **piattaforma.opzioni_figlio(), **piattaforma.opzioni_utf8())
     except Exception:
         return ""
     if res.returncode != 0:

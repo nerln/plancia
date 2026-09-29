@@ -1261,6 +1261,8 @@ def build_parser():
 
 
 def main(argv=None):
+    from . import piattaforma
+    piattaforma.uscita_utf8()
     args = build_parser().parse_args(argv)
     config.ensure_dirs()
     try:

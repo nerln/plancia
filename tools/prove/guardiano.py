@@ -73,6 +73,21 @@ import time
 from pathlib import Path
 
 RADICE = Path(__file__).resolve().parent.parent.parent
+
+
+def _carica_finti():
+    """`_finti.py` (materiale di supporto, non una prova) sta accanto a questo file."""
+    if "_finti" not in sys.modules:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "_finti", Path(__file__).resolve().parent / "_finti.py")
+        modulo = importlib.util.module_from_spec(spec)
+        sys.modules["_finti"] = modulo
+        spec.loader.exec_module(modulo)
+    return sys.modules["_finti"]
+
+
+_finti = _carica_finti()
 GUARDIANO = RADICE / "bin" / "plancia-guardiano"
 PYTHON = "/usr/bin/python3" if os.path.exists("/usr/bin/python3") else sys.executable
 
@@ -227,9 +242,15 @@ class Ambiente:
 
     # -- chiamare il guardiano --------------------------------------------
     def env(self):
-        e = {"HOME": str(self.home), "PLANCIA_HOME": str(self.dati),
+        e = {"PLANCIA_HOME": str(self.dati),
              "CLAUDE_CONFIG_DIR": str(self.claude),
              "PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "LANG": "C.UTF-8"}
+        # su Windows la casa e' USERPROFILE, e un Python figlio senza SYSTEMROOT non
+        # parte; su macOS e Linux queste due righe tornano `{"HOME": ...}` e basta
+        _finti.casa_finta(e, self.home)
+        if _finti.WIN:
+            e["PATH"] = os.environ.get("PATH", "")
+        _finti.variabili_di_sistema(e)
         return e
 
     def esegui_testo(self, testo, interprete=None, env=None):
@@ -422,13 +443,19 @@ def _prove_nominato(prova, a: Ambiente):
           alfa("Read", {"file_path": "~/.local/bin/qualcosa"}).ammesso)
     prova("1: alfa, /tmp NON e' neutro (un posto per passarsi file): negato",
           alfa("Write", {"file_path": "/tmp/passaggio.txt", "content": "x"}).negato)
-    uid = os.getuid()
+    # la cartella temporanea di Claude Code (`/private/tmp/claude-<uid>`) c'e' solo su
+    # macOS e Linux: su Windows non esiste ne' `os.getuid` ne' quella cartella
+    uid = os.getuid() if hasattr(os, "getuid") else None
     scratch = f"/private/tmp/claude-{uid}/{_codifica(a.alfa1)}/{S_ALFA_LIBERA}/scratchpad/x.txt"
     altro_scratch = f"/private/tmp/claude-{uid}/{_codifica(a.alfa1)}/{S_COMUNE}/scratchpad/x.txt"
     prova("1: alfa, la propria cartella di sessione in /private/tmp/claude-<uid>: ammessa",
-          alfa("Write", {"file_path": scratch, "content": "x"}).ammesso)
+          uid is None or alfa("Write", {"file_path": scratch, "content": "x"}).ammesso,
+          "saltato: su Windows non c'e' ne' os.getuid ne' /private/tmp/claude-<uid>"
+          if uid is None else "")
     prova("1: alfa, la cartella di sessione di un'ALTRA sessione: negata",
-          alfa("Write", {"file_path": altro_scratch, "content": "x"}).negato)
+          uid is None or alfa("Write", {"file_path": altro_scratch, "content": "x"}).negato,
+          "saltato: su Windows non c'e' ne' os.getuid ne' /private/tmp/claude-<uid>"
+          if uid is None else "")
     proj = a.claude / "projects" / _codifica(a.alfa1)
     prova("1: alfa, la propria cartella in ~/.claude/projects (memoria): ammessa",
           alfa("Read", {"file_path": str(proj / "memory" / "MEMORY.md")}).ammesso)
@@ -3248,12 +3275,16 @@ def _prove_permessi_dati(prova, a: Ambiente):
             (a.dati / f).unlink()
         except OSError:
             pass
+    # `chmod 000` su Windows non toglie la lettura (cambia solo l'attributo di sola
+    # lettura): i controlli che dipendono da un file illeggibile non si possono fare li'
+    non_si_puo = "saltato: su Windows chmod 000 non rende illeggibile un file" if _finti.WIN else ""
     os.chmod(a.dati / "config.json", 0)
     try:
         r = a.chiama(innocua)
         prova("permessi: config.json senza permessi (la copia si legge): un avviso "
-              "`systemMessage` a chi non e' negato", r.rc == 0 and "systemMessage" in r.out
-              and "permessi" in r.out, repr(r))
+              "`systemMessage` a chi non e' negato",
+              bool(non_si_puo) or (r.rc == 0 and "systemMessage" in r.out
+                                   and "permessi" in r.out), non_si_puo or repr(r))
         r = a.chiama(lett)
         prova("permessi: ...e l'hook continua a negare con la copia dell'ultima config",
               r.negato, repr(r))
@@ -3269,10 +3300,13 @@ def _prove_permessi_dati(prova, a: Ambiente):
         r = a.chiama(lett)
         prova("permessi: la cartella dei dati con `chmod 000`: l'hook esce 0 ma lo DICE "
               "(`systemMessage` con i permessi), non e' un fail-open muto",
-              r.rc == 0 and "systemMessage" in r.out and "permessi" in r.out, repr(r))
+              bool(non_si_puo) or (r.rc == 0 and "systemMessage" in r.out
+                                   and "permessi" in r.out), non_si_puo or repr(r))
         r2 = a.chiama(lett)
         prova("permessi: ...e lo dice a ogni chiamata finche' non si riparano (la marca "
-              "non si puo' scrivere)", r2.rc == 0 and "systemMessage" in r2.out, repr(r2))
+              "non si puo' scrivere)",
+              bool(non_si_puo) or (r2.rc == 0 and "systemMessage" in r2.out),
+              non_si_puo or repr(r2))
     finally:
         os.chmod(a.dati, 0o755)
     r = a.chiama(lett)

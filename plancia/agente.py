@@ -83,7 +83,7 @@ class Agente:
                 cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL, text=True, bufsize=1,
                 cwd=str(config.DATA_DIR), env=dict(os.environ),
-                **piattaforma.opzioni_figlio())
+                **piattaforma.opzioni_figlio(), **piattaforma.opzioni_utf8())
         except Exception:
             self.proc = None
             return False

@@ -420,7 +420,7 @@ def progetto_per_cartella(conn, cwd: str, keywords: dict, testo: str = ""):
 
     trovato = resolve_path_project(conn, cwd)
     if trovato is None:
-        base = os.path.basename(cwd.rstrip("/")) or cwd
+        base = attribuzione.nome_cartella(cwd) or cwd
         # La chiave può già appartenere a una scheda esistente (vedi il
         # docstring sopra, caso 3): si controlla PRIMA di scrivere qualsiasi
         # cosa. Se esiste già ma non risolveva la cwd (altrimenti saremmo
@@ -918,7 +918,7 @@ def riattribuisci(conn, progress=None) -> dict:
 def run(cmd, timeout=30, cwd=None):
     try:
         res = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, cwd=cwd,
-                             **piattaforma.opzioni_figlio())
+                             **piattaforma.opzioni_figlio(), **piattaforma.opzioni_utf8())
         return res.stdout.strip() if res.returncode == 0 else None
     except Exception:
         return None
@@ -1157,7 +1157,7 @@ def drain_queue(conn, progress=None, escl=None) -> int:
         pid = resolve_path_project(conn, cwd) if cwd else None
         titles = {"SessionStart": "sessione aperta", "SessionEnd": "sessione chiusa"}
         store.add_event(conn, ts, "hook", titles.get(event, event),
-                        os.path.basename(cwd.rstrip("/")), pid, sid, "hook",
+                        attribuzione.nome_cartella(cwd), pid, sid, "hook",
                         dedup=f"hook:{event}:{sid}:{ts}")
         if event == "SessionStart":
             store.set_meta(conn, "live_session", sid)
@@ -1206,7 +1206,7 @@ def attribuisci_commit(conn, progress=None) -> int:
         if not riga and c["local_path"]:
             riga = conn.execute(
                 "SELECT session_id FROM sessions WHERE cwd LIKE ? " + finestra,
-                (c["local_path"].rstrip("/") + "%", c["date"], c["date"])).fetchone()
+                (attribuzione.senza_barra_finale(c["local_path"]) + "%", c["date"], c["date"])).fetchone()
         if riga:
             conn.execute("UPDATE commits SET session_id=? WHERE rowid=?",
                          (riga["session_id"], c["rid"]))

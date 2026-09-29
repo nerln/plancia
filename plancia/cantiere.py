@@ -355,7 +355,8 @@ def _esegui(run_id, agente, scrive, prompt, cwd, log, titolo, progetto, task_id,
             proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                     stderr=subprocess.STDOUT, text=True, bufsize=1,
                                     cwd=cwd, env=dict(os.environ),
-                                    **piattaforma.opzioni_figlio())
+                                    **piattaforma.opzioni_figlio(),
+                                    **piattaforma.opzioni_utf8())
             conn.execute("UPDATE runs SET pid=? WHERE id=?", (proc.pid, run_id))
             conn.commit()
             proc.stdin.write(prompt)

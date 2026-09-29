@@ -1434,17 +1434,18 @@ def _prove_file_del_lotto(prova):
             # su windows `python`, mai `python3`
             and all("python3" not in s["run"] for s in passi
                     if "Windows" in str(s.get("name")) and "run" in s)
-            # quello che non blocca e' solo la suite e il front, e solo su windows
-            and sorted(s["run"] for s in non_bloccano) == ["python tools/prova-front.py",
-                                                           "python tools/prova.py"]
+            # quello che non blocca e' solo la suite, e solo su windows: il front,
+            # visto verde su windows al primo giro completo, blocca come gli altri
+            and sorted(s["run"] for s in non_bloccano) == ["python tools/prova.py"]
             and all(s.get("if") == "runner.os == 'Windows'" for s in non_bloccano))
     else:
         ok_ci = ("python tools/prove/piattaforma.py" in yml and "python3 tools/prove/piattaforma.py" in yml
-                 and yml.count("continue-on-error: true") == 2)
-    prova("CI: su windows si lancia `python`; la prova di piattaforma non ammette rossi, "
-          "la suite intera e il front su windows non bloccano", ok_ci)
-    prova("CI: perche' non bloccano lo scrive (prove SOLO POSIX da portare)",
-          "SOLO POSIX" in yml and "shebang" in yml)
+                 and yml.count("continue-on-error: true") == 1)
+    prova("CI: su windows si lancia `python`; la prova di piattaforma e il front non ammettono rossi, "
+          "la suite intera su windows non blocca", ok_ci)
+    prova("CI: perche' la suite intera non blocca su windows lo scrive (non e' ancora girata fino in "
+          "fondo dopo il porting, e il passo ha un tetto di tempo)",
+          "non e' ancora girata fino in fondo su un Windows vero" in yml and "timeout-minutes" in yml)
 
     for nome, titolo in (("README.md", "## Windows and Linux"), ("README.it.md", "## Windows e Linux")):
         testo = _leggi(nome)

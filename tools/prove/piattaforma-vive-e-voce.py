@@ -326,8 +326,9 @@ def _prove_piccole(prova):
     pyproject = (RADICE / "pyproject.toml").read_text(encoding="utf-8")
     prova("pyproject.toml: requires-python >=3.9 (come README e CI)", 'requires-python = ">=3.9"' in pyproject)
     wf = (RADICE / ".github" / "workflows" / "prova.yml").read_text(encoding="utf-8")
-    prova("il commento del workflow non dice che la prova di piattaforma 'non ammette rossi' mentre non e' mai girata su Windows",
-          "Non ammette rossi su nessun sistema" not in wf and "mai girata su un Windows vero" in wf)
+    prova("il commento del workflow non dice che la prova di piattaforma 'non ammette rossi' senza dire che su Windows e' girata davvero",
+          "Non ammette rossi su nessun sistema" not in wf and "mai girata su un Windows vero" not in wf
+          and "girata al primo giro completo della CI" in wf)
 
 
 def _prove_riprendi_apri_non_lanciato(prova):

@@ -23,6 +23,17 @@ from pathlib import Path
 RADICE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(RADICE))
 
+# Su Windows, con l'uscita rediretta (un file, la CI), Python scrive nella tabella
+# di caratteri del sistema (cp1252): un carattere fuori tabella nel nome di una
+# prova farebbe cadere tutto il collaudo con UnicodeEncodeError, e con gli accenti
+# il registro della CI si legge male. Su macOS e Linux e' gia' UTF-8: non cambia
+# niente.
+for _flusso in (sys.stdout, sys.stderr):
+    try:
+        _flusso.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
 CASA = Path(tempfile.mkdtemp(prefix="plancia-prova-"))
 os.environ["PLANCIA_HOME"] = str(CASA)
 
@@ -405,28 +416,33 @@ def main():
     RADICI = {"/Users/tizio/dev/plancia", "/Users/tizio/dev/paratia",
               DRIVE_FINTO + "/Lavoro/Cowork"}
     GEN = attr.radici_generiche(home=CASA_FINTA, drive=DRIVE_FINTO)
+    # I percorsi finti sono scritti alla POSIX, com'e' in un transcript di Mac. Il
+    # programma li normalizza per come li scrive il sistema su cui gira (su Windows
+    # `/Users/tizio` diventa `\Users\tizio`), quindi si confronta con lo stesso
+    # normalizzatore: su macOS e Linux non cambia niente.
+    _n = os.path.normpath
 
     e = attr.decidi(DRIVE_FINTO, ["/Users/tizio/dev/plancia/a.py"] * 3
                     + ["/Users/tizio/dev/paratia/b.py"], RADICI, GEN)
     prova("da una cartella generica il progetto lo dicono i percorsi",
-          e["dir"] == "/Users/tizio/dev/plancia" and e["da"] == "percorsi"
+          e["dir"] == _n("/Users/tizio/dev/plancia") and e["da"] == "percorsi"
           and e["n"] == 4, str(e))
 
     e = attr.decidi("/Users/tizio/dev/paratia",
                     ["/Users/tizio/dev/plancia/a.py"] * 2
                     + ["/Users/tizio/dev/paratia/b.py"] * 3, RADICI, GEN)
     prova("una cwd che e' gia' un progetto non si scavalca per due file",
-          e["dir"] == "/Users/tizio/dev/paratia" and e["da"] == "cwd", str(e))
+          e["dir"] == _n("/Users/tizio/dev/paratia") and e["da"] == "cwd", str(e))
 
     e = attr.decidi("/Users/tizio/dev/paratia",
                     ["/Users/tizio/dev/plancia/a.py"] * 9
                     + ["/Users/tizio/dev/paratia/b.py"], RADICI, GEN)
     prova("con il 90% dei percorsi altrove la cwd si scavalca",
-          e["dir"] == "/Users/tizio/dev/plancia" and e["da"] == "percorsi", str(e))
+          e["dir"] == _n("/Users/tizio/dev/plancia") and e["da"] == "percorsi", str(e))
 
     e = attr.decidi("/Users/tizio/dev/paratia/lab", [], RADICI, GEN)
     prova("una sottocartella conta come il progetto che la contiene",
-          e["dir"] == "/Users/tizio/dev/paratia" and e["da"] == "cwd", str(e))
+          e["dir"] == _n("/Users/tizio/dev/paratia") and e["da"] == "cwd", str(e))
 
     e = attr.decidi(DRIVE_FINTO, [], RADICI, GEN)
     prova("senza percorsi e senza cartella nota non si inventa niente",
@@ -444,7 +460,7 @@ def main():
     e = attr.decidi(DRIVE_FINTO, ["/Users/tizio/dev/paratia/b.py",
                                   "/Users/tizio/dev/plancia/a.py"], RADICI, GEN)
     prova("a pari merito vince la cartella toccata per prima",
-          e["dir"] == "/Users/tizio/dev/paratia", str(e))
+          e["dir"] == _n("/Users/tizio/dev/paratia"), str(e))
 
     # Le virgolette: la radice del Drive si chiama «Il mio Drive», con gli spazi
     trovati = attr.percorsi_da_comando(
@@ -767,30 +783,77 @@ def main():
     # finora non la controllava nessuno. Fuori restano i due LaunchAgent, che
     # parlano con il launchd vero dell'utente e non si simulano.
     casa = Path(tempfile.mkdtemp(prefix="plancia-casa-"))
+    # Dove sta la casa di un processo lo decide il sistema: su macOS e Linux e' HOME,
+    # su Windows e' USERPROFILE (Path.home() ignora HOME), e il comando `plancia`
+    # sta sotto LOCALAPPDATA. Per fingere una casa si spostano tutte, e si toglie
+    # ogni variabile che riporterebbe alla casa vera (CLAUDE_CONFIG_DIR, CODEX_HOME).
+    ambiente = dict(os.environ, HOME=str(casa), USERPROFILE=str(casa),
+                    HOMEDRIVE=os.path.splitdrive(str(casa))[0],
+                    HOMEPATH=os.path.splitdrive(str(casa))[1] or str(casa),
+                    APPDATA=str(casa / "AppData" / "Roaming"),
+                    LOCALAPPDATA=str(casa / "AppData" / "Local"),
+                    PLANCIA_HOME=str(casa / ".plancia"))
+    for _variabile in ("CLAUDE_CONFIG_DIR", "CODEX_HOME", "XDG_CONFIG_HOME"):
+        ambiente.pop(_variabile, None)
+    # com'era la casa vera prima: dopo, non deve essere cambiata. Si guarda il
+    # contenuto che Plancia scriverebbe (gli hook, il server MCP, le skill, il config di
+    # Codex), non la data dei file: Claude Code riscrive `~/.claude.json` di continuo
+    # per conto suo, e una data che cambia non direbbe niente.
+    def _impronta_casa_vera():
+        def json_di(percorso, chiave):
+            try:
+                dati = json.loads(percorso.read_text("utf-8"))
+            except (OSError, ValueError):
+                return None
+            return json.dumps(dati.get(chiave), sort_keys=True) if isinstance(dati, dict) else None
+
+        def testo_di(percorso):
+            try:
+                return percorso.read_bytes()
+            except OSError:
+                return None
+
+        casa_v = Path.home()
+        return [json_di(casa_v / ".claude" / "settings.json", "hooks"),
+                json_di(casa_v / ".claude.json", "mcpServers"),
+                testo_di(casa_v / ".claude" / "skills" / "plancia" / "SKILL.md"),
+                testo_di(casa_v / ".claude" / "skills" / "riepilogo" / "SKILL.md"),
+                testo_di(casa_v / ".codex" / "config.toml")]
+
+    casa_vera_prima = _impronta_casa_vera()
     codice = (
         "import sys; sys.path.insert(0, %r)\n"
+        "from pathlib import Path\n"
         "from plancia import setup_claude as s, codex\n"
+        "print(Path.home())\n"
         "print(s.install_command()); print(s.install_mcp()); print(codex.registra_mcp())\n"
         "print(s.install_hooks()); print(s.install_skill())\n" % str(RADICE))
-    ambiente = dict(os.environ, HOME=str(casa), PLANCIA_HOME=str(casa / ".plancia"))
     esito = subprocess.run([sys.executable, "-c", codice], capture_output=True, env=ambiente)
     prova("l'installazione da zero non si rompe", esito.returncode == 0,
-          esito.stderr.decode()[-200:])
+          esito.stderr.decode("utf-8", "replace")[-200:])
+    # che la casa del figlio sia quella finta e non la vera: senza questo le prove
+    # qui sotto scriverebbero (e poi cancellerebbero) nella casa di chi le lancia
+    prova("la casa del figlio e' quella finta, non la tua",
+          esito.stdout.decode("utf-8", "replace").splitlines()[:1] == [str(casa)],
+          esito.stdout.decode("utf-8", "replace")[:200])
     prova("scrive le due skill",
           (casa / ".claude/skills/plancia/SKILL.md").exists()
           and (casa / ".claude/skills/riepilogo/SKILL.md").exists())
     prova("mette gli hook", (casa / ".claude/settings.json").exists())
-    prova("mette il comando", (casa / ".local/bin/plancia").exists())
-    prova("non tocca la casa vera", not (Path.home() / ".plancia-finta").exists())
+    from plancia import piattaforma as _pf  # noqa: E402
+    comando = _pf.percorso_comando(casa, ambiente=ambiente)
+    prova("mette il comando", comando.exists() or comando.is_symlink(), str(comando))
+    prova("non tocca la casa vera", _impronta_casa_vera() == casa_vera_prima)
 
     # e disinstallandosi deve andarsene davvero, lasciando i file dell'utente
     codice_via = (
         "import sys, json, shutil, pathlib; sys.path.insert(0, %r)\n"
         "from plancia import setup_claude as s\n"
         "s.remove_hooks(); s.remove_mcp()\n"
+        "from plancia import piattaforma as pf\n"
         "casa = pathlib.Path.home()\n"
-        "l = casa / '.local/bin/plancia'\n"
-        "l.unlink() if l.is_symlink() else None\n"
+        "l = pf.percorso_comando(casa)\n"
+        "l.unlink() if (l.is_symlink() or l.exists()) else None\n"
         "[shutil.rmtree(d) for d in (s.SKILL_DIR, casa / '.claude/skills/riepilogo') if d.exists()]\n"
         # su una macchina senza Claude Code il file non esiste mai: non averlo
         # e non avere il nostro server dentro sono la stessa cosa
@@ -801,9 +864,10 @@ def main():
         % str(RADICE))
     via = subprocess.run([sys.executable, "-c", codice_via], capture_output=True, env=ambiente)
     prova("la disinstallazione non si rompe", via.returncode == 0,
-          via.stderr.decode()[-200:])
-    prova("toglie il server MCP e gli hook", via.stdout.decode().strip() == "[] []",
-          via.stdout.decode().strip())
+          via.stderr.decode("utf-8", "replace")[-200:])
+    prova("toglie il server MCP e gli hook",
+          via.stdout.decode("utf-8", "replace").strip() == "[] []",
+          via.stdout.decode("utf-8", "replace").strip())
     prova("porta via le skill", not (casa / ".claude/skills/plancia").exists())
     prova("lascia al suo posto la configurazione tua",
           (casa / ".claude/settings.json").exists())
@@ -845,9 +909,14 @@ def main():
         riga = proc.stdout.readline()
         return json.loads(riga) if riga.strip() else {}
 
-    server = subprocess.Popen([str(RADICE / "bin" / "plancia-mcp")], stdin=subprocess.PIPE,
+    # Gli script di bin/ si lanciano come li lancia chi li usa: su macOS e Linux da
+    # soli (hanno lo shebang), su Windows con l'interprete davanti (uno script senza
+    # estensione non si esegue: WinError 193). Lo dice `piattaforma.argv_script`.
+    from plancia import piattaforma as _piatt  # noqa: E402
+    server = subprocess.Popen(_piatt.argv_script(RADICE / "bin" / "plancia-mcp"),
+                              stdin=subprocess.PIPE,
                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                              text=True, bufsize=1, env=os.environ)
+                              text=True, encoding="utf-8", bufsize=1, env=os.environ)
     try:
         avvio = mcp_chiama(server, "initialize", {"protocolVersion": "2024-11-05",
                                                   "capabilities": {}, "clientInfo":
@@ -904,13 +973,13 @@ def main():
     coda = casa_hook = Path(tempfile.mkdtemp(prefix="plancia-hook-"))
     amb = dict(os.environ, PLANCIA_HOME=str(casa_hook))
     entrata = b'{"hook_event_name":"SessionStart","session_id":"x","cwd":"/tmp"}'
-    r = subprocess.run([str(RADICE / "bin" / "plancia-hook"), "--prova"],
+    r = subprocess.run(_piatt.argv_script(RADICE / "bin" / "plancia-hook") + ["--prova"],
                        input=entrata, capture_output=True, env=amb)
     prova("l'hook di prova non mette niente in coda",
           not (casa_hook / "queue" / "hooks.jsonl").exists()
           or not (casa_hook / "queue" / "hooks.jsonl").read_text().strip())
     prova("l'hook esce sempre con zero", r.returncode == 0)
-    subprocess.run([str(RADICE / "bin" / "plancia-hook")], input=entrata,
+    subprocess.run(_piatt.argv_script(RADICE / "bin" / "plancia-hook"), input=entrata,
                    capture_output=True, env=amb)
     prova("senza --prova la sessione finisce in coda",
           (casa_hook / "queue" / "hooks.jsonl").read_text().strip().count("SessionStart") == 1)
@@ -943,9 +1012,10 @@ def main():
               costante.lstrip().startswith("---") and "description:" in costante)
 
     # -------------------------------------------------------------------- front
-    esito = subprocess.run([sys.executable, str(RADICE / "tools" / "prova-front.py")],
+    esito = subprocess.run([sys.executable, "-X", "utf8",
+                            str(RADICE / "tools" / "prova-front.py")],
                            capture_output=True)
-    fuori = esito.stdout.decode()
+    fuori = esito.stdout.decode("utf-8", "replace")
     for riga in fuori.splitlines():
         if riga.strip().startswith(("ok ", "NO ")):
             prova(riga.split(None, 1)[1].strip(), riga.strip().startswith("ok"))
@@ -1185,7 +1255,7 @@ def main():
                 modulo = importlib.util.module_from_spec(spec)
                 spec.loader.exec_module(modulo)
                 modulo.esegui(prova)
-            except Exception as errore:  # noqa: BLE001 - un lotto non affossa gli altri
+            except (Exception, SystemExit) as errore:  # noqa: BLE001 - un lotto non affossa gli altri
                 falliti.append(percorso.stem)
                 print(f"  NO   {percorso.stem} (errore nel modulo: {errore})")
 

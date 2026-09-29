@@ -117,6 +117,43 @@ def opzioni_figlio(piatt=None, nt=None) -> dict:
     return {}
 
 
+def opzioni_utf8(piatt=None, nt=None) -> dict:
+    """Le opzioni di `subprocess` per un processo di cui si legge o si scrive TESTO
+    (`text=True`) e che parla UTF-8: `claude`, `codex`, `git`, `gh`.
+
+    Su Windows `text=True` da solo usa la tabella di caratteri del sistema
+    (cp1252): un accento di `claude -p` arriverebbe come `Ã¨`, e un byte che quella
+    tabella non ha (0x81, 0x8D, 0x8F, 0x90, 0x9D) farebbe cadere la lettura con
+    `UnicodeDecodeError`. Il prompt scritto nello stdin di un lancio, allo stesso
+    modo, non passerebbe con un carattere fuori tabella. Si dice UTF-8 (i byte
+    sbagliati diventano un segnaposto invece di un'eccezione). Va sempre insieme a
+    `text=True`: `encoding` da solo accende la modalita' testo, e chi passa byte
+    (gli appunti, la riproduzione) non lo usa. Su macOS e Linux torna `{}`: la
+    chiamata resta identica a quella di sempre."""
+    if _su_windows_vero(piatt, nt):
+        return {"encoding": "utf-8", "errors": "replace"}
+    return {}
+
+
+def uscita_utf8(nt=None, flussi=None) -> None:
+    """Su Windows fa scrivere UTF-8 a `plancia` sul suo stdout e stderr.
+
+    `python bin/plancia ...` lanciato direttamente (senza lo shim `plancia.cmd`, che
+    aggiunge `-X utf8`) scrive nella tabella di caratteri del sistema quando
+    l'uscita e' rediretta: un accento arriva a Claude Code, che legge UTF-8, come
+    `Ã¨`, e un carattere fuori tabella (una freccia) e' una `UnicodeEncodeError`
+    che interrompe il comando a meta'. Con la console vera niente cambia. Sotto
+    `pythonw` (nessuna console) i flussi non ci sono e non si tocca niente. Su macOS
+    e Linux non fa nulla."""
+    if not (os.name == "nt" if nt is None else nt):
+        return
+    for flusso in (flussi if flussi is not None else (sys.stdout, sys.stderr)):
+        try:
+            flusso.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
+
+
 def opzioni_processo(piatt=None, nt=None) -> dict:
     """Le opzioni di `subprocess` per un processo di contorno (PowerShell per la
     voce, la notifica, la riproduzione): senza stdin, che sarebbe quello del
@@ -257,6 +294,12 @@ def esegui(argv, **kwargs):
                 argv, 127, "" if testo else b"", "non eseguito: " + perche)
     for nome, valore in opzioni_figlio().items():
         kwargs.setdefault(nome, valore)
+    if (kwargs.get("text") or kwargs.get("universal_newlines")) and _su_windows_vero():
+        # l'uscita di `schtasks`, `tasklist` e simili e' nella tabella OEM della
+        # console, non in quella ANSI di Python: un byte che la seconda non ha
+        # (una `i` accentata in italiano e' 0x8D) e' una `UnicodeDecodeError`, e
+        # di quel testo interessa solo il messaggio d'errore
+        kwargs.setdefault("errors", "replace")
     return subprocess.run(argv, **kwargs)
 
 

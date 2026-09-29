@@ -40,6 +40,21 @@ import urllib.request
 from pathlib import Path
 
 RADICE = Path(__file__).resolve().parent.parent.parent
+
+
+def _carica_finti():
+    """`_finti.py` (materiale di supporto, non una prova) sta accanto a questo file."""
+    if "_finti" not in sys.modules:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "_finti", Path(__file__).resolve().parent / "_finti.py")
+        modulo = importlib.util.module_from_spec(spec)
+        sys.modules["_finti"] = modulo
+        spec.loader.exec_module(modulo)
+    return sys.modules["_finti"]
+
+
+_finti = _carica_finti()
 if str(RADICE) not in sys.path:
     sys.path.insert(0, str(RADICE))
 
@@ -117,11 +132,8 @@ def _script_claude_finto() -> str:
     global _CARTELLA_CLAUDE_FINTO
     if _CARTELLA_CLAUDE_FINTO is None:
         _CARTELLA_CLAUDE_FINTO = Path(tempfile.mkdtemp(prefix="plancia-prova-claude-finto-"))
-    script = _CARTELLA_CLAUDE_FINTO / "claude-finto.sh"
-    if not script.exists():
-        script.write_text("#!/bin/sh\nexit 0\n", "utf-8")
-        script.chmod(0o755)
-    return str(script)
+    return _finti.crea_finto(_CARTELLA_CLAUDE_FINTO, "claude-finto",
+                             "import sys\nsys.exit(0)\n")
 
 
 @contextlib.contextmanager
@@ -238,11 +250,13 @@ def esegui(prova) -> None:
 
         # --- POST apri su 'persa': comando pronto, niente --resume -----
         lancio = tmp / "lanciato.txt"
-        lanciatore = tmp / "finto-terminale.sh"
-        lanciatore.write_text(
-            "#!/bin/sh\nprintf '%s' \"$1\" > " + json.dumps(str(lancio)) + "\n", "utf-8")
-        lanciatore.chmod(0o755)
-        with _ambiente(PLANCIA_TERMINALE=str(lanciatore)):
+        # scrive il suo unico argomento su un file (lo stesso programma su ogni sistema)
+        lanciatore = _finti.crea_finto(
+            tmp, "finto-terminale",
+            "import sys\n"
+            f"open({str(lancio)!r}, 'w', encoding='utf-8').write("
+            "sys.argv[1] if len(sys.argv) > 1 else '')\n")
+        with _ambiente(PLANCIA_TERMINALE=lanciatore):
             _http(f"/api/riprendi/{t_persa['id']}", "POST", {"apri": True})
         contenuto = lancio.read_text("utf-8") if lancio.exists() else ""
         prova("POST apri su un task persa lancia davvero qualcosa",
@@ -372,14 +386,13 @@ def _prova_apri_errore_timeout(prova, task_id) -> None:
     from plancia import riprendi
 
     tmp = Path(tempfile.mkdtemp(prefix="plancia-prova-apri-timeout-"))
-    lanciatore_lento = tmp / "terminale-lento.sh"
-    lanciatore_lento.write_text("#!/bin/sh\nsleep 5\n", "utf-8")
-    lanciatore_lento.chmod(0o755)
+    lanciatore_lento = _finti.crea_finto(tmp, "terminale-lento",
+                                         "import time\ntime.sleep(5)\n")
 
     vecchio_timeout = riprendi._APRI_TIMEOUT_SECONDI
     riprendi._APRI_TIMEOUT_SECONDI = 0.3
     try:
-        with _ambiente(PLANCIA_TERMINALE=str(lanciatore_lento)):
+        with _ambiente(PLANCIA_TERMINALE=lanciatore_lento):
             r = _http(f"/api/riprendi/{task_id}", "POST", {"apri": True})
     finally:
         riprendi._APRI_TIMEOUT_SECONDI = vecchio_timeout

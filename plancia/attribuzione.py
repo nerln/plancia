@@ -55,9 +55,13 @@ ASSOLUTO_WIN = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\)")
 SEPARATORE = re.compile(r"[\\/]")
 #: I glob cominciano a valere dal primo carattere speciale: sopra c'è la cartella.
 GLOB = re.compile(r"[*?\[{]")
-#: Le cartelle usa e getta dei collaudi, che nascono e muoiono ogni giro.
+#: Le cartelle usa e getta dei collaudi, che nascono e muoiono ogni giro. Il
+#: separatore e' l'uno o l'altro: `categoria` riceve il percorso normalizzato dal
+#: sistema su cui si gira, e su Windows `/private/tmp/x` (il percorso di un
+#: transcript di Mac) diventa `\private\tmp\x`.
 TEMPORANEA = re.compile(
-    r"^(/private)?/(tmp|var/folders)(/|$)|(^|[\\/])drift-[a-z0-9_]+([\\/]|$)"
+    r"^([\\/]private)?[\\/](tmp|var[\\/]folders)([\\/]|$)"
+    r"|(^|[\\/])drift-[a-z0-9_]+([\\/]|$)"
     r"|[\\/](?i:AppData[\\/]Local[\\/]Temp)([\\/]|$)")
 
 CHIAVI_PERCORSO = ("file_path", "path", "notebook_path")
@@ -70,6 +74,36 @@ def e_assoluto(valore) -> bool:
     sessione di Windows si puo' leggere anche altrove."""
     return isinstance(valore, str) and (
         valore.startswith("/") or bool(ASSOLUTO_WIN.match(valore)))
+
+
+def senza_barra_finale(percorso: str) -> str:
+    """Il percorso senza la barra finale: `/a/b/` diventa `/a/b`. Per un percorso di
+    Windows si tolgono anche i rovesci (`C:\\a\\b\\` diventa `C:\\a\\b`), e la
+    radice dell'unita' resta `C:\\`. Un percorso POSIX si tratta com'e' sempre."""
+    if ASSOLUTO_WIN.match(percorso):
+        resto = percorso.rstrip("\\/")
+        return resto if len(resto) > 2 else percorso[:3]
+    return percorso.rstrip("/")
+
+
+def nome_cartella(percorso: str) -> str:
+    """L'ultimo pezzo di un percorso, senza la barra finale: `/a/b/` da' `b`,
+    `C:\\a\\b\\` pure. Con le regole della famiglia di percorsi a cui appartiene."""
+    pulito = senza_barra_finale(percorso)
+    if ASSOLUTO_WIN.match(pulito):
+        return ntpath.basename(pulito)
+    return os.path.basename(pulito)
+
+
+def e_dentro(radice: str, percorso: str) -> bool:
+    """`radice` e' `percorso` o una cartella che lo contiene, sui confini di
+    cartella (`/a/bar` non sta sotto `/a/b`). Per i percorsi di Windows non contano
+    le maiuscole ne' il tipo di barra; per gli altri e' il confronto di sempre."""
+    if ASSOLUTO_WIN.match(radice) or ASSOLUTO_WIN.match(percorso):
+        a = ntpath.normcase(ntpath.normpath(radice))
+        b = ntpath.normcase(ntpath.normpath(percorso))
+        return bool(a) and (b == a or b.startswith(a.rstrip("\\") + "\\"))
+    return bool(radice) and (percorso == radice or percorso.startswith(radice + "/"))
 
 
 def _pulisci(percorso: str) -> str:

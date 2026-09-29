@@ -58,6 +58,21 @@ import urllib.request
 from pathlib import Path
 
 RADICE = Path(__file__).resolve().parent.parent.parent
+
+
+def _carica_finti():
+    """`_finti.py` (materiale di supporto, non una prova) sta accanto a questo file."""
+    if "_finti" not in sys.modules:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "_finti", Path(__file__).resolve().parent / "_finti.py")
+        modulo = importlib.util.module_from_spec(spec)
+        sys.modules["_finti"] = modulo
+        spec.loader.exec_module(modulo)
+    return sys.modules["_finti"]
+
+
+_finti = _carica_finti()
 PYTHON = "/usr/bin/python3" if os.path.exists("/usr/bin/python3") else sys.executable
 
 MARCHI = {"alfa": "QUERCIA", "beta": "SALICE", "predefinito": "FAGGIO"}
@@ -83,13 +98,15 @@ def _ambiente(base: Path) -> dict:
     bin_finto.mkdir(parents=True, exist_ok=True)
     for nome in ("launchctl", "osascript", "schtasks", "systemctl", "crontab",
                  "claude", "codex"):
-        f = bin_finto / nome
-        f.write_text("#!/bin/sh\necho \"$0 $@\" >> '%s'\nexit 1\n" % segnale, "utf-8")
-        f.chmod(0o755)
+        # inerte: si segna la chiamata ed esce 1 (lo stesso programma su ogni sistema)
+        _finti.crea_finto(bin_finto, nome,
+                          "import sys\n"
+                          f"open({str(segnale)!r}, 'a').write(' '.join(sys.argv) + '\\n')\n"
+                          "sys.exit(1)\n")
     env = dict(os.environ)
+    _finti.casa_finta(env, home)
     env.update({
-        "HOME": str(home),
-        "PATH": "%s:/usr/bin:/bin:/usr/sbin:/sbin" % bin_finto,
+        "PATH": _finti.path_con(bin_finto),
         "PLANCIA_HOME": str(base / "dati"),
         "CLAUDE_CONFIG_DIR": str(base / "claude"),
         "CODEX_HOME": str(base / "codex"),
