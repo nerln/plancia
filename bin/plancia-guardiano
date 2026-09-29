@@ -21,8 +21,16 @@ all'utente per qualunque hook (verificato nel binario 2.1.267: schema
 PreToolUse e' dedotto, non visto). `plancia guardiano --stato` la mostra.
 
 Il pacchetto si carica SENZA mettere la radice del checkout ne' `bin/` sul
-`sys.path`: un `json.py` in quelle cartelle non puo' prendere il posto del
-modulo di sistema (e i due percorsi sono anche fra i file protetti).
+`sys.path`, e senza le cartelle di `PYTHONPATH`: un `json.py` in quelle cartelle
+non puo' prendere il posto del modulo di sistema (i due percorsi del checkout sono
+anche fra i file protetti; `PYTHONPATH` e `PLANCIA_HOME` in un `env` di settings
+sono negati da `_controlla_settings`).
+
+Non resta mai appeso e non muore in silenzio: un allarme interno (`_TEMPO_MAX`,
+due secondi) e la cattura di `BaseException` (un `sys.exit(0)` dentro il modulo, un
+`KeyboardInterrupt`) portano allo stesso esito di ogni guasto: uscita 0, riga
+`guardiano-non-parte`, `systemMessage`. Non si prende `os._exit`, ne' un ciclo in
+codice C che non guarda i segnali (dichiarato).
 
 Non installato da questo file: si aggiunge a mano a `settings.json` (matcher
 `*`, evento PreToolUse), prima in `solo-registro`.
@@ -34,10 +42,46 @@ _QUI = os.path.dirname(os.path.abspath(__file__))
 _QUI_REALE = os.path.dirname(os.path.realpath(__file__))
 _RADICE = os.path.dirname(_QUI_REALE)
 # la cartella di questo script e' sys.path[0]: fuori, cosi' un file `.py` messo
-# accanto non ruba il posto a un modulo di sistema
-sys.path[:] = [p for p in sys.path if p not in ("", _QUI, _QUI_REALE)]
+# accanto non ruba il posto a un modulo di sistema. Fuori anche le cartelle di
+# PYTHONPATH: il guardiano usa solo la libreria standard e il proprio pacchetto.
+_DA_TOGLIERE = {"", _QUI, _QUI_REALE}
+for _p in os.environ.get("PYTHONPATH", "").split(os.pathsep):
+    if _p:
+        _DA_TOGLIERE.add(_p)
+        _DA_TOGLIERE.add(os.path.abspath(_p))
+sys.path[:] = [p for p in sys.path if p not in _DA_TOGLIERE]
 
 _DIECI_MINUTI = 600
+# Tempo massimo di una chiamata dell'hook, in secondi. Una chiamata normale ne
+# prende 0.05: oltre, qualcosa e' appeso (un input patologico, un ciclo) e
+# l'hook esce come per ogni guasto invece di bloccare lo strumento.
+_TEMPO_MAX = 2.0
+
+
+class _Scaduto(BaseException):
+    """L'allarme interno: e' una BaseException cosi' nessun `except Exception` del
+    codice analizzato la inghiotte."""
+
+
+def _allarme(signum, frame):
+    raise _Scaduto("tempo massimo di %.0f s superato" % _TEMPO_MAX)
+
+
+def _arma():
+    try:
+        import signal
+        signal.signal(signal.SIGALRM, _allarme)
+        signal.setitimer(signal.ITIMER_REAL, _TEMPO_MAX)
+    except Exception:  # noqa: BLE001 - senza SIGALRM (Windows) si va avanti senza
+        pass
+
+
+def _disarma():
+    try:
+        import signal
+        signal.setitimer(signal.ITIMER_REAL, 0)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _non_parte(exc, sessione):
@@ -67,25 +111,34 @@ def _non_parte(exc, sessione):
                 return
         except OSError:
             pass
-        os.makedirs(dati, exist_ok=True)
-        with open(marca, "w") as f:
-            f.write("")
+        # la cartella dei dati puo' non essere scrivibile (permessi tolti): allora
+        # niente riga ne' marca, ma l'avviso all'utente si stampa lo stesso, a
+        # ogni chiamata
+        try:
+            os.makedirs(dati, exist_ok=True)
+            with open(marca, "w") as f:
+                f.write("")
+        except OSError:
+            pass
         motivo = "guardiano-non-parte: %s: %s" % (type(exc).__name__, str(exc)[:300])
         log = os.path.join(dati, "guardiano.log")
         try:
-            if os.path.getsize(log) > 5 * 1024 * 1024:
-                os.replace(log, log + ".1")
+            try:
+                if os.path.getsize(log) > 5 * 1024 * 1024:
+                    os.replace(log, log + ".1")
+            except OSError:
+                pass
+            riga = {"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                    "modalita": modo, "sessione": sessione, "compartimento": "",
+                    "strumento": "", "bersaglio": "", "motivo": motivo,
+                    "esito": "guardiano-non-parte"}
+            fd = os.open(log, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+            try:
+                os.write(fd, (json.dumps(riga, ensure_ascii=False) + "\n").encode("utf-8"))
+            finally:
+                os.close(fd)
         except OSError:
             pass
-        riga = {"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                "modalita": modo, "sessione": sessione, "compartimento": "",
-                "strumento": "", "bersaglio": "", "motivo": motivo,
-                "esito": "guardiano-non-parte"}
-        fd = os.open(log, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
-        try:
-            os.write(fd, (json.dumps(riga, ensure_ascii=False) + "\n").encode("utf-8"))
-        finally:
-            os.close(fd)
         sys.stdout.write(json.dumps({"systemMessage": (
             "plancia-guardiano non parte (%s: %s): i compartimenti NON sono protetti "
             "in nessuna sessione finche' non si ripara. Vedi `plancia guardiano "
@@ -111,6 +164,7 @@ def _carica():
 _sessione = ""
 try:
     testo = sys.stdin.read()
+    _arma()      # il tempo massimo conta dal momento in cui c'e' qualcosa da decidere
     try:
         import json as _json
         _d = _json.loads(testo)
@@ -120,9 +174,11 @@ try:
         pass
     compartimenti = _carica()
     uscita = compartimenti.hook(testo, compartimenti.percorso_dati())
+    _disarma()
     if uscita:
         sys.stdout.write(uscita)
         sys.stdout.flush()
-except Exception as _exc:  # noqa: BLE001 - un hook globale non rompe una sessione
+except BaseException as _exc:  # noqa: BLE001 - un hook globale non rompe una sessione
+    _disarma()
     _non_parte(_exc, _sessione)
 sys.exit(0)

@@ -605,7 +605,7 @@ git config core.hooksPath .githooks
 ```
 
 Accende il gancio che fa girare `python3 tools/prova.py` prima di ogni push:
-2477 controlli in una ventina di secondi, su un archivio finto che non tocca
+2729 controlli in una ventina di secondi, su un archivio finto che non tocca
 il tuo.
 
 ## Licenza

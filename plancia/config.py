@@ -75,6 +75,14 @@ DEFAULTS = {
     # sola (`~/dev`, `~/Siti`, il Drive). Le legge `attribuzione.contenitori()`
     # e, per l'avviso di sessione, `bin/plancia-hook`.
     "contenitori": [],
+    # Cartelle di CODICE condivise (default: nessuna): tutti i compartimenti le
+    # LEGGONO e ci ESEGUONO (i checkout degli strumenti pubblici, come Plancia e
+    # boa, che una sessione di un compartimento nominato lancia), nessuno ci
+    # SCRIVE fuori dai propri permessi. La cartella dei dati di Plancia
+    # (PLANCIA_HOME) non e' mai condivisa, nemmeno se sta dentro una di queste: una
+    # voce che e' quella cartella o sta dentro viene ignorata (con una nota nel
+    # registro del guardiano).
+    "condivise": [],
 }
 
 

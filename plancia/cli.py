@@ -818,6 +818,8 @@ def cmd_guardiano(args):
         print(f"{st['errore']}: "
               + ("uso l'ultima config valida" if st["usa_copia"]
                  else "nessuna copia valida, solo-registro per tutti"))
+    if st["condivise"]:
+        print(f"cartelle di codice condivise: {st['condivise']}")
     print("compartimenti:")
     if not st["compartimenti"]:
         print("  (nessuno)")
@@ -872,6 +874,25 @@ def cmd_config(args):
                           % (args.valore, ", ".join(MODI)), file=sys.stderr)
                     return 2
                 value = modo
+            elif args.chiave == "condivise":
+                # una lista di cartelle assolute; mai la cartella dei dati (l'hook
+                # la ignorerebbe con una nota: meglio dirlo subito)
+                if not (isinstance(value, list)
+                        and all(isinstance(x, str) and x for x in value)):
+                    print("condivise: serve una lista di cartelle, per esempio "
+                          "'[\"/percorso/della/cartella\"]'", file=sys.stderr)
+                    return 2
+                dati = os.path.realpath(str(config.DATA_DIR))
+                for x in value:
+                    r = os.path.realpath(os.path.expanduser(x))
+                    if not os.path.isabs(os.path.expanduser(x)):
+                        print("condivise: %r non e' una cartella assoluta" % x,
+                              file=sys.stderr)
+                        return 2
+                    if r == dati or r.startswith(dati + os.sep):
+                        print("condivise: la cartella dei dati di Plancia non e' "
+                              "mai condivisa (%r)" % x, file=sys.stderr)
+                        return 2
             cfg[args.chiave] = value
             config.save_config(cfg)
         print(f"{args.chiave} = {cfg.get(args.chiave)}")
