@@ -159,11 +159,14 @@ final class Archivio {
         guard ciclo == nil else { return }
         ciclo = Task { [weak self] in
             while !Task.isCancelled {
-                await self?.aggiorna()
+                await self?.passoDiSottofondo()
                 try? await Task.sleep(nanoseconds: UInt64(ogniSecondi * 1_000_000_000))
             }
         }
     }
+
+    /// Quello che il ciclo fa a ogni giro.
+    func passoDiSottofondo() async { await aggiorna() }
 
     func ferma() {
         ciclo?.cancel()

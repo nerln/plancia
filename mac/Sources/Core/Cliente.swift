@@ -58,10 +58,31 @@ enum ErroreCliente: Error, LocalizedError {
     var eNonRaggiungibile: Bool { if case .nonRaggiungibile = self { return true } else { return false } }
 }
 
+// MARK: - contatori
+
+/// Quante richieste ha fatto il cliente, quanti byte ha scaricato, quante ne ha in volo.
+/// Servono alla misura (Core/Misura.swift) e al diario; costano un lucchetto per richiesta.
+final class ContatoriRete: @unchecked Sendable {
+    private let l = NSLock()
+    private var _richieste = 0, _byte = 0, _inVolo = 0, _picco = 0
+
+    func inizia() {
+        l.lock(); _richieste += 1; _inVolo += 1; _picco = max(_picco, _inVolo); l.unlock()
+    }
+    func finisce(byte: Int) {
+        l.lock(); _inVolo -= 1; _byte += byte; l.unlock()
+    }
+    var richieste: Int { l.lock(); defer { l.unlock() }; return _richieste }
+    var byte: Int { l.lock(); defer { l.unlock() }; return _byte }
+    var inVolo: Int { l.lock(); defer { l.unlock() }; return _inVolo }
+    var picco: Int { l.lock(); defer { l.unlock() }; return _picco }
+}
+
 // MARK: - il cliente
 
 actor Cliente {
     static let condiviso = Cliente()
+    nonisolated static let contatori = ContatoriRete()
 
     private let sessione: URLSession
     private let decodificatore: JSONDecoder
@@ -95,8 +116,12 @@ actor Cliente {
     }
 
     private func esegui(_ req: URLRequest) async throws -> Data {
+        Cliente.contatori.inizia()
+        var scaricati = 0
+        defer { Cliente.contatori.finisce(byte: scaricati) }
         do {
             let (dati, risposta) = try await sessione.data(for: req)
+            scaricati = dati.count
             let codice = (risposta as? HTTPURLResponse)?.statusCode ?? 0
             if !(200..<300).contains(codice) {
                 var messaggio = ""

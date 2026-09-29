@@ -39,7 +39,7 @@ final class DelegatoApp: NSObject, NSApplicationDelegate {
     // MARK: avvio
 
     func applicationWillFinishLaunching(_ n: Notification) {
-        guard !Istantanee.attive else { return }
+        guard !Istantanee.attive, !Misura.attiva else { return }
         // Va agganciato prima che l'app finisca di avviarsi, altrimenti il primo
         // plancia:// si perde.
         NSAppleEventManager.shared().setEventHandler(
@@ -52,6 +52,11 @@ final class DelegatoApp: NSObject, NSApplicationDelegate {
         if Istantanee.attive {
             // Niente server, niente barra dei menu, niente voce: solo la finestra.
             Istantanee.avvia()
+            return
+        }
+        if Misura.attiva {
+            // Niente server, niente barra dei menu, niente voce: la finestra e la misura.
+            Misura.avvia()
             return
         }
         Log.write("avvio, backend su \(Conf.base), token \(Conf.token.isEmpty ? "assente" : "presente")")
