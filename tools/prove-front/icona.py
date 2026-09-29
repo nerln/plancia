@@ -1,81 +1,55 @@
-"""Prove per ICONA: l'icona minimalista in Liquid Glass (docs/lotti/LOTTO-ICONA-2.md
-e, per il disegno del segno, docs/lotti/LOTTO-ICONA-3.md).
+"""Prove per ICONA-LEGNO: l'icona e' un telegrafo d'ordini di macchina su tavole di
+legno di plancia.
 
-Statiche: si leggono i sorgenti (mac/icona/Plancia.icon, mac/makeicon.swift,
-mac/build.sh, i due favicon), niente Xcode, niente build. L'unica eccezione è
-una misura sul disegno del ripiego, che gira solo dove c'è `swift` (macOS con
-gli strumenti da riga di comando). La funzione pubblica è `esegui(prova, radice)`,
+Sono prove statiche sui sorgenti (mac/icona/Plancia.icon, mac/build.sh, le pagine e i
+loro CSS); dove c'e' l'attrezzatura (Pillow, ictool, actool, sips e iconutil) misurano
+anche la cosa vera, e dove manca la prova resta nell'elenco e passa dicendo che non
+era verificabile: il numero di prove non cambia da un Mac all'altro (il README lo
+dichiara e tools/prova.py lo controlla). La funzione pubblica e' `esegui(prova, radice)`,
 la forma di tools/prova-front.py (vedi tools/prove-front/README.md).
 
-Le prove valgono per QUALUNQUE segno, non per uno in particolare: il primo giro
-disegnava un ago di bussola, il secondo la plancia di una nave a più pezzi, il
-terzo (docs/lotti/LOTTO-ICONA-3.md) la stessa nave in una sagoma sola; un quarto
-potrà essere altro, e le soglie di forma qui sotto sono scelte di design da
-riaprire se il segno cambia davvero. Il contratto tra i due file che disegnano è questo: gli SVG degli
-strati sono fatti di percorsi M, L, Q, Z, un sottopercorso per forma, e
-mac/makeicon.swift dichiara le stesse forme come
-`let <nome> = Forma(punti: [CGPoint(x: .., y: ..), ...], raggio: ..)`, con la
-regola dell'arrotondamento scritta nel suo commento (dal vertice si va verso i
-due vicini per `raggio`, al più metà lato, e si gira con una quadratica che ha
-il vertice per punto di controllo). Qui si ricalcolano i percorsi da quelle
-dichiarazioni e si confrontano coi sottopercorsi degli SVG, in un verso o
-nell'altro (un buco ha il verso opposto).
+Le prove valgono per QUALUNQUE icona fatta cosi', non per un disegno in particolare.
+Cosa deve restare vero, e perche':
 
-Cosa deve restare vero, e perché:
-
-- L'icona ha una sorgente vera: un documento di Icon Composer (icon.json e gli
-  strati SVG che nomina, tutti presenti), ambra di Plancia come accento, un
-  segno solo, senza testo e senza gradienti dentro gli strati (il vetro lo
-  mette il sistema, non l'SVG), al massimo due strati di vetro.
-- Il ripiego all'icns c'è ed è nell'altro ramo di un `if`: un Mac senza Xcode 26+
-  (o con un actool che rifiuta il .icon) deve continuare a produrre un'app con
-  icona. Senza questa prova qualcuno può togliere `iconutil` e l'app, su quel
-  Mac, resta senza icona senza che niente diventi rosso.
+- L'icona ha una sorgente vera: un documento di Icon Composer (icon.json) i cui strati
+  sono PNG da 1024 con alfa, tutti presenti, senza file orfani in Assets/. Il legno e'
+  il fondo e non chiede il vetro; ottone, quadrante e leva si'. Il tema scuro ha due
+  strati alternati con hidden-specializations (ictool non legge image-name-specializations:
+  provato).
+- Gli strati sono procedurali e si rifanno da mac/icona/genera_strati.py (seme fisso),
+  non si ritoccano a mano: il generatore scrive gli stessi file che il documento nomina.
+- Il ripiego e' una resa: mac/icona/Plancia-1024.png e' quello che ictool disegna dal
+  .icon, con il corpo da 824 px al centro della tela da 1024 (come le icone di macOS).
+  build.sh, dove actool non compila il .icon, costruisce l'iconset da quella PNG con
+  sips e iconutil: stessa icona per costruzione, senza un secondo disegno da tenere
+  allineato. Dove c'e' ictool si confronta pixel per pixel col .icon.
 - Le chiavi dell'icona nel manifesto sono coerenti con i file prodotti:
-  CFBundleIconName solo dove si copia Assets.car (altrimenti punterebbe a un
-  catalogo che non c'è), CFBundleIconFile sempre, e il nome è quello che
-  actool (`--app-icon`) e iconutil producono davvero.
-- Il segno nel ripiego (makeicon.swift, CoreGraphics) e il segno negli SVG sono
-  lo stesso: ogni sottopercorso degli SVG è una forma del ripiego, e ogni forma
-  del ripiego è negli SVG, con le stesse coordinate e lo stesso arrotondamento,
-  o con e senza Xcode 26 l'app avrebbe due icone diverse. Coordinate uguali non
-  bastano: conta anche il RIFERIMENTO. La tela da 1024 del .icon coincide con il
-  corpo dell'icona (actool la rimpicciolisce nel quadrato da 824 px), non con
-  l'immagine intera: makeicon.swift deve portare la tavola dentro il corpo, con
-  un margine dichiarato una volta sola, o il segno del ripiego esce più grande
-  di 1024/824 (misurato sul primo giro: 0,99 contro 0,80 del lato). Qui lo si
-  tiene fermo in due modi: la struttura del sorgente, e (dove c'è swift) la
-  misura vera: si disegna il ripiego a 1024 px e il riquadro dei pixel accesi
-  deve stare, entro due pixel, dove lo mettono le coordinate degli SVG.
-- La guardia tra build.sh e actool (la versione maggiore letta con sed da
-  `actool --version`) funziona su un'uscita vera, non solo come testo.
-- I due favicon (sito e dashboard) e i due marchi accanto al nome portano lo
-  stesso segno degli SVG (gli stessi percorsi, carattere per carattere), non
-  una copia disegnata a parte.
-- I marchi hanno anche i COLORI dell'icona (LOTTO ICONA-PLANCIA-5): scafo crema
-  (quello del favicon), fascia dei vetri in ambra piena, niente ambra attenuata
-  con opacity per lo scafo (usciva marrone). I colori stanno nei token del CSS
-  (--marchio-scafo e --marchio-vetri nella dashboard, con lo scafo scuro nel tema
-  chiaro dove il crema sparirebbe; --crema e --amber nel sito, che ha il solo tema
-  scuro), non nel markup. Il riquadro scuro del favicon ha un bordo sottile
-  chiaro e poco contrastato, perché su una scheda scura del browser (#111) il
-  blu notte non si distingueva dal fondo.
+  CFBundleIconName solo dove si copia Assets.car, CFBundleIconFile sempre.
+- La guardia tra build.sh e actool (la versione maggiore letta con sed) funziona su
+  un'uscita vera.
+- Il favicon e il marchio accanto al nome (dashboard e sito) sono la resa dell'icona
+  in PNG da 64 px, la stessa nei due punti; site/img/icon.png e' RGB 512x512 senza alfa
+  e ha i colori dell'icona; il marchio ha abbastanza stacco dal fondo dei due temi.
 """
 
+import base64
+import io
 import json
-import math
 import re
 import shutil
 import struct
 import subprocess
 import sys
 import tempfile
-import zlib
 from pathlib import Path
 
-NOME = "Plancia"
 SORGENTE = "mac/icona/Plancia.icon"
-AMBRA = "e8934e"
+FALLBACK = "mac/icona/Plancia-1024.png"
+STRATI_ATTESI = {"legno", "ottone", "quadrante", "leva"}
+CON_VETRO = {"ottone", "quadrante", "leva"}
+ICONSET_ATTESO = {"icon_16x16.png", "icon_16x16@2x.png", "icon_32x32.png", "icon_32x32@2x.png",
+                  "icon_128x128.png", "icon_128x128@2x.png", "icon_256x256.png",
+                  "icon_256x256@2x.png", "icon_512x512.png", "icon_512x512@2x.png"}
 
 
 def _leggi(radice, relativo):
@@ -83,189 +57,50 @@ def _leggi(radice, relativo):
     return percorso.read_text(encoding="utf-8") if percorso.is_file() else ""
 
 
-def _sottopercorsi(d):
-    """Un percorso SVG fatto solo di M, L, Q, Z, come lista di sottopercorsi:
-    ognuno è una lista di (comando, numeri). Un comando che non so leggere dà
-    lista vuota: meglio niente che sbagliato."""
-    arità = {"M": 2, "L": 2, "Q": 4, "Z": 0}
-    pezzi = re.findall(r"[A-Za-z]|-?\d+(?:\.\d+)?", d)
-    fuori, corrente, i = [], None, 0
-    while i < len(pezzi):
-        c = pezzi[i]
-        i += 1
-        if c not in arità:
-            return []
-        n = arità[c]
-        if i + n > len(pezzi):
-            return []
-        try:
-            numeri = tuple(float(x) for x in pezzi[i:i + n])
-        except ValueError:
-            return []
-        i += n
-        if c == "M":
-            corrente = []
-            fuori.append(corrente)
-        if corrente is None:
-            return []
-        corrente.append((c, numeri))
-    return fuori
-
-
-def _arrotonda(punti, raggio, inverso=False):
-    """La regola di makeicon.swift (e degli SVG): dal vertice verso i due vicini
-    per `raggio` (al più metà lato), poi una quadratica col vertice per controllo."""
-    if inverso:
-        punti = punti[::-1]
-
-    def verso(da, a):
-        dx, dy = a[0] - da[0], a[1] - da[1]
-        lunghezza = math.hypot(dx, dy)
-        t = min(raggio, lunghezza / 2) / lunghezza
-        return (da[0] + dx * t, da[1] + dy * t)
-
-    n = len(punti)
-    fuori = []
-    for i in range(n):
-        prima, qui, dopo = punti[i - 1], punti[i], punti[(i + 1) % n]
-        entra, esce = verso(qui, prima), verso(qui, dopo)
-        fuori.append(("M" if i == 0 else "L", entra))
-        fuori.append(("Q", qui + esce))
-    fuori.append(("Z", ()))
-    return fuori
-
-
-def _uguali(a, b, tolleranza=0.06):
-    """Due sottopercorsi con gli stessi comandi e numeri entro la tolleranza
-    (gli SVG hanno un decimale)."""
-    if len(a) != len(b):
-        return False
-    for (ca, na), (cb, nb) in zip(a, b):
-        if ca != cb or len(na) != len(nb):
-            return False
-        if any(abs(x - y) > tolleranza for x, y in zip(na, nb)):
-            return False
-    return True
-
-
-def _forme_dallo_swift(swift):
-    """{nome: (punti, raggio)} di ogni `let <nome> = Forma(punti: [...], raggio: r)`."""
-    fuori = {}
-    for m in re.finditer(r"let\s+(\w+)\s*=\s*Forma\(punti:\s*\[(.*?)\],\s*raggio:\s*([\d.]+)\s*\)",
-                         swift, re.S):
-        punti = [(float(a), float(b)) for a, b in
-                 re.findall(r"CGPoint\(x:\s*(-?[\d.]+),\s*y:\s*(-?[\d.]+)\)", m.group(2))]
-        fuori[m.group(1)] = (punti, float(m.group(3)))
-    return fuori
-
-
-def _area_con_segno(sp):
-    """Formula dei lacci sui punti del sottopercorso (vertici e controlli): conta solo il
-    segno, cioè il verso in cui gira."""
-    pts = []
-    for c, n in sp:
-        for i in range(0, len(n), 2):
-            pts.append((n[i], n[i + 1]))
-    return sum(pts[i - 1][0] * pts[i][1] - pts[i][0] * pts[i - 1][1] for i in range(len(pts))) / 2
-
-
-def _dentro(a, b):
-    """Il riquadro del sottopercorso `a` sta dentro quello di `b`."""
-    ra, rb = _riquadro([a]), _riquadro([b])
-    return bool(ra and rb) and ra != rb and ra[0] >= rb[0] and ra[1] >= rb[1] \
-        and ra[2] <= rb[2] and ra[3] <= rb[3]
-
-
-def _riquadro(sottopercorsi):
-    """(xmin, ymin, xmax, ymax) esatto di segmenti dritti e quadratiche: agli
-    estremi si aggiunge il punto in cui la quadratica smette di salire."""
-    xs, ys = [], []
-    for sp in sottopercorsi:
-        corrente = None
-        for c, n in sp:
-            if c in ("M", "L"):
-                corrente = n
-                xs.append(n[0])
-                ys.append(n[1])
-            elif c == "Q" and corrente is not None:
-                p0, p1, p2 = corrente, n[0:2], n[2:4]
-                for asse, lista in ((0, xs), (1, ys)):
-                    lista.append(p2[asse])
-                    den = p0[asse] - 2 * p1[asse] + p2[asse]
-                    if den:
-                        t = (p0[asse] - p1[asse]) / den
-                        if 0 < t < 1:
-                            lista.append((1 - t) ** 2 * p0[asse] + 2 * t * (1 - t) * p1[asse]
-                                         + t * t * p2[asse])
-                corrente = p2
-    return (min(xs), min(ys), max(xs), max(ys)) if xs else None
-
-
-def _leggi_png(percorso):
-    """(larghezza, altezza, righe di RGBA) di un PNG a 8 bit non interlacciato,
-    con la sola stdlib. None se non è un PNG che so leggere."""
-    dati = percorso.read_bytes()
-    if dati[:8] != b"\x89PNG\r\n\x1a\n":
+def _ihdr(dati):
+    """(larghezza, altezza, profondita', tipo colore) dall'intestazione di una PNG."""
+    if dati[:8] != b"\x89PNG\r\n\x1a\n" or dati[12:16] != b"IHDR":
         return None
-    pos, ihdr, idat = 8, None, b""
-    while pos + 8 <= len(dati):
-        lung, tipo = struct.unpack(">I4s", dati[pos:pos + 8])
-        corpo = dati[pos + 8:pos + 8 + lung]
-        pos += 12 + lung
-        if tipo == b"IHDR":
-            ihdr = struct.unpack(">IIBBBBB", corpo)
-        elif tipo == b"IDAT":
-            idat += corpo
-        elif tipo == b"IEND":
-            break
-    if not ihdr:
-        return None
-    w, h, profondità, colore, _, _, interlaccio = ihdr
-    canali = {2: 3, 6: 4}.get(colore)
-    if profondità != 8 or interlaccio or not canali:
-        return None
-    grezzo = zlib.decompress(idat)
-    riga, fuori, prec = w * canali, [], bytearray(w * canali)
-    for y in range(h):
-        base = y * (riga + 1)
-        filtro, cur = grezzo[base], bytearray(grezzo[base + 1:base + 1 + riga])
-        for i in range(riga):
-            a = cur[i - canali] if i >= canali else 0
-            b = prec[i]
-            c = prec[i - canali] if i >= canali else 0
-            if filtro == 1:
-                cur[i] = (cur[i] + a) & 255
-            elif filtro == 2:
-                cur[i] = (cur[i] + b) & 255
-            elif filtro == 3:
-                cur[i] = (cur[i] + (a + b) // 2) & 255
-            elif filtro == 4:
-                pa, pb, pc = abs(b - c), abs(a - c), abs(a + b - 2 * c)
-                pr = a if pa <= pb and pa <= pc else (b if pb <= pc else c)
-                cur[i] = (cur[i] + pr) & 255
-        fuori.append(bytes(cur))
-        prec = cur
-    return w, h, [(canali, r) for r in fuori]
+    w, h, prof, tipo = struct.unpack(">IIBB", dati[16:26])
+    return w, h, prof, tipo
 
 
-def _riquadro_acceso(png, da, a):
-    """Il riquadro (x0, y0, x1, y1) dei pixel opachi e chiari (luminanza > 110) dentro
-    la finestra [da, a) della PNG, in frazione del lato: fuori resta il bordo del corpo."""
-    w, h, righe = png
-    x0f, x1f = int(w * da), int(w * a)
-    y0f, y1f = int(h * da), int(h * a)
-    trovati = [None, None, None, None]
-    for y in range(y0f, y1f):
-        canali, r = righe[y]
-        for x in range(x0f, x1f):
-            px = r[x * canali:x * canali + canali]
-            opaco = canali == 3 or px[3] > 200
-            if opaco and 0.3 * px[0] + 0.59 * px[1] + 0.11 * px[2] > 110:
-                trovati[0] = x if trovati[0] is None else min(trovati[0], x)
-                trovati[1] = y if trovati[1] is None else min(trovati[1], y)
-                trovati[2] = x if trovati[2] is None else max(trovati[2], x)
-                trovati[3] = y if trovati[3] is None else max(trovati[3], y)
-    return tuple(trovati) if trovati[0] is not None else None
+def _ihdr_file(percorso):
+    return _ihdr(percorso.read_bytes()[:26]) if percorso.is_file() else None
+
+
+def _pillow():
+    try:
+        from PIL import Image
+        return Image
+    except ImportError:
+        return None
+
+
+def _trova_ictool():
+    """ictool sta in Icon Composer, dentro l'Xcode scelto con xcode-select."""
+    if sys.platform != "darwin":
+        return None
+    try:
+        sviluppo = subprocess.run(["xcode-select", "-p"], capture_output=True, text=True,
+                                  timeout=10).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if not sviluppo:
+        return None
+    ictool = Path(sviluppo).parent / "Applications" / "Icon Composer.app" / "Contents" / "Executables" / "ictool"
+    return ictool if ictool.is_file() else None
+
+
+def _png_da_pagina(pagina, schema):
+    """I byte della PNG in base64 che `schema` (con un gruppo) trova nella pagina."""
+    m = re.search(schema, pagina)
+    if not m:
+        return None
+    try:
+        return base64.b64decode(m.group(1), validate=True)
+    except ValueError:
+        return None
 
 
 def _senza_commenti(css):
@@ -299,28 +134,6 @@ def _colore_variabile(blocco, nome):
     return m.group(1).lower() if m else None
 
 
-def _riempimento(css, selettore, blocchi):
-    """Il colore (esadecimale) che la regola `<selettore> { fill: ... }` da' a un
-    elemento, risolvendo `var(--x)` nel primo dei `blocchi` che dichiara --x (il
-    tema chiaro prima, poi :root). None se la regola o la variabile non ci sono."""
-    m = re.search(r"(?<![\w-])%s\s*\{([^}]*)\}" % re.escape(selettore), _senza_commenti(css))
-    if not m:
-        return None
-    f = re.search(r"fill\s*:\s*([^;]+)", m.group(1))
-    if not f:
-        return None
-    valore = f.group(1).strip()
-    v = re.fullmatch(r"var\(--([\w-]+)\)", valore)
-    if v:
-        for blocco in blocchi:
-            colore = _colore_variabile(blocco, v.group(1))
-            if colore:
-                return colore
-        return None
-    h = re.fullmatch(r"#([0-9a-fA-F]{6})", valore)
-    return h.group(1).lower() if h else None
-
-
 def _luminanza(esadecimale):
     def canale(v):
         v /= 255
@@ -333,17 +146,6 @@ def _contrasto(a, b):
     """Rapporto di contrasto WCAG fra due colori esadecimali."""
     chiaro, scuro = sorted((_luminanza(a), _luminanza(b)), reverse=True)
     return (chiaro + 0.05) / (scuro + 0.05)
-
-
-def _mescola(sopra, sotto, opacita):
-    """Il colore che si vede di `sopra` a `opacita` su `sotto` (esadecimali)."""
-    return "".join("%02x" % round(opacita * int(sopra[i:i + 2], 16) + (1 - opacita) * int(sotto[i:i + 2], 16))
-                   for i in (0, 2, 4))
-
-
-def _numero_swift(swift, nome):
-    m = re.search(r"let\s+%s\s*:\s*CGFloat\s*=\s*([\d.]+)" % nome, swift)
-    return float(m.group(1)) if m else None
 
 
 # Un'uscita vera di `xcrun actool --version` (Xcode 27, letta il 29/09/2026).
@@ -373,98 +175,151 @@ def _sed(script, testo):
     return fuori.splitlines()[0] if fuori.strip() else ""
 
 
-def _corpo_funzione(swift, nome):
-    """Il testo di `func <nome>(...) {...}` in makeicon.swift, fino alla graffa che la chiude."""
-    m = re.search(r"func\s+%s\s*\(" % re.escape(nome), swift)
-    if not m:
-        return ""
-    inizio = swift.find("{", m.end())
-    if inizio < 0:
-        return ""
-    livello = 0
-    for i in range(inizio, len(swift)):
-        if swift[i] == "{":
-            livello += 1
-        elif swift[i] == "}":
-            livello -= 1
-            if livello == 0:
-                return swift[inizio:i + 1]
-    return ""
-
-
-def _dimensioni_png(percorso):
-    """(larghezza, altezza) dall'intestazione di un PNG, senza librerie."""
-    if not percorso.is_file():
-        return None
-    testa = percorso.read_bytes()[:24]
-    if testa[:8] != b"\x89PNG\r\n\x1a\n":
-        return None
-    return struct.unpack(">II", testa[16:24])
-
-
 def esegui(prova, radice):
-    # ------------------------------------------------------------ la sorgente
-    percorso_json = radice / SORGENTE / "icon.json"
+    def salta(nome, motivo, cond=True):
+        prova(f"{nome} [non verificabile qui: {motivo}]", cond)
+
+    Image = _pillow()
+    ictool = _trova_ictool()
+    sorgente = radice / SORGENTE
+
+    # ------------------------------------------------------------ il documento
     documento = None
-    if percorso_json.is_file():
+    if (sorgente / "icon.json").is_file():
         try:
-            documento = json.loads(percorso_json.read_text(encoding="utf-8"))
+            documento = json.loads((sorgente / "icon.json").read_text(encoding="utf-8"))
         except ValueError:
             documento = None
     prova("l'icona ha una sorgente: mac/icona/Plancia.icon/icon.json è un JSON valido",
           isinstance(documento, dict))
+    prova("lo sfondo è un colore dichiarato (fill), che il legno copre", bool(documento) and "fill" in documento)
+    prova("il documento dichiara le piattaforme quadrate (supported-platforms.squares)",
+          bool(documento) and "squares" in documento.get("supported-platforms", {}))
 
-    strati = []
-    if documento:
-        for gruppo in documento.get("groups", []):
-            strati.extend(gruppo.get("layers", []))
-    prova("il documento ha almeno uno strato di primo piano", len(strati) >= 1)
+    gruppi = documento.get("groups", []) if documento else []
+    strati = [(gi, s) for gi, g in enumerate(gruppi) for s in g.get("layers", [])]
+    nomi = {s.get("name", "") for _, s in strati}
+    base_nomi = {n.replace("_scuro", "") for n in nomi}
+    prova("gli strati sono legno, ottone, quadrante e leva (ognuno anche con la sua variante scura, dove serve)",
+          base_nomi == STRATI_ATTESI, str(sorted(nomi)))
 
-    mancanti = [s.get("image-name") for s in strati
-                if not (radice / SORGENTE / "Assets" / str(s.get("image-name"))).is_file()]
-    prova("ogni strato nomina un file che esiste in Assets/", bool(strati) and not mancanti,
-          str(mancanti))
+    immagini = [s.get("image-name", "") for _, s in strati]
+    mancanti = [i for i in immagini if not i.endswith(".png") or not (sorgente / "Assets" / i).is_file()]
+    prova("ogni strato nomina una PNG che esiste in Assets/", bool(strati) and not mancanti, str(mancanti))
+    presenti = {p.name for p in (sorgente / "Assets").glob("*")} if (sorgente / "Assets").is_dir() else set()
+    orfani = sorted(presenti - set(immagini))
+    prova("in Assets/ non resta niente che nessuno strato nomina (né gli SVG del giro prima)",
+          bool(presenti) and not orfani, str(orfani))
+    misure = {i: _ihdr_file(sorgente / "Assets" / i) for i in immagini if i}
+    prova("ogni strato è una PNG da 1024x1024, 8 bit, con canale alfa (RGBA)",
+          bool(misure) and all(m is not None and m[:2] == (1024, 1024) and m[2] == 8 and m[3] == 6
+                               for m in misure.values()), str(misure))
+    prova("il ripiego di prima non c'è più: niente mac/makeicon.swift",
+          not (radice / "mac" / "makeicon.swift").exists())
 
-    prova("lo sfondo è un colore dichiarato (fill), non un file",
-          bool(documento) and "fill" in documento)
+    def strato(nome):
+        return next((s for _, s in strati if s.get("name") == nome), {})
 
-    svg_testo = {s["name"]: _leggi(radice, f"{SORGENTE}/Assets/{s['image-name']}")
-                 for s in strati if "name" in s and "image-name" in s}
-    tutti = "\n".join(svg_testo.values()).lower()
-    prova("l'ambra di Plancia (#e8934e) è l'accento degli strati", AMBRA in tutti)
-    prova("niente testo dentro il segno (un segno solo, leggibile a 16 px)",
-          bool(tutti) and "<text" not in tutti)
-    prova("niente gradienti dentro gli strati: il vetro lo applica il sistema",
-          bool(tutti) and "gradient" not in tutti)
-    prova("il segno è fatto di pochi tratti: al massimo due strati, un solo percorso ciascuno",
-          bool(tutti) and len(strati) <= 2
-          and len(re.findall(r"<(?:path|circle|rect|polygon|ellipse|line)\b", tutti)) <= 2)
-    prova("gli strati non usano trasformazioni né bordi: le forme sono già disegnate al loro posto "
-          "(le coordinate di makeicon.swift sono quelle dell'SVG, senza rotazioni nascoste)",
-          bool(tutti) and "transform" not in tutti and "stroke" not in tutti)
-    prova("gli strati chiedono il vetro (glass) e il documento lo dichiara per le piattaforme quadrate",
-          bool(strati) and all(s.get("glass") is True for s in strati)
-          and "squares" in documento.get("supported-platforms", {}))
+    ultimo = gruppi[-1].get("layers", []) if gruppi else []
+    prova("il legno è il gruppo più in basso e non chiede il vetro (è il fondo, opaco)",
+          bool(ultimo) and {s.get("name", "").replace("_scuro", "") for s in ultimo} == {"legno"}
+          and not any(s.get("glass") for s in ultimo))
+    prova("ottone, quadrante e leva chiedono il vetro di sistema (glass) in ogni loro variante",
+          all(strato(n).get("glass") is True for n in CON_VETRO)
+          and all(s.get("glass") is True for _, s in strati if s.get("name", "").replace("_scuro", "") in CON_VETRO))
 
-    # ------------------------------------------------------------ il ripiego
+    # Il tema scuro: per ogni strato con una variante "_scuro" c'e' la coppia giusta.
+    # La voce senza appearance va per prima (misurato: con la sola voce dark resta
+    # nascosto anche nel Dark) e image-name-specializations non c'e' (ictool la ignora).
+    coppie_ok = True
+    dettagli = []
+    for base in ("legno", "quadrante"):
+        chiaro, scuro = strato(base), strato(base + "_scuro")
+        ok = (chiaro.get("hidden-specializations") == [{"appearance": "dark", "value": True}]
+              and scuro.get("hidden-specializations") == [{"value": True}, {"appearance": "dark", "value": False}]
+              and (sorgente / "Assets" / str(scuro.get("image-name"))).is_file()
+              and scuro.get("image-name") != chiaro.get("image-name"))
+        coppie_ok = coppie_ok and ok
+        dettagli.append(base)
+    prova("il tema scuro di legno e quadrante sono due strati alternati con hidden-specializations "
+          "(la voce senza appearance per prima)", coppie_ok, ",".join(dettagli))
+    prova("nessuno strato usa image-name-specializations (ictool la ignora nel Dark)",
+          bool(strati) and not any("image-name-specializations" in s for _, s in strati))
+
+    # ------------------------------------------------------------ il generatore
+    gen = _leggi(radice, "mac/icona/genera_strati.py")
+    prova("genera_strati.py esiste e dice come rigenerare (python3 mac/icona/genera_strati.py)",
+          "python3 mac/icona/genera_strati.py" in gen and "Plancia.icon" in gen)
+    scritti = set(re.findall(r'"(\w+\.png)"', gen))
+    prova("il generatore scrive gli stessi PNG che il documento nomina (ne' uno di piu' ne' uno di meno)",
+          bool(scritti) and scritti == set(immagini), f"generatore={sorted(scritti)} documento={sorted(set(immagini))}")
+    prova("il rumore del generatore ha un seme fisso (rigenerando si ottengono gli stessi pixel)",
+          re.search(r"default_rng\(\s*\d+\s*\)", gen) is not None)
+    prova("ripiego.py e pagine.py esistono e dicono come si lanciano",
+          "python3 mac/icona/ripiego.py" in _leggi(radice, "mac/icona/ripiego.py")
+          and "python3 mac/icona/pagine.py" in _leggi(radice, "mac/icona/pagine.py"))
+
+    # ------------------------------------------------------------ actool compila il .icon
+    maggiore = 0
+    if shutil.which("xcrun") and sys.platform == "darwin":
+        try:
+            v = subprocess.run(["xcrun", "actool", "--version"], capture_output=True, text=True, timeout=60).stdout
+            m_v = re.search(r"<string>(\d+)\.[\d.]*</string>", v)
+            maggiore = int(m_v.group(1)) if m_v else 0
+        except (OSError, subprocess.SubprocessError):
+            maggiore = 0
+    if maggiore >= 26:
+        tmp = tempfile.mkdtemp(prefix="plancia-actool-")
+        try:
+            giro = subprocess.run(
+                ["xcrun", "actool", str(sorgente), "--compile", tmp, "--platform", "macosx",
+                 "--target-device", "mac", "--minimum-deployment-target", "13.0",
+                 "--app-icon", "Plancia", "--include-all-app-icons",
+                 "--enable-on-demand-resources", "NO", "--development-region", "en",
+                 "--output-partial-info-plist", tmp + "/parziale.plist"],
+                capture_output=True, text=True, timeout=180)
+            compilato = (giro.returncode == 0 and (Path(tmp) / "Assets.car").is_file()
+                         and (Path(tmp) / "Plancia.icns").is_file())
+        except (OSError, subprocess.SubprocessError):
+            compilato = False
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+        prova("actool compila il .icon in Assets.car e Plancia.icns", compilato)
+    else:
+        salta("actool compila il .icon in Assets.car e Plancia.icns", "serve actool 26 o piu' recente")
+
+    # ------------------------------------------------------------ build.sh
     build = _leggi(radice, "mac/build.sh")
     pos_actool = build.find("xcrun actool")
     pos_else = build.find("\nelse\n", pos_actool) if pos_actool >= 0 else -1
+    pos_png = build.find("mac/icona/Plancia-1024.png", pos_else) if pos_else >= 0 else -1
+    pos_sips = build.find("sips -z", pos_else) if pos_else >= 0 else -1
     pos_iconutil = build.find("iconutil -c icns", pos_else) if pos_else >= 0 else -1
-    pos_makeicon = build.find("mac/makeicon.swift", pos_else) if pos_else >= 0 else -1
     pos_fi = build.find("\nfi\n", pos_iconutil) if pos_iconutil >= 0 else -1
-
     prova("build.sh compila il .icon con actool",
           pos_actool >= 0 and "--app-icon Plancia" in build and "mac/icona/Plancia.icon" in build)
     prova("build.sh prova il .icon solo con actool 26 o più recente",
           bool(re.search(r"ACTOOL_MAGGIORE[^\n]*-ge\s+26", build)))
-    prova("build.sh ha il ripiego all'icns: l'altro ramo dell'if disegna con makeicon.swift e usa iconutil",
-          0 <= pos_actool < pos_else < pos_makeicon < pos_iconutil < pos_fi)
+    prova("build.sh ha il ripiego: l'altro ramo dell'if prende Plancia-1024.png, la riduce con sips "
+          "e la trasforma in icns con iconutil",
+          0 <= pos_actool < pos_else < pos_png < pos_sips < pos_iconutil < pos_fi)
+    prova("build.sh non disegna più a mano: nessun riferimento a makeicon né a swift per l'icona",
+          bool(build) and "makeicon" not in build and "swift mac/" not in build
+          and not re.search(r"xcrun swift\s+\"?\$ROOT/mac/makeicon", build))
     prova("guardia di non regressione: il ripiego produce Plancia.icns dentro Resources",
-          "iconutil -c icns" in build
-          and re.search(r'iconutil -c icns[^\n]*Resources/Plancia\.icns', build) is not None)
+          re.search(r'iconutil -c icns[^\n]*Resources/Plancia\.icns', build) is not None)
+    coppie = re.search(r"for coppia in ((?:[\w@]+:[\w@]+\s*\\?\s*)+);\s*do", build)
+    elenco = re.findall(r"(\d+):([\w@]+)", coppie.group(1)) if coppie else []
+    nomi_iconset = {f"icon_{nome}.png" for _, nome in elenco}
+    prova("il ripiego costruisce le dieci misure dell'iconset (16, 32, 128, 256, 512, ciascuna e @2x)",
+          nomi_iconset == ICONSET_ATTESO, str(sorted(nomi_iconset ^ ICONSET_ATTESO)))
+    doppi_ok = bool(elenco)
+    for px, nome in elenco:
+        m = re.fullmatch(r"(\d+)x\d+(@2x)?", nome)
+        base = int(m.group(1)) if m else -1
+        doppi_ok = doppi_ok and int(px) == base * (2 if m and m.group(2) else 1)
+    prova("ogni misura dell'iconset ha i pixel giusti (la @2x è il doppio della base)", doppi_ok, str(elenco))
 
-    # ------------------------------------------------------------ il manifesto
     ramo_actool = build[pos_actool:pos_else] if 0 <= pos_actool < pos_else else ""
     ramo_ripiego = build[pos_else:pos_fi] if 0 <= pos_else < pos_fi else ""
     chiave_file = "<key>CFBundleIconFile</key><string>Plancia</string>"
@@ -476,347 +331,174 @@ def esegui(prova, radice):
     prova("nel ripiego il manifesto ha CFBundleIconFile ma NON CFBundleIconName (non c'è Assets.car)",
           chiave_file in ramo_ripiego and "CFBundleIconName" not in ramo_ripiego)
     prova("il nome dell'icona è lo stesso ovunque: Plancia.icon, --app-icon Plancia, Plancia.icns",
-          (radice / SORGENTE).is_dir() and "--app-icon Plancia " in build
-          and "Plancia.icns" in ramo_actool)
+          sorgente.is_dir() and "--app-icon Plancia " in build and "Plancia.icns" in ramo_actool)
     manifesto = build[build.find('echo "· manifesto"'):]
     prova("guardia di non regressione: il manifesto scrive $ICONA, la variabile che i due rami riempiono",
           "$ICONA" in manifesto)
 
-    # ------------------------------------------------------------ swift == svg
-    swift = _leggi(radice, "mac/makeicon.swift")
-    prova("mac/makeicon.swift esiste ed è il ripiego che disegna il segno con CoreGraphics",
-          "CGContext" in swift and "struct Forma" in swift)
-
-    forme = _forme_dallo_swift(swift)
-    prova("makeicon.swift dichiara le forme del segno (let <nome> = Forma(punti:, raggio:))",
-          len(forme) >= 1 and all(len(p) >= 3 for p, _ in forme.values()), str(sorted(forme)))
-    prova("ogni forma dichiarata è anche usata nel disegno (nome dichiarato e poi richiamato)",
-          bool(forme) and all(len(re.findall(r"\b%s\b" % re.escape(n), swift)) >= 2 for n in forme))
-
-    dagli_svg = {}
-    for strato in strati:
-        d = re.search(r'<path[^>]*\sd="([^"]+)"', svg_testo.get(strato.get("name"), ""))
-        dagli_svg[strato.get("name")] = _sottopercorsi(d.group(1)) if d else []
-    tutti_sp = [(nome, sp) for nome, sps in dagli_svg.items() for sp in sps]
-    prova("gli SVG sono percorsi M, L, Q, Z che il confronto sa leggere",
-          bool(tutti_sp) and all(dagli_svg.values()), str({n: len(v) for n, v in dagli_svg.items()}))
-
-    # La forma del segno (terzo giro): una sagoma sola, leggera. Due misure sugli
-    # SVG, che valgono per qualunque segno futuro con lo stesso spirito.
-    #  - Pochi pezzi: in ogni strato, le forme piene (quelle che non sono un buco
-    #    dentro un'altra) sono al più due, cioè uno scafo e UNA casa del ponte. Il
-    #    secondo giro ne aveva tre (scafo, casa, ponte) e si leggeva pesante, a
-    #    gradini, da clip-art.
-    #  - Slanciato: il riquadro del segno intero è basso e lungo, altezza al più il
-    #    48 per cento della larghezza (il secondo giro era al 53: tozzo).
-    #    Un buco non è "un riquadro dentro un altro": è anche girato al contrario (lo
-    #    stesso criterio della prova dei buchi più sotto). Un pezzo aggiunto DENTRO il
-    #    riquadro dello scafo o della casa (un albero corto, un oblò, un pannello) ma
-    #    girato come loro è una forma piena e va contata, non presa per un buco.
-    piene = {n: sum(1 for i, sp in enumerate(sps)
-                    if not any(i != j and _dentro(sp, altro)
-                               and _area_con_segno(sp) * _area_con_segno(altro) < 0
-                               for j, altro in enumerate(sps)))
-             for n, sps in dagli_svg.items()}
-    prova("il segno ha pochi pezzi: in ogni strato al più due forme piene (scafo e una casa sola, niente gradini)",
-          bool(piene) and max(piene.values()) <= 2, str(piene))
-    riquadro_segno = _riquadro([sp for _, sp in tutti_sp])
-    slancio = ((riquadro_segno[3] - riquadro_segno[1]) / (riquadro_segno[2] - riquadro_segno[0])
-               if riquadro_segno else None)
-    prova("il segno è slanciato: il suo riquadro è alto al più il 48 per cento della larghezza (non tozzo)",
-          slancio is not None and slancio <= 0.48,
-          f"altezza/larghezza={None if slancio is None else round(slancio, 3)}")
-
-    # Le tre misure del terzo giro che tengono il segno grande e centrato nel corpo
-    # dell'icona (la tavola da 1024 del .icon), verdi anche prima e messe qui perché
-    # non derivino nei giri futuri: larghezza fra il 70 e il 78 per cento della
-    # tavola, centro del riquadro entro 40 unità dal centro in verticale (il segno
-    # è basso e lungo, il centro del riquadro sta un po' sopra il centro della
-    # tavola: 499,5 su 512) ed entro 20 in orizzontale.
-    larghezza_segno = ((riquadro_segno[2] - riquadro_segno[0]) / 1024) if riquadro_segno else None
-    prova("il segno è largo fra il 70 e il 78 per cento della tavola (né piccolo né a filo del bordo)",
-          larghezza_segno is not None and 0.70 <= larghezza_segno <= 0.78,
-          f"larghezza/tavola={None if larghezza_segno is None else round(larghezza_segno, 3)}")
-    centro_segno = (((riquadro_segno[0] + riquadro_segno[2]) / 2, (riquadro_segno[1] + riquadro_segno[3]) / 2)
-                    if riquadro_segno else None)
-    prova("il segno è centrato nella tavola: il centro del suo riquadro sta entro 20 unità (x) e 40 (y) dal centro",
-          centro_segno is not None and abs(centro_segno[0] - 512) <= 20 and abs(centro_segno[1] - 512) <= 40,
-          f"centro={None if centro_segno is None else tuple(round(v, 1) for v in centro_segno)}")
-
-    ricalcolate = {n: (_arrotonda(p, r), _arrotonda(p, r, inverso=True)) for n, (p, r) in forme.items()}
-    non_trovati = [nome for nome, sp in tutti_sp
-                   if not any(_uguali(sp, avanti) or _uguali(sp, indietro)
-                              for avanti, indietro in ricalcolate.values())]
-    prova("ogni sottopercorso degli SVG è una forma di makeicon.swift, stesse coordinate e stesso arrotondamento",
-          bool(tutti_sp) and bool(forme) and not non_trovati, f"senza corrispondenza negli strati: {non_trovati}")
-    inutilizzate = [n for n, (avanti, indietro) in ricalcolate.items()
-                    if not any(_uguali(sp, avanti) or _uguali(sp, indietro) for _, sp in tutti_sp)]
-    prova("ogni forma di makeicon.swift è in uno SVG (il ripiego non disegna cose che il .icon non ha)",
-          bool(forme) and bool(tutti_sp) and not inutilizzate, f"solo nel ripiego: {inutilizzate}")
-
-    # Un buco (un sottopercorso dentro un altro dello stesso strato, come i vetri nella
-    # nave) deve girare al contrario: con lo stesso verso la regola non-zero lo riempie
-    # e la finestra sparisce (Icon Composer e CoreGraphics leggono entrambi non-zero).
-    buchi_storti = []
-    for nome, sps in dagli_svg.items():
-        for i, dentro in enumerate(sps):
-            for j, fuori_sp in enumerate(sps):
-                if i != j and _dentro(dentro, fuori_sp) and \
-                        _area_con_segno(dentro) * _area_con_segno(fuori_sp) > 0:
-                    buchi_storti.append(f"{nome}#{i}")
-    prova("i buchi degli SVG girano al contrario della forma che li contiene (altrimenti si riempiono)",
-          bool(tutti_sp) and not buchi_storti, str(buchi_storti))
-
-    posizioni = [s.get("position", {}).get("scale") for s in strati]
-    prova("l'ingrandimento è lo stesso nel .icon (position.scale) e in makeicon.swift",
-          bool(posizioni) and len(set(posizioni)) == 1
-          and _numero_swift(swift, "ingrandimento") == float(posizioni[0]),
-          f"icon={posizioni} swift={_numero_swift(swift, 'ingrandimento')}")
-
-    # Il riferimento: la tavola sta nel corpo dell'icona, non nell'immagine intera.
-    m_marg = re.search(r"let\s+margineCorpo\s*:\s*CGFloat\s*=\s*([\d.]+)", swift)
-    prova("makeicon.swift dichiara il margine del corpo una volta sola (margineCorpo = 0,098)",
-          m_marg is not None and float(m_marg.group(1)) == 0.098
-          and len(re.findall(r"let\s+margineCorpo\b", swift)) == 1
-          and len(re.findall(r"0\.098", swift)) == 1,
-          f"margineCorpo={m_marg.group(1) if m_marg else None}")
-    corpo_scala = _corpo_funzione(swift, "scalaTavola")
-    corpo_punto = _corpo_funzione(swift, "punto")
-    corpo_arrotondata = _corpo_funzione(swift, "arrotondata")
-    prova("scalaTavola() porta la tavola nel corpo: (lato meno i due margini) diviso la tavola",
-          "margineCorpo" in corpo_scala and "tavola" in corpo_scala and "lato" in corpo_scala,
-          corpo_scala)
-    prova("punto() somma il margine e usa scalaTavola: la tavola sta dentro il corpo, non sull'immagine",
-          "margineCorpo" in corpo_punto and "scalaTavola(lato)" in corpo_punto
-          and re.search(r"margine\s*\+", corpo_punto) is not None
-          and not re.search(r"\blato\s*/\s*tavola\b", corpo_punto), corpo_punto)
-    prova("arrotondata() porta il raggio degli spigoli con la stessa scala della tavola (scalaTavola), non con lato/tavola",
-          "scalaTavola(lato)" in corpo_arrotondata and "punto(" in corpo_arrotondata
-          and not re.search(r"\blato\s*/\s*tavola\b", corpo_arrotondata),
-          corpo_arrotondata)
-    prova("il corpo dell'icona (quadrato arrotondato in disegna) usa lo stesso margineCorpo della tavola",
-          re.search(r"let\s+margine\s*=\s*s\s*\*\s*margineCorpo", swift) is not None)
-
-    # La misura vera, dove c'è swift: si disegna il ripiego a 1024 px e il riquadro
-    # dei pixel accesi (crema e ambra, dentro il corpo) deve stare dove lo mettono
-    # le coordinate degli SVG, cioè margine + coordinata x scala. Se il ripiego
-    # disegnasse sull'immagine intera invece che sul corpo, il segno uscirebbe più
-    # grande del 24 per cento e questa misura si sposterebbe di decine di pixel.
-    atteso = _riquadro([sp for _, sp in tutti_sp])
-    if (sys.platform == "darwin" and shutil.which("xcrun") and atteso and forme
-            and (radice / "mac" / "makeicon.swift").is_file()):
-        tmp = tempfile.mkdtemp(prefix="plancia-icona-")
-        try:
-            giro = subprocess.run(["xcrun", "swift", str(radice / "mac" / "makeicon.swift"), tmp],
-                                  capture_output=True, text=True, timeout=180)
-            png = _leggi_png(Path(tmp) / "icon_512x512@2x.png") \
-                if giro.returncode == 0 else None
-        except (OSError, subprocess.SubprocessError):
-            png = None
-        finally:
-            shutil.rmtree(tmp, ignore_errors=True)
-        if png:
-            lato = png[0]
-            m_marg2 = float(m_marg.group(1)) if m_marg else 0.098
-            scala = (lato - 2 * lato * m_marg2) / 1024
-            previsto = (lato * m_marg2 + atteso[0] * scala, lato * m_marg2 + atteso[1] * scala,
-                        lato * m_marg2 + atteso[2] * scala, lato * m_marg2 + atteso[3] * scala)
-            misurato = _riquadro_acceso(png, 0.15, 0.85)
-            prova("misurato sul disegno: il riquadro del segno del ripiego (1024 px) sta dove lo mettono "
-                  "gli SVG, entro 2 px",
-                  misurato is not None
-                  and all(abs(a - b) <= 2 for a, b in zip(misurato, previsto)),
-                  f"misurato={misurato} previsto={tuple(round(v, 1) for v in previsto)}")
-        else:
-            prova("il ripiego si disegna a 1024 px (swift makeicon.swift dà una PNG leggibile)", False,
-                  "makeicon.swift non ha prodotto icon_512x512@2x.png")
-
-    # La guardia tra build.sh e actool, eseguita su un'uscita vera di
-    # `actool --version` (Xcode 27: bundle-version 25098, short 27.0): deve dare
-    # 27, non vuoto. Se la regex smette di combaciare, il Liquid Glass sparisce
-    # in silenzio e il resto resta verde.
     m_sed = re.search(r"sed -n '([^'\n]*<string>[^'\n]*)'", build)
-    campione = ACTOOL_VERSION_CAMPIONE
-    letto = _sed(m_sed.group(1), campione) if m_sed else None
+    letto = _sed(m_sed.group(1), ACTOOL_VERSION_CAMPIONE) if m_sed else None
     prova("la versione di actool letta da build.sh su un'uscita vera dà 27, non vuoto",
           letto == "27", f"letto={letto!r}")
     prova("...e su un'uscita senza versione dà vuoto (nessun Liquid Glass per errore)",
-          m_sed is not None and _sed(m_sed.group(1), "<plist><dict></dict></plist>\n") == "",
-          "")
+          m_sed is not None and _sed(m_sed.group(1), "<plist><dict></dict></plist>\n") == "", "")
 
-    # ------------------------------------------------------------ favicon
-    # Il segno delle pagine è quello degli SVG, carattere per carattere: i percorsi
-    # `d` degli strati compaiono uguali nel favicon e nel marchio. Una copia
-    # ridisegnata a mano (o rimasta al segno di prima) li fa divergere in silenzio.
-    percorsi_svg = {}
-    for strato in strati:
-        d = re.search(r'<path[^>]*\sd="([^"]+)"', svg_testo.get(strato.get("name"), ""))
-        if d:
-            percorsi_svg[strato["name"]] = d.group(1)
-    for relativo in ("site/index.html", "web/index.html"):
-        pagina = _leggi(radice, relativo)
-        m = re.search(r'<link rel="icon" href="data:image/svg\+xml,([^"]*)">', pagina)
-        svg = m.group(1) if m else ""
-        prova(f"{relativo}: il favicon porta i percorsi degli SVG dell'icona, tutti e senza differenze",
-              bool(svg) and bool(percorsi_svg) and all(d in svg for d in percorsi_svg.values()))
-        prova(f"{relativo}: il favicon ha l'ambra e nessun residuo del segno del primo giro "
-              "(niente rotate, niente cerchio della rosa dei venti)",
-              bool(svg) and "%23e8934e" in svg and "rotate(" not in svg and "<circle" not in svg)
-        # la tavola da 1024 va in 32: scale(.03125); se c'è un ingrandimento in più
-        # dev'essere quello del .icon (position.scale)
-        m_sc = re.search(r"translate\(512 512\) scale\(([\d.]+)\)", svg)
-        ingrandito = float(m_sc.group(1)) if m_sc else 1.0
-        prova(f"{relativo}: il favicon ha lo stesso ingrandimento del .icon (position.scale)",
-              "scale(.03125)" in svg and bool(posizioni) and ingrandito == float(posizioni[0]),
-              f"favicon={ingrandito} icon={posizioni}")
+    # ------------------------------------------------------------ la PNG di ripiego
+    png_ripiego = radice / FALLBACK
+    testa = _ihdr_file(png_ripiego)
+    prova("Plancia-1024.png esiste ed è una PNG RGBA da 1024x1024",
+          testa is not None and testa[:2] == (1024, 1024) and testa[2] == 8 and testa[3] == 6, str(testa))
 
-        # Il riquadro scuro del favicon ha un bordo chiaro e sottile: su una scheda
-        # scura del browser (#111) il blu notte pieno (#12161f) non si distingueva dal
-        # fondo. Lo stroke sta DENTRO il viewBox (rect inset di metà stroke, largo 32
-        # meno lo stroke), altrimenti il viewBox ne taglierebbe metà.
-        m_rect = re.search(r"<rect\b([^>]*?)/?>", svg)
-        rect = dict(re.findall(r"([\w-]+)='([^']*)'", m_rect.group(1))) if m_rect else {}
-        m_traccia = re.fullmatch(r"%23([0-9a-fA-F]{6})", rect.get("stroke", ""))
-        traccia = m_traccia.group(1).lower() if m_traccia else None
-        m_fondo = re.fullmatch(r"%23([0-9a-fA-F]{6})", rect.get("fill", ""))
-        fondo_rect = m_fondo.group(1).lower() if m_fondo else None
-        try:
-            spessore = float(rect.get("stroke-width", "nan"))
-            opacita = float(rect.get("stroke-opacity", "nan"))
-            x, y, larghezza, altezza = (float(rect.get(k, "nan")) for k in ("x", "y", "width", "height"))
-        except ValueError:
-            spessore = opacita = x = y = larghezza = altezza = float("nan")
-        prova(f"{relativo}: il riquadro del favicon ha un bordo chiaro e sottile (stroke di 1 unità, chiaro, "
-              "a bassa opacità) tutto dentro il viewBox",
-              traccia is not None and _luminanza(traccia) >= 0.6
-              and 1 <= spessore <= 2 and 0.12 <= opacita <= 0.35
-              and abs(x - spessore / 2) < 1e-6 and abs(y - spessore / 2) < 1e-6
-              and abs(larghezza - (32 - spessore)) < 1e-6 and abs(altezza - (32 - spessore)) < 1e-6,
-              f"riquadro={rect}")
-        if traccia and fondo_rect and opacita == opacita:
-            sul_scuro = _mescola(traccia, "111111", opacita)
-            sul_riquadro = _mescola(traccia, fondo_rect, opacita)
-            stacco_scuro = _contrasto(sul_scuro, "111111")
-            stacco_riquadro = _contrasto(sul_riquadro, fondo_rect)
-        else:
-            stacco_scuro = stacco_riquadro = None
-        prova(f"{relativo}: il bordo del favicon stacca dal fondo #111 (contrasto almeno 1,5) senza diventare "
-              "un contorno duro sul riquadro (al più 2,5)",
-              stacco_scuro is not None and stacco_scuro >= 1.5 and stacco_riquadro <= 2.5,
-              f"bordo su #111={stacco_scuro and round(stacco_scuro, 2)} bordo sul riquadro={stacco_riquadro and round(stacco_riquadro, 2)}")
-
-    # Il marchio dentro le pagine (accanto al nome) è lo stesso segno del favicon:
-    # se resta un segno diverso, l'icona nel Dock e il marchio nella finestra
-    # sembrano di due prodotti diversi.
-    # Per ognuno: la pagina, la classe del marchio, il suo CSS, e se quel CSS ha un tema
-    # chiaro (la dashboard sì, il sito è solo scuro).
-    for relativo, classe, foglio, con_chiaro in (("web/index.html", "brand-mark", "web/style.css", True),
-                                                 ("site/index.html", "bussola", "site/style.css", False)):
-        pagina = _leggi(radice, relativo)
-        m = re.search(r'<svg[^>]*class="%s"[^>]*>(.*?)</svg>' % classe, pagina, re.S)
-        corpo = m.group(1) if m else ""
-        prova(f"{relativo}: il marchio accanto al nome (.{classe}) porta i percorsi degli SVG dell'icona",
-              bool(corpo) and bool(percorsi_svg) and all(d in corpo for d in percorsi_svg.values())
-              and "rotate(" not in corpo and "<circle" not in corpo)
-        # Il segno dentro la scatola del marchio: il gruppo è
-        # scale(lato/1024) translate(512 512) scale(zoom) translate(-cx -cy). Il riquadro
-        # del segno, portato in quella scatola, deve avere un margine per lato (almeno il
-        # 3 per cento della scatola: la prua non tocca il bordo, niente taglio a 24 px) e
-        # i due margini orizzontali devono differire di poco (segno centrato nella scatola).
-        m_tr = re.search(r"scale\(([\d.]+)\)\s*translate\(512 512\)\s*scale\(([\d.]+)\)\s*"
-                         r"translate\(-?([\d.]+)\s+-?([\d.]+)\)", corpo)
-        m_vb = re.search(r'viewBox="0 0 ([\d.]+) ([\d.]+)"', m.group(0) if m else "")
-        if m_tr and m_vb and riquadro_segno:
-            sc, zoom, cx, cy = (float(v) for v in m_tr.groups())
-            scatola = float(m_vb.group(1))
-            sx = [(sc * (512 + zoom * (x - cx))) / scatola for x in (riquadro_segno[0], riquadro_segno[2])]
-            sy = [(sc * (512 + zoom * (y - cy))) / scatola for y in (riquadro_segno[1], riquadro_segno[3])]
-            margini = (sx[0], 1 - sx[1], sy[0], 1 - sy[1])
-            ok_marchio = min(margini) >= 0.03 and abs(margini[0] - margini[1]) <= 0.02
-            dettaglio = "margini sx/dx/su/giù nella scatola=" + str(tuple(round(v, 3) for v in margini))
-        else:
-            ok_marchio, dettaglio = False, "trasformazione del marchio non riconosciuta"
-        prova(f"{relativo}: il segno nel marchio sta dentro la scatola con almeno il 3 per cento di margine per lato, "
-              "centrato in orizzontale (la prua non tocca il bordo)", ok_marchio, dettaglio)
-
-        # I colori del marchio sono quelli dell'icona (ICONA-PLANCIA-5): scafo crema,
-        # fascia dei vetri in ambra piena. Prima lo scafo era l'ambra a opacity .62 e
-        # veniva marrone, non crema. I colori si leggono dal favicon (che li ha dall'icona)
-        # e dal CSS, dove stanno come token: nel markup non c'è nessun colore.
-        colori_favicon = re.findall(
-            r"<path[^>]*fill='%23([0-9a-fA-F]{6})'",
-            (re.search(r'<link rel="icon" href="data:image/svg\+xml,([^"]*)">', pagina) or [None, ""])[1])
-        crema = colori_favicon[0].lower() if len(colori_favicon) >= 2 else None
-        ambra = colori_favicon[1].lower() if len(colori_favicon) >= 2 else None
-        stile = _leggi(radice, foglio)
-        tema_scuro = _blocco_css(stile, ":root")
-        tema_chiaro = _blocco_css(stile, 'html[data-resolved="light"] {') if con_chiaro else ""
-        regole = {c: (re.search(r"(?<![\w-])\.%s\s+\.%s\s*\{([^}]*)\}" % (re.escape(classe), c),
-                                _senza_commenti(stile)) or [None, ""])[1]
-                  for c in ("scafo", "vetri")}
-        prova(f"{relativo}: il marchio non attenua lo scafo: niente opacity né stroke-opacity, né nel markup né "
-              "nelle regole dei suoi due pezzi (l'ambra sbiadita usciva marrone)",
-              bool(corpo) and "opacity" not in corpo
-              and all(r and "opacity" not in r for r in regole.values()),
-              f"regole={regole}")
-        prova(f"{relativo}: il marchio ha un pezzo .scafo e un pezzo .vetri (uno solo per classe), con i "
-              "percorsi degli SVG dell'icona (nave e vetri), e nessun colore scritto nel markup",
-              len(re.findall(r'<path class="scafo" d="', corpo)) == 1
-              and len(re.findall(r'<path class="vetri" d="', corpo)) == 1
-              and percorsi_svg.get("nave") is not None and percorsi_svg.get("vetri") is not None
-              and f'<path class="scafo" d="{percorsi_svg["nave"]}"' in corpo
-              and f'<path class="vetri" d="{percorsi_svg["vetri"]}"' in corpo
-              and "fill=" not in corpo and "currentColor" not in corpo)
-        scafo_scuro = _riempimento(stile, f".{classe} .scafo", [tema_scuro])
-        vetri_scuro = _riempimento(stile, f".{classe} .vetri", [tema_scuro])
-        fondo_scuro = _colore_variabile(tema_scuro, "ink-0")
-        prova(f"{relativo}: nel tema scuro lo scafo del marchio è il crema dell'icona (quello del favicon), "
-              "non l'ambra, e si legge sul fondo (contrasto almeno 3)",
-              scafo_scuro is not None and scafo_scuro == crema and scafo_scuro != AMBRA
-              and fondo_scuro is not None and _contrasto(scafo_scuro, fondo_scuro) >= 3,
-              f"scafo={scafo_scuro} crema del favicon={crema} fondo={fondo_scuro}")
-        prova(f"{relativo}: nel tema scuro la fascia dei vetri del marchio è l'ambra piena dell'icona",
-              vetri_scuro is not None and vetri_scuro == AMBRA == ambra,
-              f"vetri={vetri_scuro} ambra del favicon={ambra}")
-        if con_chiaro:
-            # Nel chiaro il crema sparirebbe: lo scafo deve essere un colore che si legge sul
-            # fondo chiaro (contrasto almeno 3 con --ink-0 chiaro, la soglia dei grafici) e non
-            # il crema; la fascia resta l'ambra piena, che sta dentro lo scafo e non sul fondo.
-            scafo_chiaro = _riempimento(stile, f".{classe} .scafo", [tema_chiaro, tema_scuro])
-            vetri_chiaro = _riempimento(stile, f".{classe} .vetri", [tema_chiaro, tema_scuro])
-            fondo_chiaro = _colore_variabile(tema_chiaro, "ink-0")
-            prova(f"{relativo}: nel tema chiaro lo scafo del marchio non è il crema e si legge sul fondo chiaro "
-                  "(contrasto almeno 3 con --ink-0)",
-                  scafo_chiaro is not None and scafo_chiaro != crema and fondo_chiaro is not None
-                  and _contrasto(scafo_chiaro, fondo_chiaro) >= 3,
-                  f"scafo={scafo_chiaro} fondo={fondo_chiaro}")
-            prova(f"{relativo}: nel tema chiaro la fascia dei vetri resta l'ambra piena dell'icona",
-                  vetri_chiaro is not None and vetri_chiaro == AMBRA,
-                  f"vetri={vetri_chiaro}")
-
-    misure = _dimensioni_png(radice / "site" / "img" / "icon.png")
-    prova("site/img/icon.png è un PNG quadrato di almeno 180 px (per apple-touch-icon)",
-          misure is not None and misure[0] == misure[1] and misure[0] >= 180, str(misure))
-    # iOS riempie di nero la trasparenza di un apple-touch-icon e arrotonda da sé:
-    # serve un quadrato pieno, senza canale alfa (colour type 2 = RGB, 0 = grigio).
-    png = radice / "site" / "img" / "icon.png"
-    tipo_colore = png.read_bytes()[25] if png.is_file() and len(png.read_bytes()) > 25 else None
-    prova("site/img/icon.png è un quadrato pieno, senza canale alfa (apple-touch-icon: iOS riempie di nero la trasparenza)",
-          tipo_colore in (0, 2), f"colour type={tipo_colore}")
-    # Il PNG è un binario generato (build.sh spiega come): senza questa misura può
-    # restare al segno del giro prima senza che niente diventi rosso. È la resa iOS,
-    # a tutto riquadro: il segno sta alle coordinate della tavola per lato/1024
-    # (la barca è chiara sul blu notte: la luminanza basta a isolarla).
-    png_icona = _leggi_png(png) if png.is_file() else None
-    box_png = _riquadro_acceso(png_icona, 0.0, 1.0) if png_icona else None
-    if box_png and riquadro_segno:
-        k = png_icona[0] / 1024
-        previsto_png = tuple(v * k for v in riquadro_segno)
-        scarto = max(abs(a - b) for a, b in zip(box_png, previsto_png))
-        prova("site/img/icon.png porta il segno corrente: il riquadro dei pixel chiari sta dove lo mettono gli SVG, entro 6 px",
-              scarto <= 6 * k * 2, f"misurato={box_png} previsto={tuple(round(v) for v in previsto_png)} scarto={round(scarto, 1)}")
+    if Image is not None and testa is not None:
+        img = Image.open(png_ripiego).convert("RGBA")
+        alfa = img.getchannel("A")
+        corpo = alfa.point(lambda v: 255 if v > 200 else 0).getbbox()
+        prova("il corpo dell'icona è largo 824 px (±4) e sta al centro della tela (come le icone di macOS)",
+              corpo is not None and abs((corpo[2] - corpo[0]) - 824) <= 4 and abs((corpo[3] - corpo[1]) - 824) <= 4
+              and abs((corpo[0] + corpo[2]) / 2 - 512) <= 3 and abs((corpo[1] + corpo[3]) / 2 - 512) <= 3,
+              f"riquadro opaco={corpo}")
+        prova("gli angoli della tela sono trasparenti e il centro è opaco",
+              alfa.getpixel((0, 0)) == 0 and alfa.getpixel((1023, 1023)) == 0 and alfa.getpixel((512, 512)) == 255)
+        # a 16 px l'icona deve avere corpo (non svanire): il centro non e' vuoto e non e' un colore piatto
+        piccola = img.resize((16, 16), Image.LANCZOS)
+        colori = {piccola.getpixel((x, y))[:3] for x in range(4, 12) for y in range(4, 12)}
+        prova("a 16 px il centro ha più di un colore (ghiera, settori e legno non si impastano in una macchia)",
+              len(colori) >= 6, f"colori distinti nel centro={len(colori)}")
     else:
-        prova("site/img/icon.png porta il segno corrente: il riquadro dei pixel chiari sta dove lo mettono gli SVG, entro 6 px",
-              False, "PNG non leggibile (RGB/RGBA a 8 bit) o segno non trovato")
-    prova("site/index.html usa site/img/icon.png come apple-touch-icon",
-          'rel="apple-touch-icon" href="img/icon.png"' in _leggi(radice, "site/index.html"))
+        for nome in ("il corpo dell'icona è largo 824 px (±4) e sta al centro della tela",
+                     "gli angoli della tela sono trasparenti e il centro è opaco",
+                     "a 16 px il centro ha più di un colore"):
+            salta(nome, "manca Pillow" if Image is None else "manca la PNG", cond=testa is not None)
+
+    if Image is not None and ictool and testa is not None:
+        tmp = tempfile.mkdtemp(prefix="plancia-resa-")
+        try:
+            fuori = Path(tmp) / "resa.png"
+            giro = subprocess.run([str(ictool), str(sorgente), "--export-image", "--output-file", str(fuori),
+                                   "--platform", "macOS", "--rendition", "Default",
+                                   "--width", "824", "--height", "824", "--scale", "1"],
+                                  capture_output=True, text=True, timeout=180)
+            resa = Image.open(fuori).convert("RGBA") if fuori.is_file() and giro.returncode == 0 else None
+        except (OSError, subprocess.SubprocessError):
+            resa = None
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+        if resa is not None and resa.size == (824, 824):
+            ritaglio = Image.open(png_ripiego).convert("RGBA").crop((100, 100, 924, 924))
+            r_px, p_px, a_px = resa.load(), ritaglio.load(), resa.getchannel("A").load()
+            tot = fuori_soglia = 0
+            somma = 0
+            for y in range(0, 824, 3):
+                for x in range(0, 824, 3):
+                    if a_px[x, y] == 255:
+                        d = max(abs(r_px[x, y][c] - p_px[x, y][c]) for c in range(3))
+                        tot += 1
+                        somma += d
+                        fuori_soglia += d > 10
+            media = somma / tot if tot else 999
+            prova("la PNG di ripiego è la resa di ictool del .icon: media della differenza sotto 2 livelli, "
+                  "quasi nessun pixel oltre 10 (il .icon è cambiato e la PNG no?)",
+                  tot > 1000 and media < 2 and fuori_soglia / max(tot, 1) < 0.01,
+                  f"pixel={tot} media={media:.2f} oltre10={fuori_soglia}")
+        else:
+            prova("la PNG di ripiego è la resa di ictool del .icon", False, "ictool non ha reso il .icon a 824 px")
+    else:
+        salta("la PNG di ripiego è la resa di ictool del .icon",
+              "manca ictool (Xcode 26 o piu' recente)" if not ictool else "manca Pillow")
+
+    # L'iconset vero: gli stessi passi di build.sh sulla PNG committata
+    if sys.platform == "darwin" and shutil.which("sips") and shutil.which("iconutil") and elenco and testa is not None:
+        tmp = Path(tempfile.mkdtemp(prefix="plancia-iconset-"))
+        try:
+            iconset = tmp / "Plancia.iconset"
+            iconset.mkdir()
+            ok = True
+            for px, nome in elenco:
+                r = subprocess.run(["sips", "-z", px, px, str(png_ripiego), "--out", str(iconset / f"icon_{nome}.png")],
+                                   capture_output=True, timeout=60)
+                ok = ok and r.returncode == 0
+            r = subprocess.run(["iconutil", "-c", "icns", str(iconset), "-o", str(tmp / "Plancia.icns")],
+                               capture_output=True, timeout=60)
+            ok = ok and r.returncode == 0 and (tmp / "Plancia.icns").is_file() and (tmp / "Plancia.icns").stat().st_size > 10000
+        except (OSError, subprocess.SubprocessError):
+            ok = False
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+        prova("gli stessi passi del ripiego (sips e iconutil) sulla PNG committata danno un icns", ok)
+    else:
+        salta("gli stessi passi del ripiego (sips e iconutil) sulla PNG committata danno un icns", "manca sips o iconutil")
+
+    # ------------------------------------------------------------ favicon e marchio
+    payload_favicon = {}
+    for relativo, classe, foglio, tema_chiaro in (("web/index.html", "brand-mark", "web/style.css", True),
+                                                  ("site/index.html", "bussola", "site/style.css", False)):
+        pagina = _leggi(radice, relativo)
+        fav = _png_da_pagina(pagina, r'<link rel="icon" href="data:image/png;base64,([A-Za-z0-9+/=]+)">')
+        testa_fav = _ihdr(fav[:26]) if fav else None
+        prova(f"{relativo}: il favicon è una PNG da 64x64 in data URI (la resa dell'icona)",
+              testa_fav is not None and testa_fav[:2] == (64, 64) and testa_fav[3] == 6, str(testa_fav))
+        marchio = re.search(r'<img class="%s" src="data:image/png;base64,([A-Za-z0-9+/=]+)"([^>]*)>' % classe, pagina)
+        mb = base64.b64decode(marchio.group(1)) if marchio else None
+        prova(f"{relativo}: il marchio accanto al nome (.{classe}) è un <img> con la stessa PNG del favicon",
+              fav is not None and mb == fav and ' alt=""' in marchio.group(2)
+              and re.search(r'width="\d+"', marchio.group(2)) is not None
+              and re.search(r'height="\d+"', marchio.group(2)) is not None)
+        prova(f"{relativo}: non restano SVG del segno di prima (né favicon svg né <svg> del marchio)",
+              "data:image/svg" not in pagina and not re.search(r'<svg[^>]*class="%s"' % classe, pagina))
+        payload_favicon[relativo] = fav
+
+        stile = _senza_commenti(_leggi(radice, foglio))
+        m_css = re.search(r"(?<![\w-])\.%s\s*\{([^}]*)\}" % classe, stile)
+        dim = re.search(r"width:\s*(\d+)px;\s*height:\s*(\d+)px", m_css.group(1)) if m_css else None
+        prova(f"{foglio}: .{classe} ha larghezza e altezza fisse, uguali, e nessuna regola per pezzi SVG",
+              dim is not None and dim.group(1) == dim.group(2)
+              and not re.search(r"\.(?:scafo|vetri)\b", stile)
+              and "--marchio-" not in stile and "--crema" not in stile,
+              str(dim.groups() if dim else None))
+
+        # stacco dal fondo: il bordo del riquadro (media dei pixel del perimetro, opachi)
+        # deve avere contrasto almeno 1,4 con lo sfondo del tema, o il marchio si perde.
+        if Image is not None and fav:
+            im = Image.open(io.BytesIO(fav)).convert("RGBA")
+            bordo = [im.getpixel((x, y)) for x in range(64) for y in range(64)
+                     if (x in (4, 59) or y in (4, 59)) and 4 <= x <= 59 and 4 <= y <= 59]
+            bordo = [p for p in bordo if p[3] > 200]
+            medio = "".join("%02x" % round(sum(p[c] for p in bordo) / len(bordo)) for c in range(3)) if bordo else None
+            fondi = [_colore_variabile(_blocco_css(_leggi(radice, foglio), ":root"), "ink-0")]
+            if tema_chiaro:
+                fondi.append(_colore_variabile(_blocco_css(_leggi(radice, foglio), 'html[data-resolved="light"] {'), "ink-0"))
+            contrasti = [round(_contrasto(medio, f), 2) if medio and f else None for f in fondi]
+            prova(f"{relativo}: il marchio stacca dal fondo di ogni tema (contrasto del bordo almeno 1,4)",
+                  all(c is not None and c >= 1.4 for c in contrasti), f"bordo={medio} contrasti={contrasti}")
+        else:
+            salta(f"{relativo}: il marchio stacca dal fondo di ogni tema", "manca Pillow", cond=bool(fav))
+
+    prova("dashboard e sito usano la stessa PNG per il favicon",
+          payload_favicon.get("web/index.html") is not None
+          and payload_favicon.get("web/index.html") == payload_favicon.get("site/index.html"))
+
+    sito = _leggi(radice, "site/index.html")
+    prova("site/index.html: l'apple-touch-icon punta a img/icon.png",
+          '<link rel="apple-touch-icon" href="img/icon.png">' in sito)
+    testa_ic = _ihdr_file(radice / "site" / "img" / "icon.png")
+    prova("site/img/icon.png è 512x512, RGB a 8 bit, senza canale alfa",
+          testa_ic is not None and testa_ic[:2] == (512, 512) and testa_ic[2] == 8 and testa_ic[3] == 2, str(testa_ic))
+    fav = payload_favicon.get("site/index.html")
+    if Image is not None and fav and testa_ic is not None:
+        grande = Image.open(radice / "site" / "img" / "icon.png").convert("RGB")
+        piccolo = Image.open(io.BytesIO(fav)).convert("RGBA")
+
+        def media(im, riquadro):
+            reg = im.crop(riquadro).convert("RGB").resize((1, 1), Image.BOX)
+            return reg.getpixel((0, 0))
+        a = media(grande, (128, 128, 384, 384))
+        b = media(piccolo, (16, 16, 48, 48))
+        diff = max(abs(x - y) for x, y in zip(a, b))
+        prova("site/img/icon.png ha i colori dell'icona: il centro combacia col favicon (differenza sotto 14)",
+              diff < 14, f"icon.png={a} favicon={b}")
+        angoli = [grande.getpixel(p) for p in ((0, 0), (511, 0), (0, 511), (511, 511))]
+        prova("site/img/icon.png ha gli angoli pieni di legno (non un colore piatto, non nero)",
+              all(sum(c) > 90 for c in angoli) and len(set(angoli)) > 1, str(angoli))
+    else:
+        salta("site/img/icon.png ha i colori dell'icona", "manca Pillow", cond=testa_ic is not None)
+        salta("site/img/icon.png ha gli angoli pieni di legno", "manca Pillow", cond=testa_ic is not None)

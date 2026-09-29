@@ -105,13 +105,6 @@
   --amber: #e8934e;
   --amber-soft: rgba(232, 147, 78, .13);
   --amber-line: rgba(232, 147, 78, .32);
-  /* i due colori del marchio accanto al nome, che sono quelli dell'icona
-     (mac/icona/Plancia.icon): lo scafo è crema (#f4efe6, lo stesso del favicon),
-     la fascia dei vetri è ambra piena. Non passano da --amber perché --amber
-     cambia col tema (nel chiaro si scurisce, per il contrasto del testo) e lo
-     scafo non è un accento ma la sagoma: attenuato in ambra usciva marrone. */
-  --marchio-scafo: #f4efe6;
-  --marchio-vetri: #e8934e;
   /* i due agenti hanno una temperatura diversa, calda e fredda */
   --claude: #e8934e;
   --codex: #8fb8d9;
@@ -307,13 +300,6 @@ html[data-resolved="light"] {
   --amber: #a95c14;
   --amber-soft: rgba(169, 92, 20, .10);
   --amber-line: rgba(169, 92, 20, .28);
-  /* Marchio nel chiaro: il crema sul fondo chiaro sparirebbe, quindi lo scafo
-     prende il blu notte dell'icona (#12161f, il fondo del riquadro): stessi due
-     colori dell'icona a ruoli scambiati, contrasto ~16:1 sul fondo (--ink-0).
-     La fascia resta nell'ambra dell'icona, non in --amber scurito: sta dentro lo
-     scafo (è un buco che il vetro riempie), non sul fondo della pagina, e su
-     #12161f l'ambra piena fa ~7,5:1 dove quella scurita farebbe ~3,6:1. */
-  --marchio-scafo: #12161f;
   --claude: #a95c14;
   --codex: #3f6f9c;
   --nominal: #1c7f62;
@@ -503,9 +489,9 @@ h1, h2, h3, h4 { margin: 0; font-weight: 400; }
   display: flex; gap: var(--s3); align-items: center;
   padding: var(--s5) var(--s4) var(--s4);
 }
-.brand-mark { width: 24px; height: 24px; flex: none; }
-.brand-mark .scafo { fill: var(--marchio-scafo); }
-.brand-mark .vetri { fill: var(--marchio-vetri); }
+/* Il marchio e' la PNG dell'icona (mac/icona/pagine.py): legno e ottone stanno
+   bene sul fondo chiaro e su quello scuro, quindi non ha bisogno di colori per tema. */
+.brand-mark { width: 24px; height: 24px; flex: none; display: block; }
 .brand b {
   display: block; font-family: var(--serif); font-size: var(--t-lg); font-weight: 400;
   letter-spacing: -.015em; line-height: 1.1;
