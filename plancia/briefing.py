@@ -132,7 +132,7 @@ def build(conn=None, project=None, limit_projects=6, esteso=True) -> str:
                 lines.append(f"- {_ago(e['ts'])} · {e['kind']}: {(e['title'] or '')[:70]}{tag}")
 
         lines.append(
-            "\nPlancia è l'archivio del suo lavoro con l'IA. Usa i tool `plancia_*` "
+            "\nPlancia è l'archivio del lavoro dell'utente con l'IA. Usa i tool `plancia_*` "
             "per leggere il contesto, aggiungere task, registrare quello che fai e i post "
             "sociali. Dashboard: http://127.0.0.1:%d" % config.load_config().get("port", 7773)
         )

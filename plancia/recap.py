@@ -310,9 +310,9 @@ NOMI_LINGUA = {"it": "italiano", "en": "English", "es": "español", "fr": "fran�
                "de": "Deutsch", "pt": "português"}
 
 PROMPT = """Sei l'assistente vocale personale di chi legge. Ricevi i dati reali della
-sua giornata di lavoro con l'IA, in JSON.
+giornata di lavoro con l'IA dell'utente, in JSON.
 
-Scrivi il briefing che gli leggerai ad alta voce, in {lingua}, massimo {parole} parole.
+Scrivi il briefing che leggerai all'utente ad alta voce, in {lingua}, massimo {parole} parole.
 
 Regole:
 - si ascolta, non si legge: niente elenchi puntati, niente titoli, niente markdown,
@@ -332,7 +332,7 @@ DOMANDA = """Sei l'assistente personale di chi ti parla. Rispondi in {lingua}, a
 massimo {parole} parole. Niente markdown, niente elenchi, niente trattini lunghi.
 Rispondi solo con quello che risulta dai dati; se il dato non c'è, dillo.
 
-Contesto del suo lavoro:
+Contesto del lavoro dell'utente:
 {contesto}
 
 Domanda: {domanda}"""
@@ -547,7 +547,7 @@ def answer(question: str, lang=None, conn=None, parole=110, schede=None) -> str:
         pezzi = [briefing.build(conn)]
         hits = schede(question) if schede else store.search(conn, question, 8)
         if hits:
-            pezzi.append("Risultati di ricerca sul suo archivio:\n" +
+            pezzi.append("Risultati di ricerca sull'archivio dell'utente:\n" +
                          json.dumps(hits, ensure_ascii=False)[:2500])
         dati = collect(conn)
         pezzi.append("Dati di oggi:\n" +

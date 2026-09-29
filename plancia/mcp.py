@@ -44,7 +44,7 @@ _TUTTI = [
         "name": "plancia_briefing",
         "description": (
             "Read first in any session about the user's own work. Returns the current "
-            "state of his AI work: active projects, open tasks, queued social posts, "
+            "state of that AI work: active projects, open tasks, queued social posts, "
             "recent activity. Optionally scoped to one project."),
         "inputSchema": _s("", project={**STR, "description": "project key or name (optional)"}),
     },
@@ -134,19 +134,19 @@ _TUTTI = [
     {
         "name": "plancia_recap",
         "description": (
-            "The spoken daily recap of his work: sessions, commits, tasks closed and "
-            "open, posts, what to pick up next. Use it when he asks how the day went, "
-            "what he got done, or for a briefing. Pass speak=true to read it aloud on "
-            "his Mac. lang: it, en, es, fr, de, pt."),
+            "The spoken daily recap of the user's work: sessions, commits, tasks closed "
+            "and open, posts, what to pick up next. Use it when the user asks how the "
+            "day went, what they got done, or for a briefing. Pass speak=true to read "
+            "it aloud on the user's Mac. lang: it, en, es, fr, de, pt."),
         "inputSchema": _s("", lang=STR, day={**STR, "description": "YYYY-MM-DD, default today"},
                           speak={"type": "boolean"}),
     },
     {
         "name": "plancia_speak",
         "description": (
-            "Read a text out loud on his Mac, in the language given. Use only when he "
-            "asks to hear something. Keep it short and written to be listened to: no "
-            "lists, no markdown, no file paths."),
+            "Read a text out loud on the user's Mac, in the language given. Use only "
+            "when the user asks to hear something. Keep it short and written to be "
+            "listened to: no lists, no markdown, no file paths."),
         "inputSchema": _s("", text=STR, lang=STR),
     },
     {
@@ -234,7 +234,7 @@ CODA = {t["name"].removeprefix("plancia_"): t for t in _TUTTI if t["name"] not i
 #: costa quindici schemi, ed e' esattamente la spesa che questo tool evita:
 #: chi ha bisogno degli argomenti chiede azione='aiuto' e li paga una volta sola.
 INDIZI = {
-    "briefing": "state of his work now",
+    "briefing": "state of the user's work now",
     "projects": "list projects",
     "tasks": "list tasks",
     "posts": "list social drafts",
@@ -712,7 +712,7 @@ def handle(req: dict) -> None:
             "serverInfo": {"name": "plancia", "version": VERSION},
             "instructions": (
                 "Plancia is the user's control centre for their AI work. Call "
-                "plancia_briefing at the start of a session about his projects, and "
+                "plancia_briefing at the start of a session about their projects, and "
                 "record tasks, decisions and social posts as they happen."),
         })
     elif method == "ping":

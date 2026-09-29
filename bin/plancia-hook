@@ -304,7 +304,7 @@ def ancoraggio(cwd, filtro=None):
             "solo la shell. Appena sai su quale progetto si lavora, PRIMA di scrivere "
             "qualsiasi cosa, chiama mcp__ccd_directory__change_directory con il percorso "
             "assoluto del progetto: la sessione si sposta li' e i file si aprono. Se non "
-            "lo sai, chiediglielo. Per una seconda cartella oltre al progetto, "
+            "lo sai, chiedilo all'utente. Per una seconda cartella oltre al progetto, "
             "mcp__ccd_directory__request_directory.\n" + elenco
         )
 
