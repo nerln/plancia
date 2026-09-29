@@ -1239,8 +1239,8 @@ def _prova_guardie(prova, base: Path) -> None:
                               {"domanda": "task", "voce": False, "lang": "it"})
             passato = segnale.read_text("utf-8") if segnale.exists() else ""
             pezzo = ""
-            if "Risultati di ricerca sul suo archivio:" in passato:
-                pezzo = passato.split("Risultati di ricerca sul suo archivio:", 1)[1]
+            if "Risultati di ricerca sull'archivio dell'utente:" in passato:
+                pezzo = passato.split("Risultati di ricerca sull'archivio dell'utente:", 1)[1]
                 pezzo = pezzo.split("Dati di oggi:", 1)[0]
             altri_ = [x for x in MARCHI if x != comp]
             prova("voce %s: la domanda arriva al modello (con il contesto)" % comp,

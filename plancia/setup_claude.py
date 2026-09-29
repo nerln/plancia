@@ -200,14 +200,14 @@ description: >-
   Consulta e aggiorna Plancia, il centro di controllo del lavoro dell'utente con
   l'IA: progetti, task, post sociali, sessioni passate, memoria. Usala quando
   chiede "a che punto sono", "cosa avevo lasciato", "cosa devo fare oggi",
-  "dove l'avevamo fatto", quando apre un progetto suo, quando un lavoro finisce
-  e va registrato, e prima di scrivere post sociali. Anche per "aggiorna
+  "dove l'avevamo fatto", quando apre uno dei propri progetti, quando un lavoro
+  finisce e va registrato, e prima di scrivere post sociali. Anche per "aggiorna
   plancia", "segna questo", "apri la dashboard".
 ---
 
 # Plancia
 
-Plancia è l'archivio unico del suo lavoro con l'IA. Sta in `~/dev/plancia`,
+Plancia è l'archivio unico del lavoro dell'utente con l'IA. Sta in `~/dev/plancia`,
 i dati in `~/.plancia/plancia.db`, la dashboard su http://127.0.0.1:7773.
 Il server MCP espone sei tool diretti (`plancia_search`, `plancia_task_add`,
 `plancia_task_update`, `plancia_log`, `plancia_project_update`,
@@ -218,10 +218,10 @@ un'azione che non conosci). Se non vedi nessuno di questi tool, il server non
 
 ## All'inizio
 
-Se la conversazione riguarda un suo progetto, chiama `plancia` con
+Se la conversazione riguarda un progetto dell'utente, chiama `plancia` con
 `azione="briefing"` prima di rispondere. Restituisce progetti attivi, task
-aperti, post in coda e ultima attività. Costa poco ed evita di chiedergli
-cose che sono già scritte.
+aperti, post in coda e ultima attività. Costa poco ed evita di chiedere
+all'utente cose che sono già scritte.
 
 Se dice "ne avevamo già parlato" o cerchi un lavoro passato, usa `plancia_search`:
 indicizza le sessioni di Claude Code, la memoria, i task, i post e i commit.
@@ -242,7 +242,7 @@ conversazione.
 
 Prima di chiudere un lavoro sostanziale: aggiorna `next_action` del progetto e
 chiudi i task fatti con `plancia_task_update`. Non serve chiedere il permesso per
-scrivere in Plancia: è il suo archivio, non un'azione verso l'esterno.
+scrivere in Plancia: è l'archivio dell'utente, non un'azione verso l'esterno.
 
 ## La lavagna
 
@@ -268,18 +268,18 @@ per riaprirla. Poi, secondo lo stato:
 - **viva**: la sessione è ancora aperta da qualche parte. Consegna il
   messaggio "riprendi il task N di Plancia: <titolo>" alla sessione indicata
   con lo strumento `send_message` dell'app desktop, se lo vedi tra i tuoi
-  tool; se non c'è, digli la cartella e la sessione e dagli da incollare lo
-  stesso messaggio, "riprendi il task N di Plancia: <titolo>", e lascia che
-  la riapra lui.
-- **chiusa**: di' a Eugenio il comando da aprire nel Terminale; richiama
-  `plancia` con `azione="riprendi", apri=true` solo se te lo chiede lui, perché
-  apre un Terminale sul suo Mac, un'azione verso l'esterno.
+  tool; se non c'è, indica all'utente la cartella e la sessione, con lo
+  stesso messaggio da incollare, "riprendi il task N di Plancia: <titolo>", e
+  lascia che sia l'utente a riaprirla.
+- **chiusa**: di' all'utente il comando da aprire nel Terminale; richiama
+  `plancia` con `azione="riprendi", apri=true` solo se l'utente te lo chiede,
+  perché apre un Terminale sul Mac dell'utente, un'azione verso l'esterno.
 - **persa**: spiega il motivo (cartella sparita, macchina diversa, sessione
   troppo vecchia) e proponi di ripartire da capo invece di inseguirla.
 
 Riprendere vuol dire tornare nella conversazione di prima, non farne partire
 una nuova che scrive da sola: qui non si lancia niente in autonomia.
-In background resta un'opzione secondaria che sceglie lui dalla dashboard,
+In background resta un'opzione secondaria che sceglie l'utente dalla dashboard,
 non un'azione che decidi tu.
 
 ## Le proposte
@@ -296,7 +296,7 @@ deve puntare al lavoro reale che sta dietro al post: sha di un commit, nome di u
 repo, id di una sessione. La regola dell'account è che ogni post nasce da qualcosa
 che è successo davvero.
 
-**Ogni post nasce con la sua immagine.** Il campo `media` è il percorso del file
+**Ogni post nasce con un'immagine propria.** Il campo `media` è il percorso del file
 che esce insieme al testo, e si riempie quando si scrive la bozza, non al momento
 di pubblicare: dopo non c'è più sotto mano il lavoro da cui è uscita. Un post
 senza immagine è l'eccezione e va motivata.
@@ -316,7 +316,7 @@ l'url quando un post è davvero online.
 ## Voce
 
 `plancia` con `azione="recap"` restituisce il riepilogo della giornata scritto
-per essere ascoltato. Con `speak=true` lo legge ad alta voce sul suo Mac.
+per essere ascoltato. Con `speak=true` lo legge ad alta voce sul Mac dell'utente.
 `azione="speak"` legge un testo qualsiasi: usalo solo se lo chiede, e scrivi
 per l'orecchio, non per l'occhio.
 
@@ -375,16 +375,16 @@ SKILL_EN = """---
 name: plancia
 description: >-
   Reads and updates Plancia, the control centre for the user's work with AI:
-  projects, tasks, social posts, past sessions, memory. Use it when he asks
-  "where was I", "what did I leave off", "what should I do today", "where did
-  we do this", when he opens one of his projects, when a piece of work is
-  finished and needs recording, and before writing social posts. Also for
+  projects, tasks, social posts, past sessions, memory. Use it when the user
+  asks "where was I", "what did I leave off", "what should I do today", "where
+  did we do this", when they open one of their projects, when a piece of work
+  is finished and needs recording, and before writing social posts. Also for
   "update plancia", "mark this", "open the dashboard".
 ---
 
 # Plancia
 
-Plancia is the single archive of his work with AI. It lives in `~/dev/plancia`,
+Plancia is the single archive of the user's work with AI. It lives in `~/dev/plancia`,
 the data in `~/.plancia/plancia.db`, the dashboard at http://127.0.0.1:7773.
 The MCP server exposes six direct tools (`plancia_search`, `plancia_task_add`,
 `plancia_task_update`, `plancia_log`, `plancia_project_update`,
@@ -395,12 +395,13 @@ connected, and you register it with `plancia install`.
 
 ## At the start
 
-If the conversation is about one of his projects, call `plancia` with
+If the conversation is about one of the user's projects, call `plancia` with
 `azione="briefing"` before answering. It returns active projects, open
 tasks, queued posts and the latest activity. It costs little and saves
-asking him things that are already written down.
+asking the user things that are already written down.
 
-If he says "we already talked about this" or you are looking for past work,
+If the user says "we already talked about this" or you are looking for past
+work,
 use `plancia_search`: it indexes Claude Code sessions, memory, tasks, posts
 and commits. `plancia` with `azione="sessions"` gives the list with the
 command to resume the conversation.
@@ -419,15 +420,15 @@ command to resume the conversation.
 
 Before closing a substantial piece of work: update the project's
 `next_action` and close finished tasks with `plancia_task_update`. You do not
-need to ask permission to write to Plancia: it is his own archive, not an
-action toward the outside world.
+need to ask permission to write to Plancia: it is the user's own archive, not
+an action toward the outside world.
 
 ## The board
 
 `plancia` with `azione="lavagna"` is the single list of everything open right
 now, across all three: Claude Code's task lists, Codex's objectives,
-Plancia's own tasks. Use it when he asks "what's open", "what are we stuck
-on", "what is Codex doing". States are reported with the same five words:
+Plancia's own tasks. Use it when the user asks "what's open", "what are we
+stuck on", "what is Codex doing". States are reported with the same five words:
 open, in progress, blocked, done, gone.
 
 `azione="lanci"` says how a run that already started went: outcome, tokens,
@@ -440,31 +441,32 @@ Every task created with `plancia_task_add` remembers where it came from: the
 session, the folder, the agent and the machine. Closing the terminal does not
 lose it.
 
-If he asks "resume task N", call `plancia` with `azione="riprendi"` and `id`
+If the user asks "resume task N", call `plancia` with `azione="riprendi"` and `id`
 (task N): it answers with the status, the session, the folder and the command
 to reopen it. Then, depending on the status:
 
 - **viva** (alive): the session is still open somewhere. Deliver the message
   "riprendi il task N di Plancia: <titolo>" to the indicated session with the
   desktop app's `send_message` tool, if you see it among your tools; if it is
-  not there, tell him the folder and the session and give him the same
-  message, "riprendi il task N di Plancia: <titolo>", to paste, and let him
+  not there, tell the user the folder and the session and give them the same
+  message, "riprendi il task N di Plancia: <titolo>", to paste, and let them
   reopen it.
-- **chiusa** (closed): tell Eugenio the command to open in the Terminal; call
-  `plancia` again with `azione="riprendi", apri=true` only if he asks you to,
-  because it opens a Terminal on his Mac, an action toward the outside world.
+- **chiusa** (closed): tell the user the command to open in the Terminal; call
+  `plancia` again with `azione="riprendi", apri=true` only if the user asks you
+  to, because it opens a Terminal on the user's Mac, an action toward the
+  outside world.
 - **persa** (lost): explain why (folder gone, different machine, session too
   old) and propose starting over instead of chasing it.
 
 Resuming means going back to the earlier conversation, not starting a new one
 that writes on its own: nothing gets launched autonomously here. Running it
-in background stays a secondary option he picks from the dashboard, not a
+in background stays a secondary option the user picks from the dashboard, not a
 choice you make on your own.
 
 ## The proposals
 
 The daily recap ends with the thing that would be worth doing, computed from
-signals in the data and never invented. If he asks "what should I do now",
+signals in the data and never invented. If the user asks "what should I do now",
 `plancia` with `azione="recap"` already has it: do not add one of your own on
 top, at most explain why one comes first.
 
@@ -496,16 +498,17 @@ attach the image from the system clipboard. Plancia keeps the count:
 ## Voice
 
 `plancia` with `azione="recap"` returns the day's recap written to be
-listened to. With `speak=true` it reads it aloud on his Mac. `azione="speak"`
-reads any text: use it only if he asks, and write for the ear, not the eye.
+listened to. With `speak=true` it reads it aloud on the user's Mac.
+`azione="speak"` reads any text: use it only if the user asks, and write for
+the ear, not the eye.
 
-The languages are it, en, es, fr, de, pt. If he does not specify one, the one
-in `~/.plancia/config.json` applies.
+The languages are it, en, es, fr, de, pt. If the user does not specify one, the
+one in `~/.plancia/config.json` applies.
 
 ## Jarvis
 
 `plancia://jarvis` opens the hands-free voice panel, or ⌥Space from any app.
-It listens continuously, tells from the silence when he has finished
+It listens continuously, tells from the silence when the user has finished
 speaking, acts and answers by voice. The commands it recognizes on its own
 (opening a view, marking a task, closing it, rereading the sources, the
 recap) run right away; everything else reaches Claude Code with the
@@ -514,8 +517,8 @@ recap) run right away; everything else reaches Claude Code with the
 You can interrupt it while it speaks: just start talking again, the
 microphone stays open even while it answers. "Cancel" stops a run that
 started, "stop" closes the panel, "repeat" says the last thing again, "slower"
-and "faster" change the voice's speed. When a run finishes it tells him by
-voice even if he was doing something else in the meantime.
+and "faster" change the voice's speed. When a run finishes it tells the user
+by voice even if they were doing something else in the meantime.
 
 `plancia jarvis "sentence"` does the same thing from the terminal, without a
 microphone.
@@ -556,7 +559,8 @@ RIEPILOGO_SKILL_IT = """---
 name: riepilogo
 description: >-
   Racconta all'utente com'è andata la giornata di lavoro con l'IA, con i dati
-  veri di Plancia, e se vuole gliela legge ad alta voce nella lingua che usa.
+  veri di Plancia, e se l'utente vuole la legge ad alta voce nella lingua che
+  usa.
   Usala per "com'è andata oggi", "riepilogo", "cosa ho fatto", "leggimi il
   riepilogo", "briefing", "recap", "resumen", "what did I get done".
 ---
@@ -569,7 +573,7 @@ dati reali, con `plancia` e `azione="recap"`.
 ## Come farlo
 
 1. Chiama `plancia` con `azione="recap"`. Senza altri argomenti è la giornata
-   di oggi nella sua lingua. `day` accetta AAAA-MM-GG per un giorno passato,
+   di oggi nella lingua dell'utente. `day` accetta AAAA-MM-GG per un giorno passato,
    `lang` cambia lingua.
 2. Riporta il testo com'è. È già scritto per essere ascoltato: frasi corte,
    niente elenchi, niente markdown. Non riformattarlo in punti elenco.
@@ -588,12 +592,12 @@ nasce da un segnale nei dati. Un lancio fallito, un obiettivo di Codex senza
 quota, file non committati da ieri, un post approvato e mai uscito, il prossimo
 passo di un progetto fermo.
 
-Se lui risponde "fallo", "la seconda", "eseguilo" su una proposta che riprende
-un task Plancia, chiama `plancia` con `azione="riprendi"` e l'`id` di quel
-task (vedi la skill `plancia`, sezione "Riprendere un task": i tre stati
-viva/chiusa/persa), oppure diglielo a voce se non sai quale id è. **Non
+Se l'utente risponde "fallo", "la seconda", "eseguilo" su una proposta che
+riprende un task Plancia, chiama `plancia` con `azione="riprendi"` e l'`id` di
+quel task (vedi la skill `plancia`, sezione "Riprendere un task": i tre stati
+viva/chiusa/persa), oppure dì all'utente a voce che non sai quale id è. **Non
 lanciare niente in autonomia**: il modo predefinito guarda e riferisce, e "In
-background" resta al più un'opzione secondaria che scegli lui, non tu.
+background" resta al più un'opzione secondaria che sceglie l'utente, non tu.
 
 Se il segnale non c'è, la proposta non c'è, ed è voluto. Non aggiungerne una tua
 per riempire il finale.
@@ -604,8 +608,8 @@ Non aggiungere risultati che non sono nei dati. Se la giornata è stata vuota, i
 riepilogo lo dice in una riga e va bene così: riempirlo di frasi di incoraggiamento
 lo rende inutile la volta dopo.
 
-Non leggere ad alta voce senza che lo abbia chiesto. L'audio esce dalle casse del
-suo Mac e potrebbe non essere solo.
+Non leggere ad alta voce senza che lo abbia chiesto. L'audio esce dalle casse
+del Mac dell'utente e nella stanza potrebbero esserci altre persone.
 
 Non riscrivere il testo per la voce: ci pensa Plancia, che toglie indirizzi,
 percorsi e sha prima di dirlo, perché letti ad alta voce sono una filastrocca.
@@ -622,8 +626,8 @@ lo lancia da una scorciatoia di sistema.
 RIEPILOGO_SKILL_EN = """---
 name: riepilogo
 description: >-
-  Tells the user how his day of work with AI went, from Plancia's real data,
-  and reads it aloud in his language if he asks. Use it for "how did today
+  Tells the user how their day of work with AI went, from Plancia's real data,
+  and reads it aloud in their language if they ask. Use it for "how did today
   go", "recap", "what did I get done", "read me the recap", "briefing",
   "resumen", "riepilogo".
 ---
@@ -636,16 +640,16 @@ from real data, with `plancia` and `azione="recap"`.
 ## How to do it
 
 1. Call `plancia` with `azione="recap"`. With no other arguments it is
-   today, in his language. `day` takes YYYY-MM-DD for a past day, `lang`
+   today, in the user's language. `day` takes YYYY-MM-DD for a past day, `lang`
    changes the language.
 2. Report the text as it is. It is already written to be heard: short
    sentences, no lists, no markdown. Do not reformat it into bullet points.
-3. If he asks to hear it ("read it to me", "say it", "out loud"), call
+3. If the user asks to hear it ("read it to me", "say it", "out loud"), call
    `plancia` again with `azione="recap", speak=true`, or `azione="speak"`
    if you want to read back an answer of your own.
 
 Inside `dati` is the whole detail: sessions, commits, tasks closed and open,
-posts, stalled projects. Use it to answer whatever he asks next, without
+posts, stalled projects. Use it to answer whatever the user asks next, without
 regenerating the recap.
 
 ## The recap ends with a proposal
@@ -655,12 +659,12 @@ generic advice: it comes from a signal in the data. A failed run, a Codex
 goal out of quota, files uncommitted since yesterday, an approved post that
 never went out, the next step of a stalled project.
 
-If he answers "do it", "the second one", "run it" on a proposal that resumes
-a Plancia task, call `plancia` with `azione="riprendi"` and that task's `id`
-(see the `plancia` skill, section "Resuming a task": the three states
-alive/closed/lost), or tell him out loud if you do not know which id it is.
-**Never launch anything on your own**: the default mode reads and reports,
-and "In background" stays at most a secondary option he picks, not you.
+If the user answers "do it", "the second one", "run it" on a proposal that
+resumes a Plancia task, call `plancia` with `azione="riprendi"` and that task's
+`id` (see the `plancia` skill, section "Resuming a task": the three states
+alive/closed/lost), or tell the user out loud if you do not know which id it
+is. **Never launch anything on your own**: the default mode reads and reports,
+and "In background" stays at most a secondary option the user picks, not you.
 
 If there is no signal, there is no proposal, and that is on purpose. Do not
 add one of your own to fill the ending.
@@ -671,8 +675,8 @@ Do not add results that are not in the data. If the day was empty, the
 recap says so in one line and that is fine: filling it with encouraging
 phrases makes it useless the next time.
 
-Do not read it aloud without being asked. The audio comes out of his Mac's
-speakers, and he might not be alone.
+Do not read it aloud without being asked. The audio comes out of the user's
+Mac speakers, and the user might not be alone.
 
 Do not rewrite the text for speech: Plancia already does that, stripping
 addresses, paths and shas before saying it, because read aloud they sound

@@ -234,7 +234,7 @@ def main():
     prova("e il filtro sul progetto usa lo stesso nome",
           len(_t.cerca(conn, "inkfloor", limit=10, progetto="Progetto Vero")) == 1)
     prova("una scratchpad sotto /private/tmp non diventa lavoro vero",
-          _t._etichetta("-private-tmp-claude-501-Users-eugenionerelli-Library-"
+          _t._etichetta("-private-tmp-claude-501-Users-utente-Library-"
                         "CloudStorage-GoogleDrive-x-Il-mio-Drive-abc-scratchpad") == "tmp")
     prova("e un worktree di Claude resta il suo progetto",
           _t._etichetta(_t.CASA + "-dev-scriba--claude-worktrees-stoic-mayer") == "scriba")
