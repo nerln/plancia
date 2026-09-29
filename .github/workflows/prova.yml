@@ -10,17 +10,24 @@
 # Cosa e' provato dove:
 # - tools/prove/piattaforma.py controlla i comandi che Plancia COSTRUISCE per tutte
 #   e tre le piattaforme (terminale, appunti, voce, notifica, avvio automatico,
-#   MCP, hook), senza eseguirli. Su Linux e macOS blocca. Su Windows blocca anche,
-#   ma NON e' mai girata su un Windows vero: qui si e' provata solo imitando Path
-#   di Windows e l'assenza di os.getuid. Il primo giro della CI e' la sua verifica,
-#   e potrebbe uscire rosso: se il rosso e' della prova va corretto la', non tolto
-#   il passo.
-# - la suite intera (tools/prova.py) e il front (tools/prova-front.py) su Windows
-#   girano ma NON bloccano: molte prove dei lotti piu' vecchi lanciano gli script
-#   di bin/ direttamente (lo shebang non esiste su Windows) o assumono percorsi
-#   POSIX, e nessuno le ha ancora portate. Sono SOLO POSIX finche' non lo si fa: il
-#   passo e' rosso su Windows senza fermare il resto, cosi' si vede quali sono,
-#   una alla volta. Su Linux e macOS il rosso blocca come sempre.
+#   MCP, hook), senza eseguirli. Blocca su tutti e tre i sistemi. Su un Windows vero
+#   e' girata al primo giro completo della CI (run 36573487970): 147 passate e 0
+#   fallite su tutti e due i Python. Se un giorno esce rossa, il rosso della prova
+#   va corretto la', non tolto il passo.
+# - il front (tools/prova-front.py) su Windows BLOCCA come sugli altri sistemi: al
+#   primo giro completo (run 36573487970) ha dato 442 passate e 0 fallite su tutti
+#   e due i Python, ed e' stato visto verde, non dedotto.
+# - la suite intera (tools/prova.py) su Windows gira ma NON blocca. Al primo giro
+#   completo il passo cadeva in tre punti: percorsi finti alla POSIX che su Windows
+#   si normalizzano con la barra rovesciata, la casa finta della prova
+#   d'installazione (su Windows `Path.home()` legge USERPROFILE, non HOME) e uno
+#   script di bin/ lanciato senza interprete (WinError 193). Quelle prove sono
+#   state portate, ma la suite non e' ancora girata fino in fondo su un Windows vero
+#   dopo la correzione: tutto quello che viene dopo il server MCP (l'hook, il richiamo,
+#   i lotti di tools/prove/) non e' mai stato visto li', e molti lotti sono stati
+#   scritti e provati solo su macOS e Linux. Finche' non si vede un giro verde il passo
+#   resta rosso senza fermare il resto, con un tetto di tempo perche' una prova appesa
+#   non tenga il collaudo per ore. Su Linux e macOS il rosso blocca come sempre.
 # - non e' verificato che setup-python fornisca Python 3.9 su macos-latest
 #   (arm64): se al primo giro quel job non parte, escludere la combinazione con
 #   `exclude` (3.9 resta provato su Linux e Windows).
@@ -58,14 +65,14 @@ jobs:
       - name: collaudo (Linux, macOS)
         if: runner.os != 'Windows'
         run: python3 tools/prova.py
-      - name: collaudo (Windows, non blocca, prove solo POSIX da portare)
+      - name: collaudo (Windows, non blocca finche' non si vede un giro verde)
         if: runner.os == 'Windows'
         continue-on-error: true
+        timeout-minutes: 45
         run: python tools/prova.py
       - name: front (Linux, macOS)
         if: runner.os != 'Windows'
         run: python3 tools/prova-front.py
-      - name: front (Windows, non blocca, prove solo POSIX da portare)
+      - name: front (Windows)
         if: runner.os == 'Windows'
-        continue-on-error: true
         run: python tools/prova-front.py

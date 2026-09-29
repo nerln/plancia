@@ -1019,7 +1019,17 @@ class _Server(ThreadingHTTPServer):
     lento (un runner macOS di CI: decine di secondi) la porta e' occupata ma
     nessuno ascolta, e ogni connessione resta appesa fino al timeout. Il nome
     del server (`server_name`) qui non lo legge nessuno: si tiene l'indirizzo.
+
+    Su Windows `SO_REUSEADDR` (quello che `allow_reuse_address` accende) non e'
+    quello di POSIX: lascia agganciare una seconda volta una porta in ascolto. Chi
+    lancia `plancia serve` mentre il server dell'avvio automatico sta ancora
+    partendo ne avrebbe due sulla stessa porta, con le richieste divise a caso fra
+    loro, invece dell'errore di porta occupata che `cmd_serve` sa leggere. Li' il
+    riuso non serve: una porta appena chiusa non blocca il bind (non c'e' l'attesa
+    di TIME_WAIT). Su macOS e Linux resta acceso, com'e' sempre stato.
     """
+
+    allow_reuse_address = os.name != "nt"
 
     def server_bind(self):
         socketserver.TCPServer.server_bind(self)

@@ -71,7 +71,6 @@ anche che `ingest.sync()` diventi fail-closed invece di far entrare tutto.
 import json
 import os
 import re
-import shlex
 import sqlite3
 import subprocess
 import sys
@@ -79,6 +78,30 @@ import tempfile
 from pathlib import Path
 
 RADICE = Path(__file__).resolve().parent.parent.parent
+
+
+def _carica_finti():
+    """`_finti.py` (materiale di supporto, non una prova) sta accanto a questo file."""
+    if "_finti" not in sys.modules:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "_finti", Path(__file__).resolve().parent / "_finti.py")
+        modulo = importlib.util.module_from_spec(spec)
+        sys.modules["_finti"] = modulo
+        spec.loader.exec_module(modulo)
+    return sys.modules["_finti"]
+
+
+_finti = _carica_finti()
+
+
+def _argv_script(script) -> list:
+    """Uno script di `bin/` come lo lancia chi lo usa: da solo su macOS e Linux
+    (shebang), con l'interprete davanti su Windows (WinError 193 altrimenti)."""
+    if str(RADICE) not in sys.path:
+        sys.path.insert(0, str(RADICE))
+    from plancia import piattaforma
+    return piattaforma.argv_script(script)
 
 # --------------------------------------------------------------------------
 # ambiente comune a OGNI subprocess.run di questo file
@@ -117,12 +140,11 @@ def _ambiente_condiviso() -> tuple:
         _FAKE_BIN = radice_finta / "bin"
         _FAKE_BIN.mkdir(parents=True, exist_ok=True)
         _FAKE_SEGNALE = radice_finta / "claude-chiamato"
-        finto = _FAKE_BIN / "claude"
-        finto.write_text(
-            "#!/bin/sh\n"
-            f"touch {shlex.quote(str(_FAKE_SEGNALE))}\n"
-            "exit 1\n", "utf-8")
-        finto.chmod(0o755)
+        # un `claude` finto: scrive il file segnale ed esce 1 (su ogni sistema)
+        _finti.crea_finto(_FAKE_BIN, "claude",
+                          "import sys\n"
+                          f"open({str(_FAKE_SEGNALE)!r}, 'a').close()\n"
+                          "sys.exit(1)\n")
     return _FAKE_HOME, _FAKE_BIN, _FAKE_SEGNALE
 
 
@@ -134,8 +156,8 @@ def _env_prova(**extra) -> dict:
     fallback su HOME, quindi la cartella finta non li sposta)."""
     home, bin_finto, _ = _ambiente_condiviso()
     env = dict(os.environ)
-    env["HOME"] = str(home)
-    env["PATH"] = f"{bin_finto}:/usr/bin:/bin:/usr/sbin:/sbin"
+    _finti.casa_finta(env, home)
+    env["PATH"] = _finti.path_con(bin_finto)
     env.update(extra)
     return env
 
@@ -846,7 +868,7 @@ def _prova_hook(prova) -> None:
         def lancia(cwd, session_id):
             payload = json.dumps({"hook_event_name": "SessionStart",
                                   "session_id": session_id, "cwd": cwd}).encode()
-            r = subprocess.run([str(RADICE / "bin" / "plancia-hook")],
+            r = subprocess.run(_argv_script(RADICE / "bin" / "plancia-hook"),
                                input=payload, capture_output=True, env=env, timeout=15)
             return r
 
@@ -1367,8 +1389,8 @@ def _prova_hook_valida_come_esclusi(prova) -> None:
 
             payload = json.dumps({"hook_event_name": "SessionStart",
                                   "session_id": sid_valido, "cwd": str(esiste)}).encode()
-            r_hook = subprocess.run([str(RADICE / "bin" / "plancia-hook")], input=payload,
-                                    capture_output=True, env=env, timeout=15)
+            r_hook = subprocess.run(_argv_script(RADICE / "bin" / "plancia-hook"),
+                                    input=payload, capture_output=True, env=env, timeout=15)
             prova(f"hook ({nome}): esce comunque con 0", r_hook.returncode == 0)
             ok_hook = bool(r_hook.stdout.decode("utf-8", "replace").strip())
 

@@ -394,7 +394,7 @@ def trascrivi(path, lang: str = "it") -> str:
             res = subprocess.run([exe, path, "--language", lang, "--output_format", "txt",
                                   "--output_dir", str(AUDIO_DIR)],
                                  capture_output=True, text=True, timeout=300,
-                                 **piattaforma.opzioni_figlio())
+                                 **piattaforma.opzioni_figlio(), **piattaforma.opzioni_utf8())
             if res.returncode == 0:
                 txt = AUDIO_DIR / (Path(path).stem + ".txt")
                 if txt.exists():

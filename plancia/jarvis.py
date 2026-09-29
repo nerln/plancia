@@ -369,7 +369,7 @@ def chiedi_a_claude(frase: str, lang: str, parole=55) -> str:
     try:
         res = subprocess.run(cmd, input=prompt, capture_output=True, text=True,
                              timeout=180, cwd=str(config.DATA_DIR), env=dict(os.environ),
-                             **piattaforma.opzioni_figlio())
+                             **piattaforma.opzioni_figlio(), **piattaforma.opzioni_utf8())
     except Exception:
         return ""
     return (res.stdout or "").strip() if res.returncode == 0 else ""

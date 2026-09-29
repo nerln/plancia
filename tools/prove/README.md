@@ -33,3 +33,21 @@ mai riassegnando `os.environ` nel processo di `prova.py`. In ogni caso: mai
 
 Un file che comincia con `_` non viene scoperto: usalo per una funzione
 condivisa fra più moduli, non per una prova.
+
+## Se la prova lancia un processo
+
+Le prove girano anche su Windows (`windows-latest`). Tre cose cambiano li', e le
+raccoglie `_finti.py` (accanto a questo file, non e' una prova):
+
+- la casa di un processo e' `USERPROFILE`, non `HOME`: `_finti.casa_finta(env, casa)`
+  le sposta tutte;
+- uno script di `bin/` senza estensione non si esegue da solo (WinError 193): si
+  lancia con `piattaforma.argv_script(script)`, che su macOS e Linux torna il solo
+  script, com'e' sempre stato;
+- un programma finto scritto come file con `#!/bin/sh` non parte: `_finti.crea_finto`
+  lo scrive in Python, con lo shebang su macOS e Linux e con un `.cmd` su Windows.
+
+Un controllo che su un sistema non si puo' fare (un `chmod 000` che su Windows non
+rende illeggibile un file) passa con `dettaglio` che comincia per `saltato`, il perche'
+scritto accanto: il numero dei controlli e' lo stesso ovunque, e il README ne
+dichiara uno solo.

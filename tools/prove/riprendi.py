@@ -35,6 +35,21 @@ import time
 from pathlib import Path
 
 RADICE = Path(__file__).resolve().parent.parent.parent
+
+
+def _carica_finti():
+    """`_finti.py` (materiale di supporto, non una prova) sta accanto a questo file."""
+    if "_finti" not in sys.modules:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "_finti", Path(__file__).resolve().parent / "_finti.py")
+        modulo = importlib.util.module_from_spec(spec)
+        sys.modules["_finti"] = modulo
+        spec.loader.exec_module(modulo)
+    return sys.modules["_finti"]
+
+
+_finti = _carica_finti()
 if str(RADICE) not in sys.path:
     sys.path.insert(0, str(RADICE))
 
@@ -268,12 +283,11 @@ def _prova_claude_vivo_fonti(prova):
     with tempfile.TemporaryDirectory() as tmp:
         claude_dir = Path(tmp) / "claude-senza-registro"
         claude_dir.mkdir()
-        finto_bin = Path(tmp) / "claude-rotto"
-        finto_bin.write_text("#!/bin/sh\necho non-e-json\n", "utf-8")
-        finto_bin.chmod(0o755)
+        finto_bin = _finti.crea_finto(Path(tmp), "claude-rotto",
+                                      "print('non-e-json')\n")
         t3 = _task(session_id="nessuna-fonte", host=socket.gethostname())
         vecchio = recap.claude_bin
-        recap.claude_bin = lambda: str(finto_bin)
+        recap.claude_bin = lambda: finto_bin
         try:
             with _ambiente():
                 with _cartelle_base(config, codex, claude_dir=claude_dir):
@@ -319,11 +333,12 @@ def _prova_apri(prova):
     with tempfile.TemporaryDirectory() as tmp:
         # Il "lanciatore finto": uno script di sistema che scrive il suo unico
         # argomento su un file, invece di aprire un Terminale vero.
-        lanciatore = Path(tmp) / "finto-terminale.sh"
         uscita = Path(tmp) / "lanciato.txt"
-        lanciatore.write_text(
-            "#!/bin/sh\nprintf '%s' \"$1\" > " + json.dumps(str(uscita)) + "\n", "utf-8")
-        lanciatore.chmod(0o755)
+        lanciatore = _finti.crea_finto(
+            Path(tmp), "finto-terminale",
+            "import sys\n"
+            f"open({str(uscita)!r}, 'w', encoding='utf-8').write("
+            "sys.argv[1] if len(sys.argv) > 1 else '')\n")
 
         with tempfile.TemporaryDirectory() as agenti_dir:
             vuoto = Path(agenti_dir) / "nessuno.json"
@@ -384,9 +399,8 @@ def _prova_apri_stdout_pulito(prova):
     fuori, vuol dire che `apri()` non lo cattura (il difetto di prima:
     `subprocess.run([...], check=False)` senza `stdout=`)."""
     with tempfile.TemporaryDirectory() as tmp:
-        lanciatore = Path(tmp) / "finto-terminale-rumoroso.sh"
-        lanciatore.write_text("#!/bin/sh\necho leaked-output\n", "utf-8")
-        lanciatore.chmod(0o755)
+        lanciatore = _finti.crea_finto(Path(tmp), "finto-terminale-rumoroso",
+                                       "print('leaked-output')\n")
 
         script = (
             "import sys, os\n"

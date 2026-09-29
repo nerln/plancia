@@ -13,7 +13,7 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import config, slot, store
+from . import attribuzione, config, slot, store
 
 # I tre progetti "infra" che plancia/ingest.py:progetto_per_cartella crea da
 # solo per lavoro che non è un progetto vero (chiamate interne di Plancia,
@@ -69,9 +69,9 @@ def _dentro(link_valore, valore):
     regola di `slot._prefisso_path`, ripetuta qui invece di importare un
     nome privato di un altro file (slot.py non è di proprietà di questo
     lotto: non lo si tocca, e non ci si aggancia ai suoi dettagli interni)."""
-    link_valore = link_valore.rstrip("/")
-    valore = valore.rstrip("/")
-    return bool(link_valore) and (valore == link_valore or valore.startswith(link_valore + "/"))
+    link_valore = attribuzione.senza_barra_finale(link_valore)
+    valore = attribuzione.senza_barra_finale(valore)
+    return attribuzione.e_dentro(link_valore, valore)
 
 
 def _radice(conn, manuale):
@@ -105,8 +105,9 @@ def _regola_path(conn, progetto):
         migliore, punteggio = None, -1
         for m in manuali:
             for link_valore in _links(conn, m["id"], "path"):
-                if _dentro(link_valore, valore) and len(link_valore.rstrip("/")) > punteggio:
-                    migliore, punteggio = m, len(link_valore.rstrip("/"))
+                if _dentro(link_valore, valore) and len(
+                        attribuzione.senza_barra_finale(link_valore)) > punteggio:
+                    migliore, punteggio = m, len(attribuzione.senza_barra_finale(link_valore))
         if migliore is None:
             continue
         radice = _radice(conn, migliore)
@@ -144,7 +145,7 @@ def _regola_repo(conn, progetto):
         "SELECT * FROM projects WHERE auto=0 AND parent_id IS NULL"
     ).fetchall()
     link_path = _links(conn, progetto["id"], "path")
-    basenames = {os.path.basename(v.rstrip("/")) for v in link_path}
+    basenames = {attribuzione.nome_cartella(v) for v in link_path}
     nomi_candidato = {progetto["key"]} | basenames
     for m in manuali:
         for repo_valore in _links(conn, m["id"], "repo"):
@@ -179,7 +180,7 @@ def _regola_prefisso(conn, progetto):
     """
     manuali = conn.execute("SELECT * FROM projects WHERE auto=0").fetchall()
     nomi = [progetto["key"]] + [
-        os.path.basename(v.rstrip("/")) for v in _links(conn, progetto["id"], "path")
+        attribuzione.nome_cartella(v) for v in _links(conn, progetto["id"], "path")
     ]
     migliore, punteggio, nome_usato = None, -1, None
     for m in manuali:

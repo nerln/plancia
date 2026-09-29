@@ -44,6 +44,21 @@ RADICE = Path(__file__).resolve().parent.parent.parent
 if str(RADICE) not in sys.path:
     sys.path.insert(0, str(RADICE))
 
+
+def _carica_finti():
+    """`_finti.py` (materiale di supporto, non una prova) sta accanto a questo file."""
+    if "_finti" not in sys.modules:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "_finti", Path(__file__).resolve().parent / "_finti.py")
+        modulo = importlib.util.module_from_spec(spec)
+        sys.modules["_finti"] = modulo
+        spec.loader.exec_module(modulo)
+    return sys.modules["_finti"]
+
+
+_finti = _carica_finti()
+
 PROGRAMMI_FINTI = ("launchctl", "schtasks", "systemctl", "crontab", "osascript", "claude", "codex")
 
 
@@ -155,8 +170,11 @@ def _lancia_guardia(scenario: str, piatt: str, extra=None) -> dict:
     registro = base / "registro.txt"
     registro.write_text("")
     for nome in PROGRAMMI_FINTI:
-        (finti / nome).write_text('#!/bin/sh\necho "%s $*" >> "%s"\nexit 0\n' % (nome, registro))
-        (finti / nome).chmod(0o755)
+        # scrive "<nome> <argomenti>" nel registro ed esce 0 (lo stesso su ogni sistema)
+        _finti.crea_finto(finti, nome,
+                          "import sys\n"
+                          f"open({str(registro)!r}, 'a').write("
+                          f"' '.join([{nome!r}] + sys.argv[1:]) + '\\n')\n")
     amb = {k: v for k, v in os.environ.items()
            if k not in ("PLANCIA_AUTOSTART_FORZA", "XDG_CONFIG_HOME", "APPDATA", "LOCALAPPDATA")}
     amb.update(HOME=str(casa), USERPROFILE=str(casa), PLANCIA_HOME=str(casa / ".plancia"),
@@ -210,21 +228,29 @@ def _prove_guardia_figlio(prova):
           d.get("installati", [None])[:2] == [True, True] and d.get("installati", [0, 0, ""])[2] == "launchd",
           str(d.get("installati")))
 
-    d = _lancia_guardia("mac-forza", "mac", {"PLANCIA_AUTOSTART_FORZA": "1"})
+    # Su Windows `CreateProcess` trova un programma solo con l'estensione `.exe`: un
+    # `launchctl` finto (`launchctl.cmd`) non partirebbe mai, e su Windows
+    # launchctl non esiste. I due scenari che lo lanciano davvero (verso i finti)
+    # non si possono fare li'; il ramo che NON lancia niente sta sopra e sotto.
+    d = ({} if _finti.WIN else
+         _lancia_guardia("mac-forza", "mac", {"PLANCIA_AUTOSTART_FORZA": "1"}))
     reg = [r for r in d.get("registro", [])]
     prova("[guardia mac] con PLANCIA_AUTOSTART_FORZA=1 i comandi partono (verso i finti): bootout e bootstrap "
           "del server e del riepilogo, e poi i bootout di off (il controllo che i finti funzionano)",
-          "ERRORE" not in d and any(r.startswith("launchctl bootstrap gui/") and "com.plancia.server.plist" in r for r in reg)
+          _finti.WIN or "ERRORE" not in d and any(r.startswith("launchctl bootstrap gui/") and "com.plancia.server.plist" in r for r in reg)
           and any(r.startswith("launchctl bootstrap gui/") and "com.plancia.recap.plist" in r for r in reg)
           and sum(1 for r in reg if r.startswith("launchctl bootout")) >= 4
-          and d.get("on") == "avvio automatico attivo: la dashboard riparte a ogni accesso", str(d)[:600])
+          and d.get("on") == "avvio automatico attivo: la dashboard riparte a ogni accesso",
+          "saltato: su Windows launchctl non c'e' e un finto senza .exe non parte" if _finti.WIN
+          else str(d)[:600])
 
-    d = _lancia_guardia("mac-casa-vera", "mac")
+    d = {} if _finti.WIN else _lancia_guardia("mac-casa-vera", "mac")
     reg = d.get("registro", [])
     prova("[guardia mac] se la HOME del processo e' la casa vera, i comandi partono senza nessuna variabile",
-          "ERRORE" not in d and (d.get("toccabile") or [False])[0] is True
+          _finti.WIN or "ERRORE" not in d and (d.get("toccabile") or [False])[0] is True
           and any("bootstrap" in r for r in reg) and d.get("on") == "avvio automatico attivo: la dashboard riparte a ogni accesso",
-          str(d)[:600])
+          "saltato: su Windows launchctl non c'e' e un finto senza .exe non parte" if _finti.WIN
+          else str(d)[:600])
 
     d = _lancia_guardia("windows-prova", "windows")
     prova("[guardia windows] HOME finta: nessun schtasks; il .cmd di Esecuzione automatica NON finisce fuori dalla casa "

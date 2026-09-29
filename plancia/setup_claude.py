@@ -142,10 +142,10 @@ def install_mcp() -> str:
     avvio = piattaforma.argv_script(MCP_CMD)
     if claude:
         piattaforma.esegui([claude, "mcp", "remove", "plancia", "--scope", "user"],
-                           capture_output=True, text=True)
+                           capture_output=True, text=True, **piattaforma.opzioni_utf8())
         res = piattaforma.esegui(
             [claude, "mcp", "add", "plancia", "--scope", "user", "--"] + avvio,
-            capture_output=True, text=True)
+            capture_output=True, text=True, **piattaforma.opzioni_utf8())
         if res.returncode == 0:
             return "server MCP registrato con `claude mcp add` (scope utente)"
     # ripiego: scrittura diretta in ~/.claude.json
@@ -167,7 +167,7 @@ def remove_mcp() -> str:
     claude = piattaforma.cerca("claude")
     if claude:
         piattaforma.esegui([claude, "mcp", "remove", "plancia", "--scope", "user"],
-                           capture_output=True, text=True)
+                           capture_output=True, text=True, **piattaforma.opzioni_utf8())
     path = config.CLAUDE_JSON
     if path.exists():
         try:

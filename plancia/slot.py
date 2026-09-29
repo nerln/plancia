@@ -25,7 +25,7 @@ l'evento deve registrare la chiave chiesta, non quella indovinata.
 
 import os
 
-from . import eventi, store
+from . import attribuzione, eventi, store
 
 
 def _progetto_esatto(conn, ident):
@@ -233,7 +233,7 @@ def prossimi(conn, limite=None) -> list:
 def _prefisso_path(valore: str, cwd: str) -> bool:
     """valore è prefisso di cwd sui confini di cartella (non su una
     sottostringa qualunque: '/a/bar' non è sotto '/a/b')."""
-    return cwd == valore or cwd.startswith(valore + "/")
+    return attribuzione.e_dentro(valore, cwd)
 
 
 def padre_per_path(conn, cwd):
@@ -263,8 +263,8 @@ def padre_per_path(conn, cwd):
     """
     if not cwd:
         return None
-    cwd = str(cwd).rstrip("/")
-    cartella = os.path.basename(cwd)
+    cwd = attribuzione.senza_barra_finale(str(cwd))
+    cartella = attribuzione.nome_cartella(cwd)
     manuali = conn.execute("SELECT * FROM projects WHERE auto=0").fetchall()
     migliore, punteggio = None, -1
     for m in manuali:
@@ -273,7 +273,7 @@ def padre_per_path(conn, cwd):
             (m["id"],),
         ).fetchall()
         for l in link_rows:
-            valore = (l["value"] or "").rstrip("/")
+            valore = attribuzione.senza_barra_finale(l["value"] or "")
             if valore and _prefisso_path(valore, cwd) and len(valore) > punteggio:
                 migliore, punteggio = m, len(valore)
         if cartella.startswith(m["key"] + "-") and len(m["key"]) > punteggio:
