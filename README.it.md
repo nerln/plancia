@@ -97,6 +97,11 @@ Cosa usa ciascun sistema sotto il cofano:
 | riepilogo a voce | `say` | il sintetizzatore vocale di Windows | espeak-ng (o espeak) e un lettore audio |
 | notifica | `osascript` | notifica di PowerShell | `notify-send`, se c'è |
 
+Su Windows e Linux l'app nativa non c'è: apri http://127.0.0.1:7773 in Chrome o
+Edge e scegli Installa Plancia. Ha la sua finestra e la sua icona, e si apre
+anche con il server spento, con l'ultimo stato che aveva visto. Safari su macOS fa
+lo stesso con Aggiungi al Dock.
+
 Cosa non esiste fuori da macOS: l'app nativa, la sua voce nella barra dei menu, le
 azioni `plancia://` e il pannello vocale a mani libere. `plancia jarvis "..."` da
 terminale funziona comunque. Se sulla tua macchina manca un pezzo il resto va
@@ -600,7 +605,7 @@ git config core.hooksPath .githooks
 ```
 
 Accende il gancio che fa girare `python3 tools/prova.py` prima di ogni push:
-2426 controlli in una ventina di secondi, su un archivio finto che non tocca
+2477 controlli in una ventina di secondi, su un archivio finto che non tocca
 il tuo.
 
 ## Licenza

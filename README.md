@@ -99,6 +99,11 @@ What each system uses underneath:
 | spoken recap | `say` | the built-in speech synthesizer | espeak-ng (or espeak) and an audio player |
 | notification | `osascript` | PowerShell balloon | `notify-send`, if installed |
 
+On Windows and Linux there is no native app: open http://127.0.0.1:7773 in Chrome
+or Edge and choose Install Plancia. It gets its own window and icon, and it still
+opens with the server off, showing the last state it saw. Safari on macOS does the
+same with Add to Dock.
+
 What does not exist outside macOS: the native app, its menu bar item, the
 `plancia://` URL actions and the hands-free voice panel. `plancia jarvis "..."`
 from a terminal still works. If a piece is missing on your machine the rest
@@ -495,7 +500,7 @@ Reads are open: it is your data, already on your disk.
 git config core.hooksPath .githooks
 ```
 
-Turns on the hook that runs `python3 tools/prova.py` before every push: 2426
+Turns on the hook that runs `python3 tools/prova.py` before every push: 2477
 checks in about twenty seconds, against a throwaway archive that never touches
 yours. They cover the schema, the board, the proposals, the search index, the
 recap, the MCP surface and its token budget, every read route of the HTTP API,

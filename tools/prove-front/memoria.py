@@ -367,9 +367,8 @@ _CONTROLLI_DINAMICI = [
     "dinamica: #view porta ancora data-memoria (resta la vista di memoria, non fresca)",
     "dinamica: a server spento, un click su una card mostra il toast d'errore "
     "(classe bad) e NON fa sparire le card da #view",
-    "dinamica: un F5 vero col server spento NON mostra #view (limite noto e "
-    "confermato: index.html/app.js non sono in cache, Cache-Control: no-store "
-    "è di plancia/api.py, fuori da questo lotto - non un buco introdotto qui)",
+    "dinamica: un F5 vero col server spento mostra #view (era il limite noto: "
+    "la shell ora la tiene il service worker di U1-APPWEB, web/sw.js)",
     "dinamica: nessun claude/codex vero è partito per colpa di questa prova "
     "(script finti nel PATH, nessun segnale scritto)",
 ]
@@ -741,17 +740,22 @@ def _dinamica_vera(radice, chrome):
                       "(classe bad) e NON fa sparire le card da #view"] = (
                 False, f"{type(errore).__name__}: {errore}")
 
-        # Il limite descritto nel commento qui sotto, confermato invece di
-        # solo raccontato: un F5 vero (Page.reload) col server spento non
-        # arriva mai al nostro #view, perché il document stesso non è in
-        # cache (Cache-Control: no-store su ogni risposta, non di questo
-        # lotto). window.__preReload esiste solo nel document corrente:
-        # sparisce da solo se e quando ne arriva uno nuovo (vuoto o di
-        # errore), e la sua assenza è come si vede che il reload è successo.
+        # Un F5 vero (Page.reload) col server spento. Era il limite noto di
+        # questo lotto: il document stesso non era in cache (Cache-Control:
+        # no-store su ogni risposta), quindi il reload dava la pagina
+        # d'errore del browser e questa prova affermava che #view NON c'era.
+        # LOTTO-U1-APPWEB l'ha chiuso: web/sw.js tiene la shell, e la pagina
+        # (registrata al primo caricamento, piu' di dieci secondi fa) si apre
+        # anche a server spento. La prova ora afferma il contrario, e resta
+        # nell'elenco fisso con lo stesso posto; il dettaglio del service
+        # worker (versioni, cache, /api/ mai in cache) e' in prove-front/
+        # appweb.py. window.__preReload esiste solo nel document corrente:
+        # sparisce da solo quando ne arriva uno nuovo, e la sua assenza e'
+        # come si vede che il reload e' successo.
         _valuta(sock, 6, "window.__preReload = true")
         _cdp(sock, 7, "Page.reload", {"ignoreCache": True})
-        marcatore_sparito, vista_dopo_reload = False, "presente"
-        scadenza = time.time() + 6
+        marcatore_sparito, vista_dopo_reload = False, None
+        scadenza = time.time() + 10
         while time.time() < scadenza:
             try:
                 marcatore = _valuta(sock, 8, "typeof window.__preReload")
@@ -759,17 +763,20 @@ def _dinamica_vera(radice, chrome):
                 marcatore = "boolean"
             if marcatore != "boolean":
                 marcatore_sparito = True
-                try:
-                    vista_dopo_reload = _valuta(
-                        sock, 9, "document.getElementById('view') ? 'presente' : null")
-                except (ConnectionError, TimeoutError):
-                    vista_dopo_reload = None
+                for _ in range(20):
+                    try:
+                        vista_dopo_reload = _valuta(
+                            sock, 9, "document.getElementById('view') ? 'presente' : null")
+                    except (ConnectionError, TimeoutError):
+                        vista_dopo_reload = None
+                    if vista_dopo_reload == "presente":
+                        break
+                    time.sleep(0.3)
                 break
             time.sleep(0.3)
-        risultati["dinamica: un F5 vero col server spento NON mostra #view (limite noto e "
-                  "confermato: index.html/app.js non sono in cache, Cache-Control: no-store "
-                  "è di plancia/api.py, fuori da questo lotto - non un buco introdotto qui)"] = (
-            marcatore_sparito and vista_dopo_reload is None, "")
+        risultati["dinamica: un F5 vero col server spento mostra #view (era il limite noto: "
+                  "la shell ora la tiene il service worker di U1-APPWEB, web/sw.js)"] = (
+            marcatore_sparito and vista_dopo_reload == "presente", repr(vista_dopo_reload))
     finally:
         if sock:
             try:

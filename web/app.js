@@ -2701,3 +2701,35 @@ traduciShell();
 route();
 pollSync();
 setInterval(pollSync, 30000);
+
+/* ------------------------------------------------------------ service worker */
+/* LOTTO-U1-APPWEB: la dashboard si installa come app (Chrome, Edge, Safari
+   con "Aggiungi al Dock") e si apre anche con il server spento, perche' la
+   shell la tiene web/sw.js (vedi il commento in testa a quel file). Qui c'e'
+   SOLO la registrazione, e le condizioni per farla:
+   - il browser sa cosa e' un service worker;
+   - la pagina e' servita da http(s) su localhost (un worker esiste solo in un
+     contesto sicuro, e questa dashboard gira solo sulla macchina di chi la usa);
+   - NON dentro l'app mac (data-app="mac", iniettato da main.swift a inizio
+     documento, quindi gia' presente qui): la sua WKWebView non li supporta
+     senza configurazione e non servono, l'app ha la sua pagina d'errore
+     quando il server non risponde.
+   Se registrare fallisce, per qualunque motivo (profilo privato, browser che
+   li disattiva, sw.js non raggiungibile), la dashboard funziona lo stesso:
+   una riga in console e via, niente toast, niente eccezione. La registrazione
+   aspetta 'load' per non far concorrere il precaricamento della shell con il
+   primo disegno. */
+(function registraServiceWorker() {
+  try {
+    if (!('serviceWorker' in navigator)) return;
+    if (document.documentElement.dataset.app === 'mac') return;
+    if (!/^https?:$/.test(location.protocol)) return;
+    if (!['localhost', '127.0.0.1', '[::1]'].includes(location.hostname)) return;
+    const registra = () => navigator.serviceWorker.register('/sw.js', { scope: '/' })
+      .catch((e) => console.warn('plancia: service worker non registrato:', e && e.message ? e.message : e));
+    if (document.readyState === 'complete') registra();
+    else window.addEventListener('load', registra, { once: true });
+  } catch (e) {
+    console.warn('plancia: service worker non registrato:', e && e.message ? e.message : e);
+  }
+})();
