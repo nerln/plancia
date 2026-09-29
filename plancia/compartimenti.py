@@ -866,7 +866,11 @@ class Ambito:
     def __init__(self, comp: dict, strumenti_drive=None, home=None, uid=None,
                  data_dir=None, claude_dir=None, condivise=None):
         self.home = home or os.path.expanduser("~")
-        self.uid = os.getuid() if uid is None else uid
+        # Su Windows `os.getuid` non esiste: l'uid serve solo a riconoscere la
+        # cartella temporanea di Claude Code sul Mac (/private/tmp/claude-<uid>).
+        if uid is None and hasattr(os, "getuid"):
+            uid = os.getuid()
+        self.uid = uid
         self.data_dir = data_dir or ""
         # `<CLAUDE_CONFIG_DIR o ~/.claude>/projects`: dove Claude Code tiene
         # trascrizioni e memoria di ogni cartella (vedi `proprietario_specchio`).
@@ -1275,7 +1279,10 @@ def chiamante(payload: dict, ambito: Ambito) -> dict:
 
 def _scratch_ok(p: str, chi: dict, ambito: Ambito) -> bool:
     """La cartella di lavoro temporaneo di QUESTA sessione:
-    `/private/tmp/claude-<uid>/<qualcosa>/<id di sessione>/...`."""
+    `/private/tmp/claude-<uid>/<qualcosa>/<id di sessione>/...`. Senza uid
+    (Windows) quella cartella non esiste: nessuna scratch da riconoscere."""
+    if ambito.uid is None:
+        return False
     base = _norm("/private/tmp/claude-%s" % ambito.uid)
     if not _dentro(p, base):
         return False
