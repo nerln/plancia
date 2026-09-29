@@ -105,6 +105,7 @@ enum Istantanee {
 
         // la ricerca con una parola
         a.vai(.oggi)
+        a.ricercaAperta = true
         a.ricerca = parola
         a.avviaRicerca()
         for _ in 0..<50 where a.ricercaInCorso || a.risultatiPer != parola {

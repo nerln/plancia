@@ -32,8 +32,8 @@ struct Radice: View {
                 .navigationTitle(archivio.ricerca.trimmed.isEmpty ? archivio.sezione.titolo : tr("Ricerca", "Search"))
                 .navigationSubtitle(archivio.sottotitolo)
         }
-        .searchable(text: $a.ricerca, placement: .toolbar, prompt: Text(tr("Cerca", "Search")))
-        .searchScopes($a.ambito, activation: .onTextEntry) {
+        .searchable(text: $a.ricerca, isPresented: $a.ricercaAperta, placement: .toolbar, prompt: Text(tr("Cerca", "Search")))
+        .searchScopes($a.ambito, activation: .onSearchPresentation) {
             ForEach(AmbitoRicerca.allCases) { Text($0.titolo).tag($0) }
         }
         .toolbar {
@@ -74,8 +74,11 @@ struct Radice: View {
             get: { archivio.compartimento ?? archivio.compartimenti.scelto ?? archivio.compartimenti.predefinito ?? "" },
             set: { archivio.compartimento = $0 })
         return Picker(tr("Compartimento", "Compartment"), selection: corrente) {
-            ForEach(archivio.compartimenti.elenco ?? [], id: \.self) { Text($0).tag($0) }
+            ForEach(archivio.compartimenti.elenco ?? [], id: \.self) { nome in
+                Text(nome.prefix(1).uppercased() + nome.dropFirst()).tag(nome)
+            }
         }
         .pickerStyle(.menu)
+        .help(tr("Compartimento", "Compartment"))
     }
 }

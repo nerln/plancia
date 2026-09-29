@@ -104,6 +104,8 @@ final class Archivio {
     var sezione: Sezione = .oggi
     var ricerca = ""
     var ambito: AmbitoRicerca = .tutto
+    /// Il campo di ricerca e' in uso: fa comparire gli ambiti sotto la barra degli strumenti.
+    var ricercaAperta = false
     /// Selezioni che altre parti dell'app possono chiedere (Jarvis, plancia://, "Apri progetto").
     var progettoScelto: String?
     var memoriaScelta: String?
@@ -395,6 +397,7 @@ final class Archivio {
     func azzeraRicerca() {
         ricercaTask?.cancel()
         ricerca = ""
+        ricercaAperta = false
         risultati = nil
         risultatiPer = ""
         ricercaInCorso = false

@@ -79,13 +79,13 @@ private enum FormatoArch {
     /// "29 set, 11:34"
     static func quando(_ s: String?) -> String {
         guard let d = Tempo.data(s) else { return "" }
-        return formattatore("d MMM HH:mm").string(from: d)
+        return formattatore("d MMM jmm").string(from: d)
     }
 
     /// "29 settembre 2026, 11:34"
     static func quandoEsteso(_ s: String?) -> String {
         guard let d = Tempo.data(s) else { return "" }
-        return formattatore("d MMMM y HH:mm").string(from: d)
+        return formattatore("d MMMM y jmm").string(from: d)
     }
 
     /// "45 s", "12 min", "1 h 05"; vuoto se zero.
@@ -220,7 +220,7 @@ struct VistaArchivio: View {
                     TableColumn(tr("Quando", "When"), value: \.quando) { r in
                         Text(FormatoArch.quando(r.quando)).foregroundStyle(.secondary).lineLimit(1)
                     }
-                    .width(min: 90, ideal: 110)
+                    .width(min: 120, ideal: 140)
                     TableColumn(tr("Titolo", "Title"), value: \.titolo) { r in
                         Text(r.titolo).lineLimit(1)
                     }
@@ -291,7 +291,7 @@ struct VistaArchivio: View {
                     TableColumn(tr("Quando", "When"), value: \.quando) { r in
                         Text(FormatoArch.quando(r.quando)).foregroundStyle(.secondary).lineLimit(1)
                     }
-                    .width(min: 90, ideal: 110)
+                    .width(min: 120, ideal: 140)
                     TableColumn(tr("Tipo", "Type"), value: \.tipo) { r in
                         Text(r.tipo).foregroundStyle(.secondary).lineLimit(1)
                     }

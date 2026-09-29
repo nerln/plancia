@@ -1,14 +1,14 @@
 // Memoria: i fatti che Claude si porta dietro da una sessione all'altra.
 //
-//   - a sinistra un elenco raggruppato per tipo, con un filtro di testo e un menu per
-//     i problemi (in due cartelle, senza legami, link rotti, quasi vuote, da scrivere);
+//   - a sinistra un elenco raggruppato per tipo, con un menu per i
+//     problemi (doppie, senza legami, link rotti, quasi vuote, da scrivere);
 //   - a destra l'Inspector col fatto per intero, la cartella da cui viene e i legami
 //     cliccabili;
 //   - il grafo non e' la vista principale: e' il modo "Vicinato" (segmentato nella barra
 //     degli strumenti), che mette il fatto scelto al centro e i suoi legami su due
 //     livelli, al massimo una quindicina di nodi, con un layout radiale calcolato in un
 //     colpo solo (niente simulazione di forze);
-//   - "Prova il richiamo" e' un pannello a comparsa nella barra degli strumenti.
+//   - "Prova la memoria" e' un pannello a comparsa nella barra degli strumenti.
 //
 // I dati vengono dallo Store (schede e mappa). Il corpo di un fatto si chiede al server
 // solo quando lo si sceglie. Questo file non tocca il Core: i tipi e le chiamate che gli
@@ -94,7 +94,7 @@ private enum FiltroMemoria: String, CaseIterable, Identifiable {
     @MainActor var titolo: String {
         switch self {
         case .tutte: return tr("Tutte", "All")
-        case .dueCartelle: return tr("In due cartelle", "In two folders")
+        case .dueCartelle: return tr("Doppie", "Duplicates")
         case .senzaLegami: return tr("Senza legami", "No links")
         case .linkRotti: return tr("Link rotti", "Broken links")
         case .quasiVuote: return tr("Quasi vuote", "Nearly empty")
@@ -213,10 +213,6 @@ private struct DatiMemoria {
     }
 }
 
-private func semplice(_ s: String) -> String {
-    s.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
-}
-
 private func accorcia(_ s: String, _ massimo: Int = 26) -> String {
     guard s.count > massimo else { return s }
     let testa = (massimo - 1) / 2 + 1
@@ -231,7 +227,6 @@ struct VistaMemoria: View {
     @AppStorage("memoriaModo") private var modoGuardato = ModoMemoria.elenco.rawValue
 
     @State private var filtro: FiltroMemoria = .tutte
-    @State private var testo = ""
     @State private var provaAperta = false
 
     private var modo: ModoMemoria { ModoMemoria(rawValue: modoGuardato) ?? .elenco }
@@ -275,8 +270,9 @@ struct VistaMemoria: View {
             }
             ToolbarItem(placement: .primaryAction) {
                 Button { provaAperta.toggle() } label: {
-                    Label(tr("Prova il richiamo", "Test recall"), systemImage: "sparkle.magnifyingglass")
+                    Label(tr("Prova la memoria", "Try memory"), systemImage: "text.magnifyingglass")
                 }
+                .labelStyle(.titleAndIcon)
                 .help(tr("Scrivi una frase e guarda cosa ti direbbe la memoria",
                          "Write a sentence and see what memory would tell you"))
                 .popover(isPresented: $provaAperta, arrowEdge: .bottom) { ProvaRichiamo() }
@@ -299,10 +295,8 @@ struct VistaMemoria: View {
 
     private func visibili(_ dati: DatiMemoria) -> [FattoMemoria] {
         let insieme = dati.insieme(filtro)
-        let q = semplice(testo.trimmed)
         return dati.fatti.filter { f in
-            (insieme == nil || insieme!.contains(f.nome))
-                && (q.isEmpty || semplice(f.nome).contains(q) || semplice(f.descrizione).contains(q))
+            insieme == nil || insieme!.contains(f.nome)
         }
     }
 
@@ -346,7 +340,7 @@ struct VistaMemoria: View {
                         }
                     }
                 }
-                if filtro == .tutte && testo.trimmed.isEmpty {
+                if filtro == .tutte {
                     let problemi = FiltroMemoria.allCases.filter { $0 != .tutte && dati.conteggio($0) > 0 }
                     if !problemi.isEmpty {
                         Section(tr("Da sistemare", "To fix")) {
@@ -363,23 +357,7 @@ struct VistaMemoria: View {
     }
 
     private func barraFiltro(_ dati: DatiMemoria) -> some View {
-        HStack(spacing: 8) {
-            HStack(spacing: 6) {
-                Image(systemName: "line.3.horizontal.decrease").foregroundStyle(.secondary)
-                TextField(tr("Filtra", "Filter"), text: $testo)
-                    .textFieldStyle(.plain)
-                if !testo.isEmpty {
-                    Button { testo = "" } label: {
-                        Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(tr("Cancella il filtro", "Clear the filter"))
-                }
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 5)
-            .background(.quaternary, in: .rect(cornerRadius: 8))
-
+        HStack {
             Picker(tr("Mostra", "Show"), selection: $filtro) {
                 ForEach(FiltroMemoria.allCases) { f in
                     if f == .tutte || dati.conteggio(f) > 0 {
@@ -387,9 +365,9 @@ struct VistaMemoria: View {
                     }
                 }
             }
-            .labelsHidden()
             .pickerStyle(.menu)
             .fixedSize()
+            Spacer()
         }
         .padding(.horizontal)
         .padding(.vertical, 8)
@@ -409,8 +387,10 @@ struct VistaMemoria: View {
     }
 
     private func riepilogo(_ dati: DatiMemoria) -> some View {
-        Text(tr("\(dati.fatti.count) fatti, \(dati.richiamabili) ritrovabili da ogni cartella",
-                "\(dati.fatti.count) facts, \(dati.richiamabili) found from any folder"))
+        Text(dati.richiamabili > 0
+             ? tr("\(dati.fatti.count) fatti, \(dati.richiamabili) usati in ogni progetto",
+                  "\(dati.fatti.count) facts, \(dati.richiamabili) used in every project")
+             : tr("\(dati.fatti.count) fatti", "\(dati.fatti.count) facts"))
             .font(.caption)
             .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity)
@@ -419,7 +399,7 @@ struct VistaMemoria: View {
 
     @ViewBuilder private var corpoVuoto: some View {
         if filtro == .tutte {
-            ContentUnavailableView.search(text: testo)
+            ContentUnavailableView(tr("Nessun fatto", "No facts"), systemImage: "brain")
         } else {
             ContentUnavailableView(tr("Niente da sistemare", "Nothing to fix"),
                                    systemImage: "checkmark.circle")
@@ -533,7 +513,7 @@ private struct DettaglioMemoria: View {
                     LabeledContent(tr("Cartella", "Folder"), value: fatto.cartelle.joined(separator: ", "))
                 }
                 if let r = ritrovabile {
-                    LabeledContent(tr("Ritrovabile", "Recall"), value: r)
+                    LabeledContent(tr("Usata in", "Used in"), value: r)
                 }
                 if dati.doppie.contains(fatto.nome) {
                     Label(tr("Esiste in due cartelle: ne basta una.", "It exists in two folders: one is enough."),
@@ -594,10 +574,10 @@ private struct DettaglioMemoria: View {
 
     private var ritrovabile: String? {
         guard dati.haMappa else { return nil }
-        if fatto.richiamabile == true { return tr("sì, da ogni cartella", "yes, from any folder") }
-        if fatto.tipo == .project { return tr("no, solo nel suo progetto", "no, only in its project") }
-        if dati.vuote.contains(fatto.nome) { return tr("no, troppo corta", "no, too short") }
-        return tr("no", "no")
+        if fatto.richiamabile == true { return tr("ogni progetto", "every project") }
+        if fatto.tipo == .project { return tr("solo il suo progetto", "its project only") }
+        if dati.vuote.contains(fatto.nome) { return tr("nessuno, troppo corta", "none, too short") }
+        return tr("nessuno", "none")
     }
 
     private func caricaCorpo() async {

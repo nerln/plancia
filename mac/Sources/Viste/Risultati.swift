@@ -123,6 +123,18 @@ private func risEvidenzia(_ testo: String, _ termini: [String]) -> AttributedStr
     return a
 }
 
+/// Toglie il Markdown dal frammento: "# " dei titoli, "- " e "> " a inizio riga, grassetti e
+/// apici inversi. Le righe si uniscono con uno spazio.
+private func risSenzaMarkdown(_ s: String) -> String {
+    let righe = s.components(separatedBy: "\n").map { riga -> String in
+        riga.trimmed.replacingOccurrences(
+            of: #"^(#{1,6}|>|[-*+])\s+"#, with: "", options: .regularExpression)
+    }
+    return righe.filter { !$0.isEmpty }.joined(separator: " ")
+        .replacingOccurrences(of: "**", with: "")
+        .replacingOccurrences(of: "`", with: "")
+}
+
 /// Un frammento del server: le parole trovate sono fra « e ».
 private func risFrammento(_ s: String) -> AttributedString {
     var fuori = AttributedString()
@@ -135,7 +147,7 @@ private func risFrammento(_ s: String) -> AttributedString {
         fuori += pezzo
         tratto = ""
     }
-    for c in s.replacingOccurrences(of: "\n", with: " ") {
+    for c in risSenzaMarkdown(s) {
         if c == "«" { chiudi(); grassetto = true }
         else if c == "»" { chiudi(); grassetto = false }
         else { tratto.append(c) }

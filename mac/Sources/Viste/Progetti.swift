@@ -90,7 +90,7 @@ struct VistaProgetti: View {
         if aree.isEmpty { return singoli.isEmpty ? [] : [GruppoAlbero(id: "tutti", titolo: nil, righe: singoli)] }
         var g = [GruppoAlbero(id: "aree", titolo: nil, righe: aree)]
         if !singoli.isEmpty {
-            g.append(GruppoAlbero(id: "singoli", titolo: tr("Senza area", "No area"), righe: singoli))
+            g.append(GruppoAlbero(id: "singoli", titolo: nil, righe: singoli))
         }
         return g
     }

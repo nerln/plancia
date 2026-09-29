@@ -18,6 +18,8 @@ struct RigaTask: Identifiable, Hashable {
     var id: String { voce.identita }
     var titolo: String { voce.titolo ?? compito?.title ?? "" }
     var fonte: String { voce.fonte ?? "" }
+    /// "claude" -> "Claude", per chi legge.
+    var fonteNome: String { fonte.prefix(1).uppercased() + fonte.dropFirst() }
     var stato: String { voce.stato ?? compito?.status ?? "aperto" }
     var chiuso: Bool { stato == "fatto" || stato == "archiviato" }
     var progetto: String { voce.progetto ?? compito?.project ?? "" }
@@ -109,7 +111,7 @@ struct VistaTask: View {
                     TableColumn(tr("Scadenza", "Due"), value: \.scadenzaOrd) { r in scadenza(r) }
                         .width(min: 70, ideal: 90)
                     TableColumn(tr("Fonte", "Source"), value: \.fonte) { r in
-                        Text(r.fonte).foregroundStyle(.secondary)
+                        Text(r.fonteNome).foregroundStyle(.secondary)
                     }
                     .width(min: 60, ideal: 80)
                 }
@@ -221,7 +223,7 @@ private struct DettaglioTask: View {
                 LabeledContent(tr("Stato", "Status"), value: testoStato(riga.stato))
                 if !riga.progetto.isEmpty { LabeledContent(tr("Progetto", "Project"), value: riga.progetto) }
                 if let s = riga.scadenza, !s.isEmpty { LabeledContent(tr("Scadenza", "Due"), value: Tempo.giorno(s)) }
-                LabeledContent(tr("Fonte", "Source"), value: riga.fonte)
+                LabeledContent(tr("Fonte", "Source"), value: riga.fonteNome)
                 if !riga.aggiornato.isEmpty {
                     LabeledContent(tr("Aggiornato", "Updated"), value: Tempo.relativo(riga.aggiornato))
                 }
