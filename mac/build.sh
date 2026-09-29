@@ -41,28 +41,25 @@ xcrun swiftc \
 echo "· icona"
 # Due strade, nell'ordine.
 #  1. Liquid Glass (macOS 26+): mac/icona/Plancia.icon e' un documento di Icon
-#     Composer (uno sfondo e due strati SVG). actool 26 o piu' recente lo compila
-#     in Assets.car + Plancia.icns, e il sistema applica vetro, riflessi e
-#     profondita' strato per strato, anche nelle versioni scura e "tinted".
+#     Composer (quattro strati PNG: legno, ottone, quadrante e leva, con il vetro di
+#     sistema su tre). actool 26 o piu' recente lo compila in Assets.car +
+#     Plancia.icns, e il sistema applica vetro, riflessi e profondita' strato per
+#     strato, anche nelle versioni scura, "tinted" e "clear".
 #     Il manifesto porta CFBundleIconName (per Assets.car: da macOS 13 in su,
 #     con CFBundleIconName, il sistema legge quello, e ci sono le Icon Image
 #     appiattite) e CFBundleIconFile (per l'icns di actool, che arriva solo a
 #     256 px: e' un ripiego per gli strumenti che leggono l'icns direttamente).
 #  2. Ripiego: un Mac senza Xcode 26+, o con un actool che rifiuta il .icon,
-#     disegna la stessa forma con un vetro imitato (mac/makeicon.swift) e la
-#     trasforma in icns con `iconutil`. Il manifesto porta solo CFBundleIconFile.
+#     costruisce l'iconset dalla PNG committata mac/icona/Plancia-1024.png, che e'
+#     la resa di ictool dello stesso .icon (si rifa' con mac/icona/ripiego.py):
+#     sips la riduce alle dieci misure dell'iconset e `iconutil` la trasforma in
+#     icns. E' la stessa icona per costruzione, senza un secondo disegno da tenere
+#     allineato. Il manifesto porta solo CFBundleIconFile.
 #  Se falliscono tutte e due, l'app resta senza icona propria e si costruisce lo stesso.
-#  site/img/icon.png (apple-touch-icon del sito) NON lo produce questo script: e' un
-#  binario a parte, RGB 512x512 senza alfa, e va rigenerato a mano ogni volta che
-#  cambia il segno. Si parte da una resa iOS del .icon a tutto riquadro:
-#    ictool mac/icona/Plancia.icon --export-image --output-file resa.png \
-#      --platform iOS --rendition Default --width 1024 --height 1024 --scale 1
-#  (ictool sta in Icon Composer, dentro Xcode 26+), si riduce a 512 e si toglie il
-#  canale alfa; se la resa ha gli angoli trasparenti o un contorno, il fondo fuori
-#  dal rettangolo centrale va riempito con il blu notte dello sfondo (un gradiente
-#  lineare, senza cuciture). Non c'e' un'opzione di ictool per il quadrato pieno.
-#  Se ti scordi, non passa inosservato: tools/prove-front/icona.py misura il
-#  riquadro dei pixel chiari del PNG e lo confronta con quello degli SVG (entro 6 px).
+#  site/img/icon.png (apple-touch-icon del sito) e il favicon e il marchio delle
+#  pagine NON li produce questo script: si rifanno con mac/icona/pagine.py quando
+#  cambia il segno (icon.png e' RGB 512x512 senza alfa; tools/prove-front/icona.py
+#  controlla che ci siano e che siano quelli).
 ICONA_SRC="$ROOT/mac/icona/Plancia.icon"
 ICONA_TMP="$BUILD/icona"
 ICONA=""
@@ -85,13 +82,25 @@ if [ -d "$ICONA_SRC" ] && [ "${ACTOOL_MAGGIORE:-0}" -ge 26 ] 2>/dev/null && \
   echo "  (Liquid Glass: Assets.car + icns da mac/icona/Plancia.icon)"
 else
   if [ -d "$ICONA_SRC" ] && [ "${ACTOOL_MAGGIORE:-0}" -ge 26 ] 2>/dev/null; then
-    echo "  (actool non ha compilato il .icon: uso l'icona disegnata a mano)"
+    echo "  (actool non ha compilato il .icon: uso la PNG di ripiego)"
   else
-    echo "  (serve Xcode 26 o piu' recente per il Liquid Glass: uso l'icona disegnata a mano)"
+    echo "  (serve Xcode 26 o piu' recente per il Liquid Glass: uso la PNG di ripiego)"
   fi
   ICONSET="$BUILD/Plancia.iconset"
+  RIPIEGO="$ROOT/mac/icona/Plancia-1024.png"
   rm -rf "$ICONSET"
-  if xcrun swift "$ROOT/mac/makeicon.swift" "$ICONSET" >/dev/null 2>&1 && \
+  mkdir -p "$ICONSET"
+  iconset_ok=1
+  [ -f "$RIPIEGO" ] || iconset_ok=0
+  # pixel:nome nell'iconset (le misure @2x sono il doppio della misura base)
+  for coppia in 16:16x16 32:16x16@2x 32:32x32 64:32x32@2x 128:128x128 256:128x128@2x \
+                256:256x256 512:256x256@2x 512:512x512 1024:512x512@2x; do
+    [ "$iconset_ok" = "1" ] || break
+    px="${coppia%%:*}"
+    nome="${coppia#*:}"
+    sips -z "$px" "$px" "$RIPIEGO" --out "$ICONSET/icon_$nome.png" >/dev/null 2>&1 || iconset_ok=0
+  done
+  if [ "$iconset_ok" = "1" ] && \
      iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/Plancia.icns" 2>/dev/null; then
     ICONA="<key>CFBundleIconFile</key><string>Plancia</string>"
   else

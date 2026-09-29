@@ -1,43 +1,158 @@
 {
   "fill": {
-    "automatic-gradient": "srgb:0.07059,0.08627,0.12157,1.00000"
+    "solid": "srgb:0.20000,0.10000,0.05000,1.00000"
   },
   "groups": [
     {
       "layers": [
         {
-          "glass": true,
-          "image-name": "vetri.svg",
-          "name": "vetri",
+          "image-name": "leva.png",
+          "name": "leva",
           "position": {
             "scale": 1.0,
             "translation-in-points": [
               0,
               0
             ]
-          }
-        },
-        {
-          "glass": true,
-          "image-name": "nave.svg",
-          "name": "nave",
-          "position": {
-            "scale": 1.0,
-            "translation-in-points": [
-              0,
-              0
-            ]
-          }
+          },
+          "glass": true
         }
       ],
-      "lighting": "combined",
+      "lighting": "individual",
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0.6
+      },
+      "translucency": {
+        "enabled": false,
+        "value": 0.0
+      }
+    },
+    {
+      "layers": [
+        {
+          "image-name": "quadrante_dark.png",
+          "name": "quadrante_scuro",
+          "position": {
+            "scale": 1.0,
+            "translation-in-points": [
+              0,
+              0
+            ]
+          },
+          "glass": true,
+          "hidden-specializations": [
+            {
+              "value": true
+            },
+            {
+              "appearance": "dark",
+              "value": false
+            }
+          ]
+        },
+        {
+          "image-name": "quadrante.png",
+          "name": "quadrante",
+          "position": {
+            "scale": 1.0,
+            "translation-in-points": [
+              0,
+              0
+            ]
+          },
+          "glass": true,
+          "hidden-specializations": [
+            {
+              "appearance": "dark",
+              "value": true
+            }
+          ]
+        }
+      ],
+      "lighting": "individual",
+      "shadow": {
+        "kind": "none",
+        "opacity": 0.0
+      },
+      "translucency": {
+        "enabled": false,
+        "value": 0.0
+      }
+    },
+    {
+      "layers": [
+        {
+          "image-name": "ottone.png",
+          "name": "ottone",
+          "position": {
+            "scale": 1.0,
+            "translation-in-points": [
+              0,
+              0
+            ]
+          },
+          "glass": true
+        }
+      ],
+      "lighting": "individual",
       "shadow": {
         "kind": "neutral",
         "opacity": 0.5
       },
       "translucency": {
-        "enabled": true,
-        "value": 0.5
+        "enabled": false,
+        "value": 0.0
+      }
+    },
+    {
+      "layers": [
+        {
+          "image-name": "legno_dark.png",
+          "name": "legno_scuro",
+          "position": {
+            "scale": 1.0,
+            "translation-in-points": [
+              0,
+              0
+            ]
+          },
+          "hidden-specializations": [
+            {
+              "value": true
+            },
+            {
+              "appearance": "dark",
+              "value": false
+            }
+          ]
+        },
+        {
+          "image-name": "legno.png",
+          "name": "legno",
+          "position": {
+            "scale": 1.0,
+            "translation-in-points": [
+              0,
+              0
+            ]
+          },
+          "hidden-specializations": [
+            {
+              "appearance": "dark",
+              "value": true
+            }
+          ]
+        }
+      ],
+      "lighting": "individual",
+      "shadow": {
+        "kind": "none",
+        "opacity": 0.0
+      },
+      "translucency": {
+        "enabled": false,
+        "value": 0.0
       }
     }
   ],
