@@ -4,11 +4,19 @@ Statiche, si guarda solo il sorgente (niente browser, niente server): sono le
 stesse condizioni scritte in docs/lotti/LOTTO-L1-FONT.md, sotto "Prove rosse
 senza". La funzione pubblica è `esegui(prova, radice)`, la stessa forma usata
 da tools/prova-front.py (vedi tools/prove-front/README.md).
+
+Seconda passata di Plancia 2.0 (WEB): la dashboard (web/style.css) non usa piu'
+Fraunces e IBM Plex, come l'app Mac usa i font di sistema; le tre famiglie
+vendorizzate restano solo per il sito (site/style.css) e per l'export
+(plancia/esporta.py, che legge ancora i woff2 di web/). Le prove delle tre
+famiglie valgono percio' per il sito; per la dashboard c'e' un blocco nuovo che
+controlla il contrario: nessun @font-face, lo stack di sistema in testa, la
+scala tipografica in rem.
 """
 
 import re
 
-FOGLI = ("web/style.css", "site/style.css")
+FOGLI = ("site/style.css",)
 
 
 def _font_face_families(testo):
@@ -50,7 +58,8 @@ def _prova_url_esistono(prova, radice):
 def _prova_font_size_solo_variabili(prova, radice):
     # La regola vale su web/style.css: è la dashboard, non il sito (il sito
     # tiene le sue taglie di apertura libere, vedi il commento in cima al
-    # file e LOTTO-L1-FONT.md).
+    # file e LOTTO-L1-FONT.md). Con la scala in rem, un font-size in px o
+    # scritto a mano fuori dalle sei variabili romperebbe la dimensione scelta.
     testo = (radice / "web" / "style.css").read_text(encoding="utf-8")
     fuori_scala = re.findall(r"font-size:\s*[0-9][^;]*", testo)
     # calc(var(--t-display) + 4px) contiene una cifra ma non è un valore
@@ -58,6 +67,29 @@ def _prova_font_size_solo_variabili(prova, radice):
     fuori_scala = [f for f in fuori_scala if "var(--t-" not in f]
     prova("web/style.css: nessun font-size in px fuori dalle sei variabili",
           not fuori_scala, str(fuori_scala))
+
+
+def _prova_dashboard_font_di_sistema(prova, radice):
+    testo = (radice / "web" / "style.css").read_text(encoding="utf-8")
+    prova("web/style.css: nessun @font-face (la dashboard usa i font di sistema)",
+          "@font-face" not in testo, "")
+    prova("web/style.css: niente Fraunces ne' IBM Plex",
+          not re.search(r"Fraunces|IBM Plex", testo), "")
+    m = re.search(r"--sans:\s*([^;]+);", testo)
+    prova("web/style.css: --sans comincia da -apple-system",
+          bool(m) and m.group(1).strip().startswith("-apple-system"), m.group(1) if m else "")
+    m = re.search(r"--mono:\s*([^;]+);", testo)
+    prova("web/style.css: --mono comincia da ui-monospace",
+          bool(m) and m.group(1).strip().startswith("ui-monospace"), m.group(1) if m else "")
+    prova("web/style.css: non c'e' piu' un --serif", "--serif" not in testo, "")
+    prova("web/style.css: la grandezza del testo parte da una scala sola (html { font-size: calc(14px * var(--scala, 1)) })",
+          bool(re.search(r"html\s*\{[^}]*font-size:\s*calc\(14px \* var\(--scala", testo)), "")
+    px = re.findall(r"--t-(?:xs|sm|md|lg|xl|display):\s*([^;]+);", testo)
+    prova("web/style.css: le sei taglie del testo sono in rem (scalano con la dimensione scelta)",
+          len(px) == 6 and all(v.strip().endswith("rem") for v in px), str(px))
+    index = (radice / "web" / "index.html").read_text(encoding="utf-8")
+    prova("web/index.html: le Impostazioni hanno la dimensione del testo",
+          'id="seg-scala"' in index, "")
 
 
 def _prova_niente_stack_di_sistema_davanti(prova, radice):
@@ -92,18 +124,6 @@ def _prova_mono_senza_600(prova, radice):
                 violazioni.append(selettore.strip())
         prova(f"{foglio}: nessun blocco con var(--mono) chiede font-weight 600",
               not violazioni, str(violazioni))
-
-
-def _prova_tag_mono_peso(prova, radice):
-    # .tag eredita font-weight:600 dalla regola .tag; senza un 500 esplicito
-    # su .tag.mono l'elemento risolverebbe comunque a 600 per cascata, un
-    # caso che _prova_mono_senza_600 non vede perché il blocco di .tag.mono
-    # da solo non contiene "600". Si controlla qui, esplicitamente.
-    testo = (radice / "web" / "style.css").read_text(encoding="utf-8")
-    m = re.search(r"\.tag\.mono\s*\{([^}]*)\}", testo)
-    prova("web/style.css: .tag.mono dichiara esplicitamente font-weight: 500",
-          bool(m) and bool(re.search(r"font-weight:\s*500", m.group(1))),
-          m.group(1).strip() if m else "regola .tag.mono non trovata")
 
 
 def _prova_font_synthesis(prova, radice):
@@ -143,12 +163,12 @@ def _prova_licenza(prova, radice):
 
 
 def esegui(prova, radice) -> None:
+    _prova_dashboard_font_di_sistema(prova, radice)
     _prova_tre_famiglie(prova, radice)
     _prova_url_esistono(prova, radice)
     _prova_font_size_solo_variabili(prova, radice)
     _prova_niente_stack_di_sistema_davanti(prova, radice)
     _prova_mono_senza_600(prova, radice)
-    _prova_tag_mono_peso(prova, radice)
     _prova_font_synthesis(prova, radice)
     _prova_unicode_range(prova, radice)
     _prova_licenza(prova, radice)

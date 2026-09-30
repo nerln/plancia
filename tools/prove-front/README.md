@@ -29,3 +29,16 @@ Non serve una `PLANCIA_HOME`: queste prove non toccano nessun archivio, vero
 o finto, leggono solo i file del front.
 
 Un file che comincia con `_` non viene scoperto.
+
+## Le prove con Chrome
+
+`memoria.py`, `appweb.py` e `web21.py` aprono la pagina per davvero: un server di prova con
+l'archivio dimostrativo (`PLANCIA_HOME` in una cartella temporanea, `claude` e `codex` finti in
+testa al `PATH`) e Chrome headless pilotato via CDP. Chrome parte con la casa vera dell'utente
+letta dall'anagrafe (`_ambiente_chrome`), non da `$HOME`: sotto un `HOME` finto la sua rete non
+risponde e ogni navigazione resta appesa. Senza Chrome le prove passano dicendo che non sono
+state verificate, cosi' il numero resta lo stesso su ogni macchina.
+
+`web21.py` e' il modulo della dashboard nella seconda passata di Plancia 2.0: font di sistema,
+barra laterale senza logo, stato nel sottotitolo, Oggi a colonna, Task come tabella, grafo con
+fisica (nodi che si trascinano, livelli, zoom), ricerca per ambiti, menu Impostazioni.

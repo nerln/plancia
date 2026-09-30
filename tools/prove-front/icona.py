@@ -430,13 +430,20 @@ def esegui(prova, radice):
 
     # ------------------------------------------------------------ favicon e marchio
     payload_favicon = {}
-    for relativo, classe, foglio, tema_chiaro in (("web/index.html", "brand-mark", "web/style.css", True),
+    for relativo, classe, foglio, tema_chiaro in (("web/index.html", None, "web/style.css", True),
                                                   ("site/index.html", "bussola", "site/style.css", False)):
         pagina = _leggi(radice, relativo)
         fav = _png_da_pagina(pagina, r'<link rel="icon" href="data:image/png;base64,([A-Za-z0-9+/=]+)">')
         testa_fav = _ihdr(fav[:26]) if fav else None
         prova(f"{relativo}: il favicon è una PNG da 64x64 in data URI (la resa dell'icona)",
               testa_fav is not None and testa_fav[:2] == (64, 64) and testa_fav[3] == 6, str(testa_fav))
+        if classe is None:
+            # Plancia 2.0 (seconda passata WEB): la barra laterale della dashboard non
+            # ha logo ne' wordmark, come quella dell'app Mac; l'icona resta nel favicon.
+            prova(f"{relativo}: la barra laterale non ha ne' logo ne' wordmark",
+                  'brand-mark' not in pagina and 'class="brand"' not in pagina and '<b>Plancia</b>' not in pagina)
+            payload_favicon[relativo] = fav
+            continue
         marchio = re.search(r'<img class="%s" src="data:image/png;base64,([A-Za-z0-9+/=]+)"([^>]*)>' % classe, pagina)
         mb = base64.b64decode(marchio.group(1)) if marchio else None
         prova(f"{relativo}: il marchio accanto al nome (.{classe}) è un <img> con la stessa PNG del favicon",

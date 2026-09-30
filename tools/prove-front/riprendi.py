@@ -135,7 +135,7 @@ def _prova_residui_ondata2(prova, sorgente):
     # Punto 3: il plurale "1 progetto"/"1 project" invece di "1 progetti".
     prova("esiste una funzione che sceglie la forma singolare per un solo progetto",
           "const progettiN = (n) =>" in sorgente, "")
-    prova("alberoPadre usa quella funzione per il pulsante del toggle, non più T('progetti') nudo",
+    prova("la riga del padre nell'elenco dei progetti usa quella funzione, non più T('progetti') nudo",
           "progettiN(figli.length)" in sorgente, "")
     # LOTTO-L3-RITOCCO punto 3: prima progettiN sceglieva "1 progetto"/
     # "1 project" con un ternario su UILANG scritto a mano dentro la
@@ -150,22 +150,20 @@ def _prova_residui_ondata2(prova, sorgente):
     prova("'progetti_1' è una chiave del dizionario italiano (IT_TESTI)",
           "'progetti_1'" in _dizionario(sorgente, "IT_TESTI"), "")
 
-    # Punto 5: la card del padre porta le stesse informazioni di una card
-    # normale (kind, token, repo, pinned) più i totali del sottoalbero.
-    inizio = sorgente.find("function alberoPadre(")
+    # Punto 5: il padre porta i totali del sottoalbero. Dalla seconda passata
+    # (WEB) non e' piu' una card ma una riga dell'elenco: i totali stanno in
+    # una funzione pura, totaliAlbero(padre, figli).
+    inizio = sorgente.find("function totaliAlbero(")
     if inizio == -1:
-        prova("function alberoPadre( esiste ancora in app.js", False, "")
+        prova("function totaliAlbero( esiste in app.js", False, "")
         return
     fine = sorgente.find("\n}", inizio)
     corpo_padre = sorgente[inizio:fine]
-    prova("la card del padre mostra anche il suo 'kind', come una card normale",
-          "T(padre.kind)" in corpo_padre, corpo_padre[:400])
-    prova("...e la classe 'pinned' quando il padre è appuntato",
-          "padre.pinned" in corpo_padre, corpo_padre[:400])
+    prova("i totali del padre sommano i task aperti dei figli", "task_aperti" in corpo_padre and "reduce" in corpo_padre, corpo_padre[:300])
     prova("...e il totale token del sottoalbero, non solo del padre",
-          "token30" in corpo_padre and "reduce" in corpo_padre, corpo_padre[:400])
-    prova("...e last_activity è il massimo sul sottoalbero, non solo quella del padre",
-          "ultimaAttivita" in corpo_padre, corpo_padre[:400])
+          "token30" in corpo_padre and "token_30g" in corpo_padre, corpo_padre[:400])
+    prova("...e last_activity e' il massimo sul sottoalbero, non solo quella del padre",
+          "ultima" in corpo_padre and "last_activity" in corpo_padre, corpo_padre[:400])
 
     # Punto 4: la sezione Task del drawer mostra solo il primo task aperto,
     # il resto sta solo nel cassetto Dopo (niente righe duplicate).
@@ -220,9 +218,9 @@ NOMI_PLURALE_NODE = (
 )
 
 NOMI_RESIDUI_NODE = (
-    "alberoPadre(): il kind del padre ('progetto') compare nel markup, via T()",
-    "alberoPadre(): la classe 'pinned' compare quando padre.pinned è vero",
-    "alberoPadre(): il totale token è la somma padre+figli (1000+2000=3000 -> '3k')",
+    "totaliAlbero(): i task aperti sono la somma padre+figli (1+2=3)",
+    "totaliAlbero(): il totale token è la somma padre+figli (1000+2000=3000)",
+    "totaliAlbero(): l'ultima attività è la più recente del sottoalbero, non quella del padre",
     "sezioneTaskDrawer(): produce una sola riga per i task 'aperto' (aperti[0]), non tre",
     "sezioneTaskDrawer(): la riga del task 'fatto' resta (non è archiviato)",
 )
@@ -366,11 +364,11 @@ def _prova_comportamento_residui_node(prova, sorgente):
     # che ritorna una stringa qualunque basta, ed evita il problema.
     project_card_stub = "const projectCard = (p, extra) => `<card-figlio key=${p.key}>`;"
 
-    inizio_p = sorgente.find("function alberoPadre(")
+    inizio_p = sorgente.find("function totaliAlbero(")
     inizio_t = sorgente.find("function sezioneTaskDrawer(")
     if inizio_p == -1 or inizio_t == -1:
-        prova("alberoPadre/sezioneTaskDrawer esistono ancora in app.js (comportamento)",
-              False, f"alberoPadre trovato={inizio_p != -1} sezioneTaskDrawer trovato={inizio_t != -1}")
+        prova("totaliAlbero/sezioneTaskDrawer esistono ancora in app.js (comportamento)",
+              False, f"totaliAlbero trovato={inizio_p != -1} sezioneTaskDrawer trovato={inizio_t != -1}")
         return
     fine_p = sorgente.find("\n}", inizio_p)
     fine_t = sorgente.find("\n}", inizio_t)
@@ -383,7 +381,7 @@ def _prova_comportamento_residui_node(prova, sorgente):
         ("kilo", kilo), ("prioTag", prio_tag),
     ) if not blocco]
     if mancano:
-        prova("estratti da app.js i pezzi che servono a eseguire alberoPadre()/"
+        prova("estratti da app.js i pezzi che servono a eseguire totaliAlbero()/"
               "sezioneTaskDrawer() per davvero", False, f"non trovati: {mancano}")
         return
 
@@ -399,16 +397,15 @@ let UILANG = 'it';
 {prio_tag}
 {con_n}
 {progetti_n}
-{project_card_stub}
 {albero_padre}
 function taskRows(list) {{ return list.map((t) => `<row id=${{t.id}} status=${{t.status}}>`).join(''); }}
 {sezione_task}
 
 const padre = {{ key: 'padre1', name: 'Padre Uno', kind: 'progetto', priority: 2,
-  pinned: true, token_30g: 1000, last_activity: '2026-01-01', task_aperti: 0, sessioni: 0 }};
+  pinned: true, token_30g: 1000, last_activity: '2026-01-01', task_aperti: 1, sessioni: 0 }};
 const figli = [{{ key: 'figlio1', name: 'Figlio Uno', kind: 'progetto', priority: 2,
-  pinned: false, token_30g: 2000, last_activity: '2026-02-02' }}];
-const markupPadre = alberoPadre(padre, figli);
+  pinned: false, token_30g: 2000, last_activity: '2026-02-02', task_aperti: 2 }}];
+const markupPadre = JSON.stringify(totaliAlbero(padre, figli));
 
 const task = [
   {{ id: 1, status: 'aperto' }}, {{ id: 2, status: 'aperto' }}, {{ id: 3, status: 'aperto' }},
@@ -421,30 +418,30 @@ console.log(JSON.stringify({{ markupPadre, markupTask }}));
     try:
         esito = subprocess.run([node, "-e", script], capture_output=True, text=True, timeout=10)
     except Exception as exc:  # noqa: BLE001 - un NO pulito, non un'eccezione a metà prova
-        prova("alberoPadre()/sezioneTaskDrawer(), eseguite per davvero in Node",
+        prova("totaliAlbero()/sezioneTaskDrawer(), eseguite per davvero in Node",
               False, f"eccezione lanciando node: {exc!r}")
         return
     if esito.returncode != 0:
-        prova("alberoPadre()/sezioneTaskDrawer(), eseguite per davvero in Node",
+        prova("totaliAlbero()/sezioneTaskDrawer(), eseguite per davvero in Node",
               False, f"node è uscito con errore: {esito.stderr[-800:]}")
         return
     try:
         risultati = json.loads(esito.stdout.strip().splitlines()[-1])
     except Exception:
-        prova("alberoPadre()/sezioneTaskDrawer(), eseguite per davvero in Node",
+        prova("totaliAlbero()/sezioneTaskDrawer(), eseguite per davvero in Node",
               False, f"uscita non JSON: {esito.stdout!r}")
         return
 
     padre_out = risultati.get("markupPadre") or ""
     task_out = risultati.get("markupTask") or ""
 
-    # Residuo 5: la card del padre porta kind, pinned e i totali del sottoalbero.
-    prova("alberoPadre(): il kind del padre ('progetto') compare nel markup, via T()",
-          '<span class="tag">progetto</span>' in padre_out, padre_out[:400])
-    prova("alberoPadre(): la classe 'pinned' compare quando padre.pinned è vero",
-          'class="albero-padre card pinned"' in padre_out, padre_out[:300])
-    prova("alberoPadre(): il totale token è la somma padre+figli (1000+2000=3000 -> '3k')",
-          "3k" in padre_out, padre_out[:400])
+    # Residuo 5: il padre porta i totali del sottoalbero.
+    prova("totaliAlbero(): i task aperti sono la somma padre+figli (1+2=3)",
+          '"task":3' in padre_out, padre_out[:400])
+    prova("totaliAlbero(): il totale token è la somma padre+figli (1000+2000=3000)",
+          '"token30":3000' in padre_out, padre_out[:400])
+    prova("totaliAlbero(): l'ultima attività è la più recente del sottoalbero, non quella del padre",
+          '"ultima":"2026-02-02"' in padre_out, padre_out[:400])
 
     # Residuo 4: sezioneTaskDrawer mostra solo il primo aperto, non i tre.
     prova("sezioneTaskDrawer(): produce una sola riga per i task 'aperto' (aperti[0]), non tre",
@@ -639,13 +636,13 @@ def _prova_proposta_manda_apre_drawer(prova, sorgente):
     apre lo stesso drawer di sempre (apriRiprendi); 'vai'/'rilancia' restano
     una pura navigazione, con un'etichetta diversa da 'Riprendi' (che qui
     promette una ripresa che non fanno)."""
-    inizio = sorgente.find("d.proposte.map((p, i)")
+    inizio = sorgente.find("function rigaProposta(p, i)")
     if inizio == -1:
-        prova("d.proposte.map((p, i) ... ) esiste ancora in views.oggi", False, "")
+        prova("function rigaProposta(p, i) esiste ancora (la riga di una proposta in Oggi)", False, "")
         return
-    fine = sorgente.find("}).join('')}", inizio)
+    fine = sorgente.find("\n}", inizio)
     if fine == -1:
-        prova("il blocco delle proposte si chiude ancora con }).join('')}", False, "")
+        prova("rigaProposta si chiude", False, "")
         return
     corpo = sorgente[inizio:fine]
     prova("l'etichetta del bottone di una proposta dipende da az.tipo "

@@ -57,6 +57,12 @@ import urllib.error
 import urllib.request
 
 
+
+def _ambiente_chrome():
+    import pwd
+    return dict(os.environ, HOME=pwd.getpwuid(os.getuid()).pw_dir)
+
+
 def _leggi(radice, *parti):
     return (radice.joinpath(*parti)).read_text(encoding="utf-8")
 
@@ -160,14 +166,15 @@ def _prova_moto_css(prova, radice):
     if not percorso.exists():
         return
     moto = percorso.read_text(encoding="utf-8")
-    prova("moto.css contiene @keyframes per il vortice", "@keyframes vortice" in moto)
+    prova("moto.css non ha piu' il vortice (FLIP delle card): il movimento e' poco e solo dove serve",
+          "vortice" not in moto and "@keyframes entra-su" in moto)
     prova("moto.css ha un @media (prefers-reduced-motion: reduce)",
           "prefers-reduced-motion: reduce" in moto)
     blocchi = _blocchi_keyframes(moto)
     prova("moto.css ha almeno una @keyframes da controllare", bool(blocchi))
-    prova("nessuna @keyframes del vortice usa opacity (solo transform, mai opacity)",
+    prova("nessuna @keyframes usa opacity (solo transform, mai opacity)",
           not any("opacity" in b for b in blocchi))
-    prova("moto.css non usa backdrop-filter (niente vetro: è di L4-VETRO)",
+    prova("moto.css non usa backdrop-filter (niente vetro)",
           "backdrop-filter" not in moto)
     prova("moto.css non fa riferimento a --surface (niente colori di superficie)",
           "--surface" not in moto)
@@ -180,14 +187,14 @@ def _prova_index_link_moto(prova, radice):
 
 
 def _prova_data_chiave(prova, sorgente):
-    prova("projectCard (griglia e figli nell'albero) porta data-chiave",
+    prova("le righe dell'elenco dei progetti portano data-chiave",
           'data-chiave="${esc(p.key)}"' in sorgente)
-    prova("alberoPadre (la card del padre nell'albero) porta data-chiave",
-          'data-chiave="${esc(padre.key)}"' in sorgente)
     prova("rigaProssimo (le righe del pannello Prossimi) porta data-chiave",
           "data-chiave=\"${esc(areaKey)}:${esc(r.key)}\"" in sorgente)
-    prova("la card del kanban (views.social) porta data-chiave",
-          'class="kcard" data-chiave="${p.id}"' in sorgente)
+    prova("le righe dei post (views.social) portano data-chiave",
+          'data-sel="${p.id}" data-chiave="${p.id}"' in sorgente)
+    prova("il vortice (FLIP delle card) non c'e' piu': un elenco che si riordina non vola",
+          "function vortice(" not in sorgente and "vortice-entra" not in sorgente)
 
 
 def _prova_addendum_tema(prova, sorgente):
@@ -207,11 +214,14 @@ def _prova_addendum_tema(prova, sorgente):
                 fine = i + 1
                 break
     corpo = sorgente[inizio:fine] if fine else ""
-    prova("applyTheme avvisa il nativo con window.webkit?.messageHandlers?.tema?.postMessage",
-          "window.webkit?.messageHandlers?.tema?.postMessage(resolved)" in corpo)
-    prova("la chiamata è protetta da ?. su ogni passo (webkit, messageHandlers, tema)",
-          bool(re.search(r"window\.webkit\?\.\s*messageHandlers\?\.\s*tema\?\.\s*postMessage",
-                          corpo)))
+    # L'app Mac 2.0 e' nativa e non ospita piu' la dashboard: nessun messaggio a
+    # WebKit. Il grafo, che dipinge su un canvas, si accorge del cambio di tema
+    # da un evento della finestra.
+    prova("applyTheme non parla piu' con WKWebView (window.webkit)", "window.webkit" not in corpo, corpo[:200])
+    prova("applyTheme avvisa il grafo con l'evento 'plancia-tema'",
+          "dispatchEvent(new Event('plancia-tema'))" in corpo, corpo[:300])
+    prova("applyTheme salva la scelta ('auto', 'light', 'dark') e imposta data-resolved",
+          "dataset.resolved = resolved" in corpo and "storageSet('plancia-theme', mode)" in corpo, corpo[:300])
 
 
 # ------------------------------------------------------------------ dinamica
@@ -348,106 +358,20 @@ _CONTROLLI_DINAMICI = [
     "dinamica: Chrome headless risponde su /json/version",
     "dinamica: dopo aprire #/progetti, la memoria della vista esiste in "
     "localStorage ed è html vero (contiene data-chiave)",
-    "dinamica (banco vortice): l'elemento spostato parte SUBITO dalla "
-    "posizione vecchia (transform inverso, transition:none) - non da un "
-    "salto immediato alla posizione nuova",
-    "dinamica (banco vortice): al rAF successivo l'animazione parte per "
-    "davvero (transform tornato vuoto, transizione di 420ms, .vortice-muove)",
-    "dinamica (banco vortice, annidati): un figlio [data-chiave] dentro un "
-    "padre [data-chiave] che si sposta NON riceve un transform proprio (lo "
-    "porta il padre, altrimenti raddoppierebbe lo spostamento)",
-    "dinamica (banco vortice, rect nulli): una riga che passa da [hidden] a "
-    "visibile entra con .vortice-entra, non un transform dall'angolo (0,0)",
-    "dinamica: la spia usa l'ora dei DATI (state.overviewQuando) quando "
+    "dinamica: la riga di stato usa l'ora dei DATI (state.overviewQuando) quando "
     "la vista non ha fatto nessuna richiesta di rete, non l'ora del disegno",
     "dinamica: a server spento, #view NON è tornato a 'carico…'",
     "dinamica: a server spento, #view NON mostra 'errore: '",
-    "dinamica: a server spento, #view mostra ancora le card (memoria intatta)",
-    "dinamica: la spia dice che il server non è raggiungibile",
+    "dinamica: a server spento, #view mostra ancora le righe (memoria intatta)",
+    "dinamica: il sottotitolo dice che il server non è raggiungibile",
     "dinamica: #view porta ancora data-memoria (resta la vista di memoria, non fresca)",
-    "dinamica: a server spento, un click su una card mostra il toast d'errore "
-    "(classe bad) e NON fa sparire le card da #view",
+    "dinamica: a server spento, scegliere una riga dice l'errore nel dettaglio "
+    "e NON fa sparire l'elenco da #view",
     "dinamica: un F5 vero col server spento mostra #view (era il limite noto: "
     "la shell ora la tiene il service worker di U1-APPWEB, web/sw.js)",
     "dinamica: nessun claude/codex vero è partito per colpa di questa prova "
     "(script finti nel PATH, nessun segnale scritto)",
 ]
-
-# I tre banchi di prova (bug del critico su vortice()) sono script JS a se
-# stanti: creano un contenitore fuori dal flusso normale della pagina,
-# scrivono l'html "vecchio", chiamano la funzione vortice() VERA (quella
-# caricata dalla pagina, con web/moto.css e web/style.css veri) e leggono lo
-# stato subito dopo. Deterministici: non dipendono dal server, dal DB demo
-# né dal timing dell'animazione - solo dal comportamento di vortice() stesso.
-_BANCO_TRANSIZIONE_JS = """(function(){
-  var host = document.createElement('div');
-  document.body.appendChild(host);
-  host.innerHTML = '<div class="card" data-chiave="__banco_b1">uno</div>'
-    + '<div class="card" data-chiave="__banco_b2">due</div>';
-  void host.offsetHeight;
-  var htmlNuovo = '<div class="card" data-chiave="__banco_b2">due</div>'
-    + '<div class="card" data-chiave="__banco_b1">uno</div>';
-  vortice(host, htmlNuovo);
-  var b1 = host.querySelector('[data-chiave="__banco_b1"]');
-  var subito = {transform: b1.style.transform, transition: b1.style.transition,
-                classe: b1.className};
-  var risultato = {subito: subito};
-  window.__bancoHost = host; window.__bancoB1 = b1;
-  return risultato;
-})()"""
-
-_BANCO_TRANSIZIONE_DOPO_RAF_JS = """(function(){
-  return new Promise(function(resolve){
-    requestAnimationFrame(function(){
-      requestAnimationFrame(function(){
-        var b1 = window.__bancoB1;
-        var dopo = {transform: b1.style.transform, transition: b1.style.transition,
-                    classe: b1.className};
-        window.__bancoHost.remove();
-        delete window.__bancoHost; delete window.__bancoB1;
-        resolve(dopo);
-      });
-    });
-  });
-})()"""
-
-_BANCO_ANNIDATI_JS = """(function(){
-  var host = document.createElement('div');
-  document.body.appendChild(host);
-  host.innerHTML =
-    '<div class="albero-padre card" data-chiave="__banco_p1">'
-      + '<div class="albero-figlio card" data-chiave="__banco_f1">figlio</div>'
-    + '</div>'
-    + '<div class="albero-padre card" data-chiave="__banco_p2">altro</div>';
-  void host.offsetHeight;
-  var htmlNuovo =
-    '<div class="albero-padre card" data-chiave="__banco_p2">altro</div>'
-    + '<div class="albero-padre card" data-chiave="__banco_p1">'
-      + '<div class="albero-figlio card" data-chiave="__banco_f1">figlio</div>'
-    + '</div>';
-  vortice(host, htmlNuovo);
-  var padre = host.querySelector('[data-chiave="__banco_p1"]');
-  var figlio = host.querySelector('[data-chiave="__banco_f1"]');
-  var out = {padreTransform: padre.style.transform, figlioTransform: figlio.style.transform};
-  host.remove();
-  return out;
-})()"""
-
-_BANCO_RECT_NULLO_JS = """(function(){
-  var host = document.createElement('div');
-  document.body.appendChild(host);
-  host.innerHTML = '<div class="prossimi-riga" data-chiave="__banco_r0">visibile</div>'
-    + '<div class="prossimi-riga" data-chiave="__banco_r1" hidden>nascosta</div>';
-  void host.offsetHeight;
-  var htmlNuovo = '<div class="prossimi-riga" data-chiave="__banco_r0">visibile</div>'
-    + '<div class="prossimi-riga" data-chiave="__banco_r1">ora visibile</div>';
-  vortice(host, htmlNuovo);
-  var riga = host.querySelector('[data-chiave="__banco_r1"]');
-  var out = {classe: riga.className, transform: riga.style.transform};
-  host.remove();
-  return out;
-})()"""
-
 
 def _dinamica_vera(radice, chrome):
     """Fa girare per davvero tutta la dinamica e torna un dict
@@ -538,7 +462,7 @@ def _dinamica_vera(radice, chrome):
             "--no-first-run", "--no-default-browser-check",
             f"--remote-debugging-port={porta_cdp}", f"--user-data-dir={profilo_chrome}",
             "about:blank",
-        ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=_ambiente_chrome())
 
         cdp_pronto = False
         for _ in range(30):
@@ -584,60 +508,6 @@ def _dinamica_vera(radice, chrome):
                   "localStorage ed è html vero (contiene data-chiave)"] = (
             "data-chiave" in html_memoria, str(chiave_memoria)[:160])
 
-        # I tre banchi (correzioni del critico su vortice()): non dipendono
-        # dal server né dai dati demo, solo dalla pagina già caricata (con
-        # web/moto.css e web/style.css veri).
-        try:
-            banco1 = _valuta(sock, 20, _BANCO_TRANSIZIONE_JS)
-            subito = (banco1 or {}).get("subito") or {}
-            risultati["dinamica (banco vortice): l'elemento spostato parte SUBITO dalla "
-                      "posizione vecchia (transform inverso, transition:none) - non da un "
-                      "salto immediato alla posizione nuova"] = (
-                bool(subito.get("transform")) and subito.get("transition") == "none",
-                repr(subito))
-
-            banco1_dopo = _valuta(sock, 21, _BANCO_TRANSIZIONE_DOPO_RAF_JS, await_promise=True)
-            banco1_dopo = banco1_dopo or {}
-            risultati["dinamica (banco vortice): al rAF successivo l'animazione parte per "
-                      "davvero (transform tornato vuoto, transizione di 420ms, "
-                      ".vortice-muove)"] = (
-                banco1_dopo.get("transform") == ""
-                and "420ms" in (banco1_dopo.get("transition") or "")
-                and "vortice-muove" in (banco1_dopo.get("classe") or ""),
-                repr(banco1_dopo))
-        except (ConnectionError, TimeoutError) as errore:
-            dettaglio = f"{type(errore).__name__}: {errore}"
-            risultati.setdefault("dinamica (banco vortice): l'elemento spostato parte SUBITO dalla "
-                                  "posizione vecchia (transform inverso, transition:none) - non da un "
-                                  "salto immediato alla posizione nuova", (False, dettaglio))
-            risultati.setdefault("dinamica (banco vortice): al rAF successivo l'animazione parte per "
-                                  "davvero (transform tornato vuoto, transizione di 420ms, "
-                                  ".vortice-muove)", (False, dettaglio))
-
-        try:
-            banco2 = _valuta(sock, 22, _BANCO_ANNIDATI_JS) or {}
-            risultati["dinamica (banco vortice, annidati): un figlio [data-chiave] dentro un "
-                      "padre [data-chiave] che si sposta NON riceve un transform proprio (lo "
-                      "porta il padre, altrimenti raddoppierebbe lo spostamento)"] = (
-                bool(banco2.get("padreTransform")) and banco2.get("figlioTransform") == "",
-                repr(banco2))
-        except (ConnectionError, TimeoutError) as errore:
-            risultati["dinamica (banco vortice, annidati): un figlio [data-chiave] dentro un "
-                      "padre [data-chiave] che si sposta NON riceve un transform proprio (lo "
-                      "porta il padre, altrimenti raddoppierebbe lo spostamento)"] = (
-                False, f"{type(errore).__name__}: {errore}")
-
-        try:
-            banco3 = _valuta(sock, 23, _BANCO_RECT_NULLO_JS) or {}
-            risultati["dinamica (banco vortice, rect nulli): una riga che passa da [hidden] a "
-                      "visibile entra con .vortice-entra, non un transform dall'angolo (0,0)"] = (
-                "vortice-entra" in (banco3.get("classe") or "") and banco3.get("transform") == "",
-                repr(banco3))
-        except (ConnectionError, TimeoutError) as errore:
-            risultati["dinamica (banco vortice, rect nulli): una riga che passa da [hidden] a "
-                      "visibile entra con .vortice-entra, non un transform dall'angolo (0,0)"] = (
-                False, f"{type(errore).__name__}: {errore}")
-
         # L'ora si formatta con LOC(), la stessa lingua dell'interfaccia che
         # scrive la spia (oraCorta in app.js), non con la lingua del browser: su
         # un runner con il formato a 12 ore `undefined` da "07:40 AM" mentre la
@@ -659,16 +529,16 @@ def _dinamica_vera(radice, chrome):
               var atteso = passato.toLocaleTimeString(LOC(),{hour:'2-digit',minute:'2-digit'});
               var adesso = new Date().toLocaleTimeString(LOC(),{hour:'2-digit',minute:'2-digit'});
               await route();
-              var s = document.getElementById('spia-memoria');
+              var s = document.getElementById('tb-sub');
               return {saltato:false, testo: s?s.textContent:null, atteso: atteso, adesso: adesso};
             })()""", await_promise=True) or {}
             ok = (not r.get("saltato")) and r.get("atteso") and r.get("atteso") in (r.get("testo") or "") \
                 and (r.get("adesso") not in (r.get("testo") or "") or r.get("adesso") == r.get("atteso"))
-            risultati["dinamica: la spia usa l'ora dei DATI (state.overviewQuando) quando "
+            risultati["dinamica: la riga di stato usa l'ora dei DATI (state.overviewQuando) quando "
                       "la vista non ha fatto nessuna richiesta di rete, non l'ora del disegno"] = (
                 bool(ok), repr(r))
         except (ConnectionError, TimeoutError) as errore:
-            risultati["dinamica: la spia usa l'ora dei DATI (state.overviewQuando) quando "
+            risultati["dinamica: la riga di stato usa l'ora dei DATI (state.overviewQuando) quando "
                       "la vista non ha fatto nessuna richiesta di rete, non l'ora del disegno"] = (
                 False, f"{type(errore).__name__}: {errore}")
 
@@ -697,7 +567,7 @@ def _dinamica_vera(radice, chrome):
         stato = _valuta(
             sock, 5,
             "(function(){var v=document.getElementById('view');"
-            "var s=document.getElementById('spia-memoria');"
+            "var s=document.getElementById('tb-sub');"
             "return {html:(v?v.innerHTML.slice(0,4000):''), "
             "memoria:(v?v.getAttribute('data-memoria'):null), "
             "spia:(s?s.textContent:null)};})()") or {}
@@ -708,41 +578,33 @@ def _dinamica_vera(radice, chrome):
             not html_dopo.lower().startswith("carico") and "carico…" not in html_dopo[:80], "")
         risultati["dinamica: a server spento, #view NON mostra 'errore: '"] = (
             "errore:" not in html_dopo.lower(), "")
-        risultati["dinamica: a server spento, #view mostra ancora le card (memoria intatta)"] = (
+        risultati["dinamica: a server spento, #view mostra ancora le righe (memoria intatta)"] = (
             "data-chiave" in html_dopo, html_dopo[:200])
-        risultati["dinamica: la spia dice che il server non è raggiungibile"] = (
+        risultati["dinamica: il sottotitolo dice che il server non è raggiungibile"] = (
             "raggiungibile" in spia_dopo or "unreachable" in spia_dopo, repr(spia_dopo))
         risultati["dinamica: #view porta ancora data-memoria (resta la vista di memoria, non fresca)"] = (
             stato.get("memoria") == "1", "")
 
-        # Correzione del critico (punto 2, "mai vuota"): un click su una card
-        # mentre il server è spento deve mostrare il toast d'errore e basta -
-        # non restare muto. openProject()/openMemory() sono async e prima
-        # non avevano .catch: la promessa rifiutata (fetch fallito) non la
-        # gestiva nessuno.
+        # "Mai vuota" anche nell'interazione: scegliere una riga mentre il server e'
+        # spento non deve far sparire l'elenco ne' restare muto. Il dettaglio prova
+        # a caricare il progetto, non ci riesce e lo dice li', dove si guarda.
         try:
-            click = _valuta(sock, 25, """(function(){
-              var el = document.querySelector('#view [data-project]');
+            click = _valuta(sock, 25, """(async function(){
+              var el = document.querySelector('#view [data-lista="progetti"] [data-sel]:not(.sel)');
               if (!el) return {trovato:false};
               el.click();
-              return {trovato:true};
-            })()""") or {}
-            time.sleep(0.4)
-            dopo_click = _valuta(sock, 26, """(function(){
-              var t = document.getElementById('toast');
+              await new Promise(function(r){ setTimeout(r, 700); });
+              var d = document.getElementById('dettaglio');
               var v = document.getElementById('view');
-              return {toastHidden: t?t.hidden:null, toastClasse: t?t.className:null,
-                      viewHaCard: v ? !!v.querySelector('[data-project]') : false};
-            })()""") or {}
-            ok = click.get("trovato") and dopo_click.get("toastHidden") is False \
-                and "bad" in (dopo_click.get("toastClasse") or "") and dopo_click.get("viewHaCard")
-            risultati["dinamica: a server spento, un click su una card mostra il toast d'errore "
-                      "(classe bad) e NON fa sparire le card da #view"] = (
-                bool(ok), repr({"click": click, "dopo": dopo_click}))
+              return {trovato:true, dettaglio: d ? d.innerText.slice(0, 120) : null,
+                      righe: v ? v.querySelectorAll('[data-sel]').length : 0};
+            })()""", await_promise=True) or {}
+            ok = click.get("trovato") and click.get("righe", 0) > 0 and bool(click.get("dettaglio"))
+            risultati["dinamica: a server spento, scegliere una riga dice l'errore nel dettaglio "
+                      "e NON fa sparire l'elenco da #view"] = (bool(ok), repr(click))
         except (ConnectionError, TimeoutError) as errore:
-            risultati["dinamica: a server spento, un click su una card mostra il toast d'errore "
-                      "(classe bad) e NON fa sparire le card da #view"] = (
-                False, f"{type(errore).__name__}: {errore}")
+            risultati["dinamica: a server spento, scegliere una riga dice l'errore nel dettaglio "
+                      "e NON fa sparire l'elenco da #view"] = (False, f"{type(errore).__name__}: {errore}")
 
         # Un F5 vero (Page.reload) col server spento. Era il limite noto di
         # questo lotto: il document stesso non era in cache (Cache-Control:
