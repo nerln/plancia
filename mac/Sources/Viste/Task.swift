@@ -209,7 +209,7 @@ private struct DettaglioTask: View {
     @State private var messaggio: String?
     @State private var errore: String?
     @State private var lavora = false
-    @State private var confermaLancio = false
+    @State private var pronto: LancioPronto?
 
     var body: some View {
         Form {
@@ -234,6 +234,10 @@ private struct DettaglioTask: View {
                 }
                 .disabled(lavora)
                 if let id = riga.taskId {
+                    Button { Task { await inBackground(id) } } label: {
+                        Label(tr("In background", "In background"), systemImage: "play.circle")
+                    }
+                    .disabled(lavora)
                     Button { Task { await cambia(id, riga.chiuso ? "aperto" : "fatto") } } label: {
                         Label(riga.chiuso ? tr("Riapri", "Reopen") : tr("Fatto", "Done"),
                               systemImage: riga.chiuso ? "arrow.uturn.backward" : "checkmark")
@@ -255,13 +259,14 @@ private struct DettaglioTask: View {
         }
         .formStyle(.grouped)
         .confirmationDialog(
-            tr("Avviare un lancio in background?", "Start a background run?"),
-            isPresented: $confermaLancio, titleVisibility: .visible) {
-            Button(tr("Avvia senza modificare file", "Start without changing files")) { Task { await lancia() } }
+            pronto?.titolo ?? "",
+            isPresented: Binding(get: { pronto != nil }, set: { if !$0 { pronto = nil } }),
+            titleVisibility: .visible, presenting: pronto) { l in
+            Button(l.azione) { Task { await avvia(l) } }
             Button(tr("Annulla", "Cancel"), role: .cancel) {}
-        } message: {
-            Text(tr("Parte \(riga.voce.agente ?? "un agente") sul progetto, in sola lettura.",
-                    "\(riga.voce.agente ?? "An agent") starts on the project, read-only."))
+        } message: { l in
+            // il piano PRIMA di partire: la sessione originale, una copia, o una nuova
+            Text(l.testo)
         }
     }
 
@@ -271,36 +276,89 @@ private struct DettaglioTask: View {
         lavora = false
     }
 
+    /// Riprendi: nel Terminale, nella sessione del task. Se la sessione non c'e' piu' lo dice
+    /// prima, invece di aprirne una nuova senza avvisare.
     private func riprendi() async {
         errore = nil; messaggio = nil
         if let id = riga.taskId {
             lavora = true
-            let r = await archivio.scriviRisposta("POST", "/api/riprendi/\(id)", corpo: ["apri": true])
+            let piano = await archivio.pianoRipresa(task: id)
             lavora = false
-            switch r {
-            case .success(let j):
-                messaggio = j["riga"]?.testo ?? j["messaggio"]?.testo ?? tr("Avviato", "Started")
-            case .failure(let e):
-                errore = e.localizedDescription
+            if let p = piano, p.modo == "nuova" {
+                pronto = LancioPronto(nuovaNelTerminale: "/api/riprendi/\(id)", piano: p,
+                                      agente: riga.voce.agente ?? "claude")
+                return
             }
+            await apriNelTerminale(id)
         } else {
-            // i task di Claude Code e di Codex non hanno un id di Plancia: si parte da un lancio
-            confermaLancio = true
+            // i task di Claude Code e di Codex non hanno un id di Plancia: parte un lancio,
+            // nella sessione che la riga ricorda
+            await preparaLancio(percorso: "/api/cantiere", corpo: corpoLancio())
         }
     }
 
-    private func lancia() async {
+    /// In background: il lavoro senza testa riprende la sessione del task (o dice che non c'e').
+    private func inBackground(_ id: Int) async {
+        errore = nil; messaggio = nil
+        await preparaLancio(
+            percorso: "/api/riprendi/\(id)",
+            corpo: ["background": true, "scrive": false, "lang": Lingua.condivisa.codice])
+    }
+
+    private func apriNelTerminale(_ id: Int) async {
         lavora = true
+        let r = await archivio.scriviRisposta("POST", "/api/riprendi/\(id)", corpo: ["apri": true])
+        lavora = false
+        switch r {
+        case .success(let j):
+            messaggio = j["riga"]?.testo ?? j["messaggio"]?.testo ?? tr("Avviato", "Started")
+        case .failure(let e):
+            errore = e.localizedDescription
+        }
+    }
+
+    /// Chiede al server cosa farebbe (anteprima) e, se parte qualcosa, lo mostra prima di lanciare.
+    private func preparaLancio(percorso: String, corpo: [String: Any]) async {
+        lavora = true
+        let piano = await archivio.anteprima(percorso, corpo)
+        lavora = false
+        guard let p = piano else {
+            errore = tr("Non riesco a sapere cosa farebbe il lancio: il server non risponde.",
+                        "Can't tell what the run would do: the server isn't answering.")
+            return
+        }
+        if !p.parte {
+            messaggio = p.frase
+            return
+        }
+        pronto = LancioPronto(percorso: percorso, corpo: corpo, piano: p,
+                              agente: riga.voce.agente ?? "claude")
+    }
+
+    private func corpoLancio() -> [String: Any] {
         var corpo: [String: Any] = ["titolo": riga.titolo, "dettaglio": String(riga.dettaglio.prefix(600)),
                                     "agente": riga.voce.agente ?? "claude", "scrive": false,
                                     "lang": Lingua.condivisa.codice]
         if let k = riga.progettoChiave { corpo["progetto"] = k }
         if let s = riga.voce.sessione, !s.isEmpty { corpo["sessione"] = s }
-        let r = await archivio.scriviRisposta("POST", "/api/cantiere", corpo: corpo)
+        return corpo
+    }
+
+    private func avvia(_ l: LancioPronto) async {
+        lavora = true
+        let r = await archivio.scriviRisposta("POST", l.percorso, corpo: l.corpo)
         lavora = false
         switch r {
-        case .success: messaggio = tr("Lancio avviato", "Run started")
-        case .failure(let e): errore = e.localizedDescription
+        case .success(let j):
+            if j["lanciato"]?.testo == "false" {
+                messaggio = l.piano.frase   // nel frattempo la sessione si e' aperta: non e' partito niente
+            } else if l.corpo["apri"] != nil {
+                messaggio = j["riga"]?.testo ?? j["messaggio"]?.testo ?? tr("Avviato", "Started")
+            } else {
+                messaggio = tr("Lancio avviato. ", "Run started. ") + l.piano.frase
+            }
+        case .failure(let e):
+            errore = e.localizedDescription
         }
     }
 }

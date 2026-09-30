@@ -13,7 +13,7 @@ indovinare, si passa a Claude.
 import re
 
 from . import (actions, agente, cantiere, compartimenti_viste, proposte, recap,
-               risposte, store)
+               riprendi, risposte, store)
 
 # --------------------------------------------------------------------------
 # comandi riconosciuti al volo
@@ -119,6 +119,9 @@ RISPOSTE = {
         "niente_proposte": "Non ho niente in sospeso da proporti. Chiedimi il riepilogo.",
         "mandato": "Mando {chi} a vedere: {cosa}. Ti dico com'è andata.",
         "mandato_esegui": "Mando {chi} a farlo davvero: {cosa}.",
+        "mandato_stessa": "Riprende la sessione originale.",
+        "mandato_nuova": "La sessione originale non c'è più: ne parte una nuova.",
+        "sessione_aperta": "La sessione è aperta: da qui non la tocco.",
         "fatto_proposta": "Fatto.",
         "nessun_task": "Non hai task aperti.",
         "non_capito": "Non ho capito.",
@@ -148,6 +151,9 @@ RISPOSTE = {
         "niente_proposte": "Nothing pending to suggest. Ask me for the recap.",
         "mandato": "Sending {chi} to look at: {cosa}. I will tell you how it went.",
         "mandato_esegui": "Sending {chi} to actually do it: {cosa}.",
+        "mandato_stessa": "It picks up the original session.",
+        "mandato_nuova": "The original session is gone: a new one starts.",
+        "sessione_aperta": "The session is open: I will not touch it from here.",
         "fatto_proposta": "Done.",
         "nessun_task": "You have no open tasks.",
         "non_capito": "I did not catch that.",
@@ -177,6 +183,9 @@ RISPOSTE = {
         "niente_proposte": "No tengo nada pendiente que proponerte. Pídeme el resumen.",
         "mandato": "Mando a {chi} a mirar: {cosa}. Te digo cómo ha ido.",
         "mandato_esegui": "Mando a {chi} a hacerlo de verdad: {cosa}.",
+        "mandato_stessa": "Retoma la sesión original.",
+        "mandato_nuova": "La sesión original ya no existe: empieza una nueva.",
+        "sessione_aperta": "La sesión está abierta: no la toco desde aquí.",
         "fatto_proposta": "Hecho.",
         "nessun_task": "No tienes tareas abiertas.",
         "non_capito": "No te he entendido.",
@@ -375,6 +384,31 @@ def chiedi_a_claude(frase: str, lang: str, parole=55) -> str:
     return (res.stdout or "").strip() if res.returncode == 0 else ""
 
 
+def _risposta_lancio(esito, d, cosa, chi, con_task, esegui) -> dict:
+    """La frase e l'azione per un lancio di proposta (LOTTO 21-RIPRENDI): dice
+    a voce se riprende la sessione originale, se ne parte una nuova o se non
+    parte niente perche' la sessione e' aperta."""
+    piano = esito.get("piano") or {}
+    if not esito.get("lanciato"):
+        # sessione aperta, nessuna copia chiesta: niente da lanciare, e il
+        # messaggio (se c'e' un task) va negli appunti, come "riprendi il task"
+        if esito.get("messaggio"):
+            copiato = _copia_appunti(esito["messaggio"])
+            chiave = "riprendi_viva" if copiato else "riprendi_viva_senza_copia"
+        else:
+            chiave = "sessione_aperta"
+        return {"tipo": "riprendi", "risposta": d[chiave],
+                "azione": {"tipo": "vai", "vista": "task"}}
+    chiave = "mandato_esegui" if esegui else "mandato"
+    frase = d[chiave].format(chi=chi, cosa=cosa)
+    if piano.get("modo") == "riprendi":
+        frase += " " + d["mandato_stessa"]
+    elif piano.get("modo") == "nuova" and (con_task or piano.get("origine")):
+        frase += " " + d["mandato_nuova"]
+    return {"tipo": "cantiere", "risposta": frase,
+            "azione": {"tipo": "vai", "vista": "oggi"}, "run": esito["run"]}
+
+
 def _esegui_proposta(conn, scelta, d, lang, forza_esecuzione=False, lett=None,
                      tag="") -> dict:
     """Trasforma una proposta in un fatto.
@@ -396,49 +430,36 @@ def _esegui_proposta(conn, scelta, d, lang, forza_esecuzione=False, lett=None,
                 "azione": {"tipo": "vai", "vista": a.get("vista", "oggi")}}
 
     if tipo == "rilancia":
-        r = lett.execute("SELECT prompt, agente, modo, cwd, task_id FROM runs WHERE id=?",
-                         (a.get("run"),)).fetchone()
-        if not r:
+        # LOTTO 21-RIPRENDI: un lancio fallito si rilancia NELLA conversazione
+        # in cui era girato (o in quella del suo task), non in una nuova
+        esito = riprendi.rilancia_run(
+            conn, a.get("run"), scrive=(True if forza_esecuzione else None),
+            lingua=lang, compartimento=tag, lett=lett)
+        if esito is None:
             return {"tipo": "proposta", "risposta": d["niente_proposte"]}
-        # LOTTO-L3-RITOCCO punto 13: `scrive` (bool) invece di `modo`
-        # (stringa) come argomento per cantiere.avvia() - vedi il commento
-        # aggiornato su cantiere.avvia/_scrive_da. `modo` resta locale, serve
-        # solo per decidere la chiave della risposta più sotto.
-        modo = "esegui" if forza_esecuzione else r["modo"]
-        esito = cantiere.avvia(conn, r["prompt"][:200], agente=r["agente"],
-                               scrive=(modo == "esegui"),
-                               cwd=r["cwd"], task_id=r["task_id"], lingua=lang,
-                               compartimento=tag)
-        return {"tipo": "cantiere",
-                "risposta": d["mandato"].format(chi=r["agente"], cosa=scelta["testo"][:60]),
-                "azione": {"tipo": "vai", "vista": "oggi"}, "run": esito["run"]}
+        r = lett.execute("SELECT agente FROM runs WHERE id=?", (a.get("run"),)).fetchone()
+        return _risposta_lancio(esito, d, scelta["testo"][:60],
+                                r["agente"] if r else "claude", False, forza_esecuzione)
 
     if tipo == "manda":
         modo = "esegui" if forza_esecuzione else a.get("modo", "proposta")
         agente_scelto = a.get("agente", "claude")
         # Le proposte di tipo "manda" con un task_id sono lo stesso "Riprendi"
         # del drawer (LOTTO-L3-RIPRENDI-UI punto 2: "le proposte di tipo manda
-        # passano dallo stesso endpoint"): se il task ha già una sessione viva
-        # o chiusa, va forkata invece di far ripartire cantiere.avvia() da un
-        # prompt scritto da capo (stessa logica di api.py/cli.py/mcp.py).
-        sessione = None
+        # passano dallo stesso endpoint"): `riprendi.lancia` guarda la sessione
+        # del task e decide (chiusa = la stessa sessione, viva = niente da
+        # lanciare, persa = nuova), come api.py, cli.py e mcp.py.
         tid = a.get("task_id")
-        if tid:
-            from . import riprendi as _riprendi
-            task = actions.task_get(lett, tid)
-            if task:
-                s = _riprendi.stato(lett, task)
-                sessione = _riprendi.sessione_da_riprendere(s)
-                agente_scelto = s.get("agent") or agente_scelto
-        esito = cantiere.avvia(conn, a.get("titolo", scelta["testo"])[:200],
-                               progetto=a.get("progetto"), agente=agente_scelto,
-                               scrive=(modo == "esegui"), task_id=tid, lingua=lang,
-                               sessione=sessione, compartimento=tag)
-        chiave = "mandato_esegui" if modo == "esegui" else "mandato"
-        return {"tipo": "cantiere",
-                "risposta": d[chiave].format(chi=agente_scelto,
-                                             cosa=a.get("titolo", "")[:70]),
-                "azione": {"tipo": "vai", "vista": "oggi"}, "run": esito["run"]}
+        task = actions.task_get(lett, tid) if tid else None
+        if task and task.get("agent"):
+            agente_scelto = task["agent"]
+        esito = riprendi.lancia(
+            conn, a.get("titolo", scelta["testo"])[:200],
+            progetto=a.get("progetto"), agente=agente_scelto,
+            scrive=(modo == "esegui"), task_id=tid, task=task, lingua=lang,
+            sessione=a.get("sessione") or None, compartimento=tag, lett=lett)
+        return _risposta_lancio(esito, d, a.get("titolo", "")[:70], agente_scelto,
+                                bool(tid), modo == "esegui")
 
     return {"tipo": "proposta", "risposta": d["fatto_proposta"]}
 

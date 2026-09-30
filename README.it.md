@@ -421,8 +421,15 @@ plancia lanci                            # com'è andato un lancio in background
 
 Mandare un lavoro in background è l'altra strada, secondaria, per quando
 riprendere non è quello che vuoi: `plancia riprendi 42 --background --scrive
---istruzioni "rilancia l'ablation"` lo lancia senza sorveglianza, sulla
-sessione di quel task, e ne registra l'esito. Il modo predefinito è di sola
+--istruzioni "rilancia l'ablation"` lo lancia senza sorveglianza, dentro la
+sessione di quel task (`claude -p --resume <id>`, `codex exec resume <id>`,
+stesso id, stessa cartella), e ne registra l'esito. Non apre mai una sessione
+nuova di nascosto: se la sessione è ancora aperta da qualche parte non parte
+niente e ti torna il messaggio da incollare (`--copia` ne chiede invece una
+copia), e solo quando la sessione è davvero persa ne parte una nuova, detto
+prima. Vale anche per i pulsanti Rilancia e Riprendi, per il tool MCP e per
+Jarvis. Se l'app ChatGPT/Codex tiene aperto un thread di Codex, il lancio si
+ferma e lo dice invece di fallire muto. Il modo predefinito è di sola
 lettura; `--scrive` lo lascia scrivere, ed è una scelta che fai ogni volta.
 `plancia manda "rilancia l'ablation" --agente codex --progetto atlas` è il
 vecchio alias per la stessa cosa senza un id di task: funziona ancora ma

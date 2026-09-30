@@ -439,12 +439,59 @@ def _prova_cantiere(prova):
     finally:
         cantiere.codex_bin, cantiere.recap.claude_bin = vero_codex, vero_claude
     _prova_cantiere_prompt(prova, cantiere)
+    _prova_cantiere_stessa_sessione(prova, cantiere)
+
+
+def _dopo(argv, chiave):
+    """Il valore che segue `chiave` in `argv`, o None."""
+    return argv[argv.index(chiave) + 1] if chiave in argv and argv.index(chiave) + 1 < len(argv) else None
+
+
+def _prova_cantiere_stessa_sessione(prova, cantiere):
+    """21-RIPRENDI, pezzi puri: cosa riprende `sessione_da_riprendere`, come si
+    riconosce il conflitto di Codex, come si compone il prompt di ripresa."""
+    from plancia import riprendi
+    prova("sessione_da_riprendere: solo la chiusa (una viva ha gia' qualcuno davanti)",
+          riprendi.sessione_da_riprendere({"stato": "chiusa", "session_id": "x"}) == "x"
+          and riprendi.sessione_da_riprendere({"stato": "viva", "session_id": "x"}) is None
+          and riprendi.sessione_da_riprendere({"stato": "persa", "session_id": "x"}) is None)
+    acc = {}
+    cantiere._leggi_codex("Error: thread-store conflict: thread abc already has an active writer", acc)
+    prova("_leggi_codex riconosce il conflitto col thread tenuto aperto dall'app", acc.get("conflitto") is True, str(acc))
+    acc = {}
+    cantiere._leggi_codex("session id: 0199aaaa-0000-0000-0000-00000000c001", acc)
+    prova("_leggi_codex legge l'id della sessione dall'intestazione",
+          acc.get("sessione") == "0199aaaa-0000-0000-0000-00000000c001" and not acc.get("conflitto"), str(acc))
+    acc = {}
+    cantiere._leggi_codex("un normale rigo di lavoro", acc)
+    prova("_leggi_codex non inventa niente su un rigo qualunque", acc == {}, str(acc))
+    import sqlite3
+    from plancia import store
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    store.init_db(conn)
+    p = cantiere.componi_prompt(conn, "t", "", None, "", "proposta", "it", 7, "sid-1")
+    prova("componi_prompt di ripresa in proposta dice all'agente di non modificare file",
+          p.startswith("riprendi il task 7 di Plancia: t.") and cantiere.SOLA_LETTURA in p, p)
+    p = cantiere.componi_prompt(conn, "t", "", None, "", "esegui", "it", 7, "sid-1",
+                                prompt_pronto="Il lancio n. 3 si era chiuso")
+    prova("componi_prompt con prompt_pronto e sessione usa il messaggio di ripresa",
+          p == "Il lancio n. 3 si era chiuso", p)
+    p = cantiere.componi_prompt(conn, "t", "", None, "", "proposta", "it", None, None,
+                                prompt_pronto="tutto il prompt di prima")
+    prova("componi_prompt con prompt_pronto e senza sessione lo lascia com'e'",
+          p == "tutto il prompt di prima", p)
+    conn.close()
 
 
 def _prova_cantiere_argv(prova, cantiere):
     argv = cantiere._comando("claude", True, "/tmp/prova", sessione="sid-riprendi")
-    prova("_comando(claude, sessione=...) porta --resume e --fork-session",
-          "--resume" in argv and "--fork-session" in argv and "sid-riprendi" in argv, str(argv))
+    prova("_comando(claude, sessione=...) porta --resume <id> e NON --fork-session (la stessa sessione)",
+          _dopo(argv, "--resume") == "sid-riprendi" and "--fork-session" not in argv, str(argv))
+    argv_copia = cantiere._comando("claude", True, "/tmp/prova", sessione="sid-riprendi", copia=True)
+    prova("_comando(claude, sessione=..., copia=True) porta --resume <id> e --fork-session",
+          _dopo(argv_copia, "--resume") == "sid-riprendi" and "--fork-session" in argv_copia,
+          str(argv_copia))
     prova("_comando(claude, sessione=...) tiene comunque i permessi di scrittura",
           all(t in argv for t in cantiere.TOOL_SCRITTURA), str(argv))
 
@@ -452,6 +499,9 @@ def _prova_cantiere_argv(prova, cantiere):
     prova("_comando(claude) senza sessione non ha --resume nè --fork-session",
           "--resume" not in argv_letto and "--fork-session" not in argv_letto, str(argv_letto))
 
+    argv_codex_copia = cantiere._comando("codex", False, "/tmp/prova", sessione="sid-codex", copia=True)
+    prova("_comando(codex, sessione=..., copia=True): 'fork', l'id e '-' in coda",
+          argv_codex_copia[-3:] == ["fork", "sid-codex", "-"], str(argv_codex_copia))
     argv_codex = cantiere._comando("codex", False, "/tmp/prova", sessione="sid-codex")
     # `codex exec resume --help` (letto sul binario vero, mai lanciato un
     # agente) non elenca --cd/--sandbox/--color fra le sue opzioni: vanno

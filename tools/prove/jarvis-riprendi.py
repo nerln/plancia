@@ -172,8 +172,9 @@ def esegui(prova) -> None:
         conn = store.connect()
         store.init_db(conn)
 
-        # --- 1. proposta "manda" su un task chiuso: deve forkare ----------
-        cwd_chiusa = "/tmp/prova-jarvis-riprendi-chiusa"
+        # --- 1. proposta "manda" su un task chiuso: la STESSA sessione ------
+        cwd_chiusa = str(tmp / "cwd-jarvis-chiusa")
+        os.makedirs(cwd_chiusa)
         t_chiusa = actions.task_add(conn, "prova jarvis riprendi chiusa",
                                     session_id="sid-jarvis-chiusa", cwd=cwd_chiusa,
                                     agent="claude", host=host_vero)
@@ -197,10 +198,10 @@ def esegui(prova) -> None:
         cmd_lanciato = catturati[0] if catturati else []
         prova("una proposta 'manda' con task_id chiuso lancia davvero un comando",
               bool(cmd_lanciato), "nessun Popen chiamato")
-        prova("...con --resume sulla sessione DEL TASK (fork, non da zero)",
+        prova("...con --resume sulla sessione DEL TASK (non da zero)",
               "sid-jarvis-chiusa" in cmd_lanciato, str(cmd_lanciato))
-        prova("...e con --fork-session",
-              "--fork-session" in cmd_lanciato, str(cmd_lanciato))
+        prova("...e SENZA --fork-session (21-RIPRENDI: la stessa sessione, non una copia)",
+              "--fork-session" not in cmd_lanciato, str(cmd_lanciato))
 
         # --- 2. "resume task N"/"retoma la tarea N" in en/es: il motivo va
         # tradotto, non pronunciato in italiano -----------------------------

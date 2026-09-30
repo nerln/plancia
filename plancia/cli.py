@@ -351,7 +351,6 @@ def cmd_manda(args):
     v = _vista()
     conn = v.conn
     try:
-        sessione = None
         progetto = v.progetto(args.progetto, chiave=True)
         if v.nominato and progetto is None:
             # senza un progetto l'agente partirebbe in una cartella qualunque,
@@ -359,22 +358,21 @@ def cmd_manda(args):
             raise actions.BadInput("da un compartimento nominato serve un progetto "
                                    "del compartimento (--progetto).")
         if args.task:
-            # Stessa logica del ramo background di cmd_riprendi: se il task
-            # ha già una sessione viva o chiusa, il lancio la riprende
-            # (--fork-session) invece di ripartire da un prompt scritto da
-            # zero. Senza questo, "manda" e "riprendi --background" sullo
-            # stesso task avrebbero comportamenti diversi, e non sarebbe più
-            # un vero alias.
             v.oggetto(actions.task_get, args.task, "il task")
-            task = actions.task_get(v.lettura, args.task)
-            if task:
-                s = riprendi.stato(v.lettura, task)
-                sessione = riprendi.sessione_da_riprendere(s)
-        r = cantiere.avvia(conn, " ".join(args.titolo), progetto=progetto,
-                           istruzioni=args.istruzioni or "", agente=args.agente,
-                           modo=args.modo, task_id=args.task, attendi=args.attendi,
-                           sessione=sessione, compartimento=v.tag)
+        # Stessa porta di "riprendi --background" (riprendi.lancia): con un
+        # task, il lavoro riprende la SUA sessione (chiusa: stesso id; viva:
+        # non parte niente; persa: nuova, detto qui sotto). Senza questo,
+        # "manda" e "riprendi --background" sullo stesso task avrebbero
+        # comportamenti diversi, e non sarebbe piu' un vero alias.
+        r = riprendi.lancia(conn, " ".join(args.titolo), progetto=progetto,
+                            istruzioni=args.istruzioni or "", agente=args.agente,
+                            modo=args.modo, task_id=args.task, attendi=args.attendi,
+                            compartimento=v.tag, lett=v.lettura)
+        if not r.get("lanciato"):
+            return _stampa_non_lanciato(r)
         print(f"lancio #{r['run']} · {r['agente']} · {r['modo']} · {r['cwd']}")
+        if args.task:
+            print("  " + r["piano"]["avviso"])
         if args.attendi:
             d = cantiere.dettaglio(conn, r["run"])
             print(f"\n[{d['stato']}] {d['esito'][:600]}")
@@ -382,6 +380,16 @@ def cmd_manda(args):
             print("gira in sottofondo: `plancia lanci` per vedere com'è andata")
     finally:
         v.chiudi()
+
+
+def _stampa_non_lanciato(r):
+    """Il lavoro non e' partito perche' la sessione di origine e' aperta: dirlo
+    e dare il messaggio da incollare li'. Codice di uscita 1: non e' partito."""
+    print("non lanciato: " + r["piano"]["avviso"])
+    if r.get("messaggio"):
+        print("  messaggio da incollare nella sessione: " + r["messaggio"])
+    print("  (per una copia della sessione: riprendi ID --background --copia)")
+    return 1
 
 
 @_con_rifiuti
@@ -424,6 +432,11 @@ def cmd_riprendi(args):
             return 1
         s = riprendi.stato(v.lettura, task)
         print(f"#{task['id']} {task['title']}  →  {s['stato']}: {s['motivo']}")
+        if not args.apri:
+            # cosa farebbe "--background" per questo task, detto prima
+            p = riprendi.piano(v.lettura, s.get("agent"), s.get("session_id"),
+                               s.get("cwd"), task.get("host") or "", args.copia)
+            print("  in background: " + p["avviso"])
         if args.dove:
             print(f"  cwd: {s.get('cwd') or '(nessuna)'}")
         if args.apri:
@@ -441,12 +454,20 @@ def cmd_riprendi(args):
                     print(f"  attenzione: {esito['errore']}")
             return
         if args.background:
-            sessione = riprendi.sessione_da_riprendere(s)
-            esito = cantiere.avvia(
+            # Da qui il lavoro RESTA IN ATTESA del risultato: il lancio vive in
+            # un thread di questo processo (vedi il docstring di cantiere.py),
+            # e un comando che esce lo butta via insieme al suo agente.
+            esito = riprendi.lancia(
                 conn, task.get("title") or "", "", task.get("project_key"),
                 args.istruzioni or "", s.get("agent") or task.get("agent") or "claude",
-                args.scrive, None, task["id"], sessione=sessione, compartimento=v.tag)
+                args.scrive, None, task["id"], task=task, copia=args.copia,
+                compartimento=v.tag, lett=v.lettura, attendi=True)
+            if not esito.get("lanciato"):
+                return _stampa_non_lanciato(esito)
             print(f"lancio #{esito['run']} · {esito['agente']} · {esito['modo']} · {esito['cwd']}")
+            print("  " + esito["piano"]["avviso"])
+            d = cantiere.dettaglio(conn, esito["run"])
+            print(f"\n[{d['stato']}] {(d['esito'] or '')[:600]}")
             return
         argv = riprendi.comando(task, s, v.lettura)
         if argv:
@@ -1175,9 +1196,14 @@ def build_parser():
     s.add_argument("--apri", action="store_true",
                    help="lancia la ripresa in un Terminale visibile")
     s.add_argument("--background", action="store_true",
-                   help="manda in sottofondo, come 'manda' ma sulla sessione del task")
+                   help="lavoro senza testa NELLA sessione del task (chiusa: la stessa; "
+                        "aperta: non parte niente; persa: una nuova, detto prima). "
+                        "Resta in attesa del risultato: un lancio muore col comando che lo ha avviato")
     s.add_argument("--scrive", action="store_true",
                    help="con --background, puo' modificare i file del progetto")
+    s.add_argument("--copia", action="store_true",
+                   help="con --background, una COPIA della sessione (id nuovo) invece "
+                        "della sessione stessa; e' l'unico modo di proseguire una sessione aperta")
     s.add_argument("--istruzioni", help="con --background, come lo vuoi fatto")
     s.add_argument("--backfill", action="store_true",
                    help="attribuisce una sessione ai task che non ne hanno una")

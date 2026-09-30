@@ -320,8 +320,15 @@ plancia lanci                            # how a background dispatch went
 
 Sending work off in the background is the other, secondary path, for when
 resuming is not what you want: `plancia riprendi 42 --background --scrive
---istruzioni "rerun the ablation"` runs it unattended, on that task's own
-session, and records the outcome. The default is read-only; `--scrive` lets
+--istruzioni "rerun the ablation"` runs it unattended, inside that task's own
+session (`claude -p --resume <id>`, `codex exec resume <id>`, same id, its own
+folder), and records the outcome. It never opens a new session behind your
+back: if the session is still open somewhere nothing starts and you get the
+message to paste (`--copia` asks for a copy instead), and only when the
+session is really lost does a new one start, said before it does. The same
+goes for the Retry and Resume buttons, the MCP tool and Jarvis. If the
+ChatGPT/Codex desktop app holds a Codex thread open, the run stops and says
+so instead of failing silently. The default is read-only; `--scrive` lets
 the agent write, and that is a choice you make every time. `plancia manda
 "rerun the ablation" --agente codex --progetto atlas` is the older alias for
 the same thing without a task id: it still works but prints a deprecation
