@@ -66,6 +66,8 @@ final class DelegatoApp: NSObject, NSApplicationDelegate {
         Scorciatoia.azione = { [weak self] in self?.apriJarvis() }
         Scorciatoia.registra()
 
+        // il ciclo di ricarica rallenta quando l'app e' in secondo piano
+        Archivio.condiviso.inPrimoPiano = { NSApp.isActive }
         backend.ensureRunning { ok in
             Archivio.condiviso.avvia()
             if !ok { self.avvisaBackendNonParte() }

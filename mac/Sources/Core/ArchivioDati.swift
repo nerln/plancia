@@ -29,7 +29,6 @@
 //    minima propria: nel ciclo di sottofondo non si rifanno finche' le schede non cambiano;
 //  - la ricerca ricorda le ultime risposte: cancellare un carattere non rifa la richiesta.
 
-import AppKit
 import Foundation
 import Observation
 
@@ -189,6 +188,9 @@ final class Archivio {
 
     @ObservationIgnored private var ciclo: Task<Void, Never>?
     @ObservationIgnored private var osservatoreAttivazione: NSObjectProtocol?
+    /// Chi conosce l'app (Sistema/Delegato) dice qui se e' in primo piano: il Core non
+    /// importa AppKit. Senza risposta si considera sempre in primo piano.
+    @ObservationIgnored var inPrimoPiano: () -> Bool = { true }
 
     /// Parte il ricaricamento leggero a cadenza fissa. Si chiama una volta. Con l'app in
     /// secondo piano il ciclo rallenta (un giro ogni quattro) e al ritorno in primo piano
@@ -196,7 +198,7 @@ final class Archivio {
     func avvia(ogniSecondi: Double = 30) {
         guard ciclo == nil else { return }
         osservatoreAttivazione = NotificationCenter.default.addObserver(
-            forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
+            forName: Notification.Name("NSApplicationDidBecomeActiveNotification"), object: nil, queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
                 guard let self = self else { return }
@@ -209,7 +211,7 @@ final class Archivio {
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: UInt64(ogniSecondi * 1_000_000_000))
                 guard let self = self, !Task.isCancelled else { return }
-                if !NSApplication.shared.isActive && saltati < 3 {
+                if !self.inPrimoPiano() && saltati < 3 {
                     saltati += 1
                     continue
                 }

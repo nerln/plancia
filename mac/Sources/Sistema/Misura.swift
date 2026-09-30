@@ -4,7 +4,8 @@
 // 16 ms di seguito, un fotogramma salta e l'utente lo vede come uno scatto.
 //
 //   PLANCIA_HOME=<casa di prova> Plancia.app/Contents/MacOS/Plancia --misura [--misura-out <file>]
-//       [--misura-solo sezione|ricarica|scrittura|ricerca|sottofondo]
+//       [--misura-solo sezione|ricarica|scrittura|ricerca|sottofondo] [--misura-ripeti N]
+//   (--misura-ripeti ripete la ricerca N volte: serve a campionarla con `sample`)
 //
 // Apre la finestra vera, visita le sezioni con la stessa strada dell'utente (le viste
 // SwiftUI vere, non un Store isolato) e per ogni passo riporta:
@@ -193,8 +194,9 @@ enum Misura {
         // 4. ricerca: cinque tasti, uno ogni 90 ms
         a.vai(.oggi)
         _ = await quiete(minimo: 800)
-        if vuole("ricerca") {
-            _ = await passo("ricerca", "indice", assestamento: 600_000_000) {
+        let ripetizioni = vuole("ricerca") ? max(1, Int(valore("--misura-ripeti") ?? "1") ?? 1) : 0
+        for n in Array(stride(from: 1, through: ripetizioni, by: 1)) {
+            _ = await passo("ricerca", n == 1 ? "indice" : "indice \(n)", assestamento: 600_000_000) {
                 a.ricercaAperta = true
                 for parola in ["i", "in", "ind", "indi", "indic", "indice"] {
                     a.ricerca = parola

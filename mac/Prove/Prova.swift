@@ -256,6 +256,21 @@ struct ProvaCore {
         }
         prova("Tempo.data da' lo stesso risultato dei formattatori su date buone e cattive", diverse.isEmpty,
               diverse.joined(separator: ", "))
+        let ieri = Date().addingTimeInterval(-2 * 3600)
+        let ieriISO = isoV.string(from: ieri)
+        Lingua.condivisa.codice = "it"
+        let inItaliano = Tempo.relativo(ieriISO)
+        prova("Tempo.relativo dice quanto tempo fa, uguale alla seconda volta",
+              !inItaliano.isEmpty && Tempo.relativo(ieriISO) == inItaliano, inItaliano)
+        Lingua.condivisa.codice = "en"
+        let inInglese = Tempo.relativo(ieriISO)
+        prova("Tempo.relativo segue la lingua anche con la memoria dei valori", !inInglese.isEmpty && inInglese != inItaliano,
+              "\(inItaliano) / \(inInglese)")
+        Lingua.condivisa.codice = "it"
+        prova("Tempo.relativo di niente e' vuoto", Tempo.relativo(nil) == "" && Tempo.relativo("boh") == "")
+        prova("Tempo.scaduto: ieri si', domani no",
+              Tempo.scaduto(isoV.string(from: Date().addingTimeInterval(-86400 * 2))) &&
+              !Tempo.scaduto(isoV.string(from: Date().addingTimeInterval(86400 * 2))) && !Tempo.scaduto(nil))
 
         print("== scritture e compartimento")
         let esito = await a.imposta(task: 3, stato: "fatto")

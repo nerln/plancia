@@ -173,10 +173,23 @@ enum Tempo {
         return giorno(d)
     }
 
+    // "2 ore fa" cambia al massimo una volta al minuto: le viste lo chiedono per ogni riga a
+    // ogni ridisegno (la ricerca a ogni lettera), e formattarlo costa piu' di leggerlo qui.
+    @MainActor private static var relativiFatti: [String: String] = [:]
+    @MainActor private static var minutoRelativi = 0
+
     /// "2 ore fa" / "2 hours ago"
     @MainActor static func relativo(_ s: String?) -> String {
-        guard let d = data(s) else { return "" }
+        guard let s = s, !s.isEmpty else { return "" }
+        let minuto = Int(Date().timeIntervalSince1970 / 60)
+        if minuto != minutoRelativi {
+            relativiFatti.removeAll(keepingCapacity: true)
+            minutoRelativi = minuto
+        }
         let codice = Lingua.condivisa.codice
+        let chiave = codice + "|" + s
+        if let v = relativiFatti[chiave] { return v }
+        guard let d = data(s) else { return "" }
         let f = formatiRelativi[codice] ?? {
             let f = RelativeDateTimeFormatter()
             f.locale = Lingua.condivisa.locale
@@ -184,12 +197,32 @@ enum Tempo {
             formatiRelativi[codice] = f
             return f
         }()
-        return f.localizedString(for: d, relativeTo: Date())
+        let testo = f.localizedString(for: d, relativeTo: Date())
+        if relativiFatti.count < 8192 { relativiFatti[chiave] = testo }
+        return testo
     }
+
+    /// L'inizio di oggi, ricalcolato solo quando passa la mezzanotte.
+    private final class InizioGiorno: @unchecked Sendable {
+        private let l = NSLock()
+        private var inizio = Date.distantFuture
+        private var fine = Date.distantPast
+        func oggi() -> Date {
+            l.lock(); defer { l.unlock() }
+            let ora = Date()
+            if ora >= fine || ora < inizio {
+                let cal = Calendar.current
+                inizio = cal.startOfDay(for: ora)
+                fine = cal.date(byAdding: .day, value: 1, to: inizio) ?? ora.addingTimeInterval(3600)
+            }
+            return inizio
+        }
+    }
+    private static let inizioGiorno = InizioGiorno()
 
     /// Vero se il giorno (yyyy-MM-dd) e' prima di oggi.
     nonisolated static func scaduto(_ s: String?) -> Bool {
         guard let d = data(s) else { return false }
-        return d < Calendar.current.startOfDay(for: Date())
+        return d < inizioGiorno.oggi()
     }
 }
