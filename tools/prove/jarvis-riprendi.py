@@ -14,7 +14,7 @@ Isolamento (mai un `claude`/`codex` vero, mai i dati veri della macchina):
 punto; per il secondo basta un task "creato su" un host diverso da quello
 vero, che `riprendi.stato()` decide senza toccare il disco né la rete, ma
 `PLANCIA_TERMINALE` è comunque impostato su uno script finto perché
-`_esegui_proposta`/`riprendi_task` chiamano `riprendi.apri()`.
+la conferma di `riprendi_task` chiama `riprendi.apri()`.
 
 `esegui(prova)` è la firma che `tools/prova.py` scopre da sola in
 `tools/prove/*.py`; per lanciare solo questo modulo, il blocco `__main__`
@@ -49,6 +49,17 @@ def _carica_finti():
 _finti = _carica_finti()
 if str(RADICE) not in sys.path:
     sys.path.insert(0, str(RADICE))
+
+
+def _esegui_frase(jarvis, frase, lang, conn):
+    """Una frase detta a Jarvis, portata fino in fondo come fa una persona: la scheda
+    che ne esce (se ne esce una) si conferma, e si torna l'esito della conferma. Dal
+    22-SERVER niente parte da una frase da solo: lo dice la scheda, lo fa il pulsante."""
+    esito = jarvis.esegui(frase, lang, conn=conn)
+    proposta = esito.get("proposta")
+    if proposta:
+        return jarvis.conferma(proposta["id"], lang, conn=conn)
+    return esito
 
 
 @contextlib.contextmanager
@@ -189,11 +200,16 @@ def esegui(prova) -> None:
         scelta = {"testo": "fallo", "azione": {
             "tipo": "manda", "titolo": "prova jarvis riprendi chiusa",
             "task_id": t_chiusa["id"], "agente": "claude", "modo": "proposta"}}
-        d = jarvis._dizionario("it")
-
         with _popen_finto_sicuro(cantiere, tmp, 1, prova, "proposta 'manda'") as catturati:
             with _ambiente(PLANCIA_AGENTS_JSON=str(agents_vuoto)):
-                jarvis._esegui_proposta(conn, scelta, d, "it")
+                # 22-SERVER: una proposta non parte da sola. Si prepara la scheda
+                # (la stessa che "fallo" prepara da una proposta "manda") e parte
+                # con la conferma, l'unica porta.
+                scheda = jarvis.proponi(
+                    "lancia", {"titolo": scelta["azione"]["titolo"], "agente": "claude",
+                               "task_id": t_chiusa["id"], "scrive": False},
+                    conn, conn, "it")
+                jarvis.conferma(scheda["id"], "it", conn=conn)
 
         cmd_lanciato = catturati[0] if catturati else []
         prova("una proposta 'manda' con task_id chiuso lancia davvero un comando",
@@ -210,9 +226,9 @@ def esegui(prova) -> None:
                                    cwd="/tmp/prova-jarvis-riprendi-persa",
                                    agent="claude", host="altra-macchina-jarvis")
         with _ambiente(PLANCIA_TERMINALE=str(lanciatore)):
-            r_en = jarvis._esegui(f"resume task {t_persa['id']}", "en", conn)
-            r_es = jarvis._esegui(f"retoma la tarea {t_persa['id']}", "es", conn)
-            r_it = jarvis._esegui(f"riprendi task {t_persa['id']}", "it", conn)
+            r_en = _esegui_frase(jarvis, f"resume task {t_persa['id']}", "en", conn)
+            r_es = _esegui_frase(jarvis, f"retoma la tarea {t_persa['id']}", "es", conn)
+            r_it = _esegui_frase(jarvis, f"riprendi task {t_persa['id']}", "it", conn)
 
         prova("en: la voce non pronuncia il motivo in italiano ('creato su')",
               "creato su" not in (r_en.get("risposta") or ""), r_en.get("risposta"))
@@ -258,7 +274,7 @@ def _prova_copia_appunti_fallita(prova, actions, jarvis, conn, host_vero, lancia
                       "es": "la he copiado al portapapeles"}
     with _ambiente(PLANCIA_AGENTS_JSON=str(agents_json), PLANCIA_CLIPBOARD=str(clipboard_rotto)):
         for lang, frase in (("it", "riprendi task"), ("en", "resume task"), ("es", "retoma la tarea")):
-            r = jarvis._esegui(f"{frase} {t_viva['id']}", lang, conn)
+            r = _esegui_frase(jarvis, f"{frase} {t_viva['id']}", lang, conn)
             risposta = (r.get("risposta") or "").lower()
             prova(f"{lang}: 'copia negli appunti' fallita non dice di essere riuscita a copiare",
                   frase_successo[lang] not in risposta, r.get("risposta"))
@@ -284,7 +300,7 @@ def _prova_copia_appunti_codice_diverso_da_zero(prova, actions, jarvis, conn, ho
         tmp, "clipboard-exit1", "import sys\nsys.stdin.read()\nsys.exit(1)\n")
 
     with _ambiente(PLANCIA_AGENTS_JSON=str(agents_json), PLANCIA_CLIPBOARD=str(clipboard_fallisce)):
-        r = jarvis._esegui(f"riprendi task {t_viva['id']}", "it", conn)
+        r = _esegui_frase(jarvis, f"riprendi task {t_viva['id']}", "it", conn)
     risposta = (r.get("risposta") or "").lower()
     prova("uno script PLANCIA_CLIPBOARD che esiste ma esce con codice 1 non fa dire "
           "'l'ho copiata negli appunti' (il codice di uscita conta, non solo l'eccezione)",
@@ -325,7 +341,7 @@ def _prova_lancio_in_errore(prova, actions, jarvis, conn, host_vero, tmp) -> Non
         riprendi._APRI_TIMEOUT_SECONDI = 0.3
         try:
             with _ambiente(PLANCIA_TERMINALE=str(lanciatore_lento)):
-                r = jarvis._esegui(f"riprendi task {t_persa['id']}", lang, conn)
+                r = _esegui_frase(jarvis, f"riprendi task {t_persa['id']}", lang, conn)
         finally:
             riprendi._APRI_TIMEOUT_SECONDI = vecchio_timeout
         risposta = (r.get("risposta") or "")
@@ -352,12 +368,12 @@ def _prova_aggiorna_no_sync(prova, jarvis, conn) -> None:
     vecchio = getattr(_api, "_NO_SYNC_ATTIVO", False)
     try:
         _api._NO_SYNC_ATTIVO = True
-        r = jarvis._esegui("aggiorna", "it", conn)
+        r = _esegui_frase(jarvis, "aggiorna", "it", conn)
         prova("con _NO_SYNC_ATTIVO, la voce dice che il sync è disattivato, non 'rileggo le fonti'",
               "disattivat" in (r.get("risposta") or "").lower(), r.get("risposta"))
 
         _api._NO_SYNC_ATTIVO = False
-        r2 = jarvis._esegui("aggiorna", "it", conn)
+        r2 = _esegui_frase(jarvis, "aggiorna", "it", conn)
         prova("senza _NO_SYNC_ATTIVO, la voce torna a dire 'rileggo le fonti'",
               (r2.get("risposta") or "") == "Rileggo le fonti.", r2.get("risposta"))
     finally:

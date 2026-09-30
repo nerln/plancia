@@ -260,17 +260,242 @@ TURNI = [
      "comparison was measuring the duplicate rate as much as the embeddings."),
 ]
 
+# La memoria dimostrativa: una cinquantina di schede in inglese, dei quattro tipi
+# di sempre, con legami veri fra loro (i `[[nome]]` che una scheda scrive) e
+# qualche scheda senza legami. Tutto inventato: e' quello che la Mappa e il grafo
+# mostrano negli screenshot, e cinque pallini scollegati non mostrano niente.
+# (nome, tipo, progetto, descrizione, dettaglio): senza dettaglio la scheda resta
+# corta, e il richiamo la scarta (pallino vuoto nel grafo).
 MEMORIA = [
-    ("lumen-architecture", "How Lumen is put together and why the index is a single file",
-     "project", "lumen"),
-    ("apiary-budgets", "Budget ceilings are per project, enforced at the proxy, not the client",
-     "project", "apiary"),
-    ("writing-style", "Short sentences. Concrete nouns. No em dash.", "feedback", None),
-    ("thesis-scope", "Chapter three covers retrieval failure, not generation",
-     "project", "field-notes"),
-    ("machine-setup", "Where the models live and why the cache is on the external drive",
-     "reference", None),
+    ("user-role", "user", None,
+     "Solo maintainer of a handful of small tools; writes Rust and Python daily",
+     "Works alone most of the time and reviews their own diffs before merging. Prefers an "
+     "explanation that starts from the code that exists over one that starts from theory."),
+    ("user-schedule", "user", None,
+     "Deep work in the morning, meetings and mail after two",
+     "Anything that needs a decision is queued for the morning summary instead of "
+     "interrupting the afternoon. Weekends are for the thesis, not for the tools."),
+    ("user-thesis-status", "user", "field-notes",
+     "Third year of a part-time PhD on retrieval failure modes",
+     "Chapter three is the current focus. Chapters one and two are with the supervisor, "
+     "and the next committee meeting is the first week of December."),
+    ("user-hardware", "user", None,
+     "Laptop for daily work, a small always-on box for builds and the gateway",
+     "The box has no display and is reached over ssh. Anything that needs a GPU runs on "
+     "the laptop, and long jobs are started with a log file and a name."),
+    ("user-languages", "user", None,
+     "Fluent in English and Italian; writes docs in English", ""),
+    ("writing-style", "feedback", None,
+     "Short sentences. Concrete nouns. No em dash.",
+     "Applies to docs, commit messages and replies alike. If a sentence needs a semicolon "
+     "it is probably two sentences. Numbers go in as digits, with the unit."),
+    ("commit-messages", "feedback", None,
+     "Imperative mood, subject under 60 characters, body only when the why is not obvious",
+     "The subject says what the change does, the body says why it was needed. No ticket "
+     "numbers in the subject, no trailing period, no prefix in square brackets."),
+    ("no-surprise-refactors", "feedback", None,
+     "Do not reformat or rename files the task did not ask about",
+     "A diff should contain the change that was requested and nothing else. If a nearby "
+     "cleanup looks worth doing, mention it at the end instead of doing it."),
+    ("test-first-on-bugs", "feedback", None,
+     "For a bug, write the failing test first and show it failing",
+     "Then fix it, then show the same test passing. A bug fix without a test that failed "
+     "before the change is treated as a guess."),
+    ("ask-before-deleting", "feedback", None,
+     "Never delete data or branches without asking, even in scratch folders",
+     "Moving to a trash folder is fine. Force pushes, dropped tables and removed "
+     "directories always need a yes first, in the same conversation."),
+    ("small-prs", "feedback", "lumen",
+     "Keep pull requests under 300 changed lines; split otherwise",
+     "A large change goes in as a series where each step builds and passes on its own. "
+     "The first step is usually the refactor that makes the real change small."),
+    ("plain-status-updates", "feedback", None,
+     "Status updates say what changed and what is next, in two sentences",
+     "No adjectives about how it went, no apologies for how long it took. If something is "
+     "blocked, the blocker goes first."),
+    ("dependency-policy", "feedback", "lumen",
+     "Prefer the standard library; a new dependency needs a sentence of justification",
+     "The sentence names what the dependency does that is not worth writing, who "
+     "maintains it, and how many transitive packages it pulls in."),
+    ("explain-tradeoffs", "feedback", None,
+     "When two options are reasonable, name both and the cost of each, then pick one",
+     "The pick comes with the condition under which the other option would win, so the "
+     "decision can be revisited without redoing the analysis."),
+    ("dates-absolute", "feedback", None,
+     "Write absolute dates in notes and tasks, never 'next Friday'", ""),
+    ("no-emoji", "feedback", None,
+     "No emoji in code, commit messages or docs", ""),
+    ("lumen-architecture", "project", "lumen",
+     "How Lumen is put together and why the index is a single file",
+     "Pages are parsed in parallel, rendered from one template, and the search index is "
+     "written last. Nothing outside the output folder is ever touched."),
+    ("lumen-index-format", "project", "lumen",
+     "The search index is one file, written atomically, rebuilt only for changed pages",
+     "Terms are sorted and prefix-compressed, postings are delta-encoded. The file is "
+     "written next to the final path and renamed, so a reader never sees half an index."),
+    ("lumen-release-checklist", "project", "lumen",
+     "Tag, build the three targets, checksum, then the changelog, in that order",
+     "The changelog is written last because it quotes the checksums. The tag is created "
+     "from the commit that CI built, never from the working tree."),
+    ("lumen-markdown-quirks", "project", "lumen",
+     "Front matter is optional; tables need a header row or they render as text",
+     "Nested lists use four spaces. A fenced block inside a list item must be indented to "
+     "the item's text, otherwise the renderer closes the list."),
+    ("apiary-budgets", "project", "apiary",
+     "Budget ceilings are per project, enforced at the proxy, not the client",
+     "A request over budget gets a 429 with the remaining amount in a header. Budgets "
+     "reset at midnight UTC and the counters live in memory, backed up every minute."),
+    ("apiary-providers", "project", "apiary",
+     "Three upstream providers behind one route table; failover is by error class",
+     "Timeouts and 5xx move to the next provider, 4xx never do. Latency is recorded but "
+     "not used for routing, because it made the choice flap."),
+    ("apiary-key-rotation", "project", "apiary",
+     "Provider keys rotate on the first of the month; the proxy reads them at start",
+     "A rotation needs a restart, which takes two seconds. The old key stays valid for a "
+     "day so in-flight requests finish."),
+    ("apiary-logging", "project", "apiary",
+     "Request logs keep the route and token counts, never the prompt body",
+     "Logs are rotated daily and kept for two weeks. Anything that would identify a "
+     "person is dropped before the line is written."),
+    ("thesis-scope", "project", "field-notes",
+     "Chapter three covers retrieval failure, not generation",
+     "The claim is that most failures are decided before the model sees a token: the "
+     "query, the chunking and the index. Generation quality is a separate chapter."),
+    ("thesis-replication-plan", "project", "field-notes",
+     "Replicate two prior results before proposing anything new",
+     "The first replication is done and matches within noise. The second needs a dataset "
+     "that has to be requested, and the request goes out this week."),
+    ("thesis-reading-list", "project", "field-notes",
+     "Forty papers on the list; twelve read in full, the rest skimmed for the method",
+     "Each paper gets a note with the setup, the metric and one sentence on what would "
+     "make the result not hold. Notes live next to the PDF."),
+    ("harbour-config-format", "project", "harbour",
+     "One TOML file per environment; secrets are references, never values",
+     "A reference looks like vault:project/name and is resolved at deploy time. A config "
+     "that contains a literal secret fails validation."),
+    ("harbour-rollback", "project", "harbour",
+     "Rollback means redeploying the previous manifest, not reverting the git history",
+     "Every deploy stores its manifest. A rollback is a deploy of the one before, so the "
+     "history stays honest and the log shows both events."),
+    ("atlas-corpus", "project", "atlas",
+     "Support tickets from 2023 to 2025, anonymised, about 40 thousand rows",
+     "Names, addresses and order numbers are replaced by placeholders before anything is "
+     "embedded. The raw export is deleted after the anonymised copy is verified."),
+    ("atlas-embedding-models", "project", "atlas",
+     "Three models compared at the same dimension; the smallest is within two points",
+     "Recall at 10 is within two points across the three, and the smallest is four times "
+     "faster. The decision waits for the evaluation on the long tickets."),
+    ("atlas-eval-protocol", "project", "atlas",
+     "Fixed query set of 300, judged in two passes, disagreements go to a third",
+     "The query set never changes between runs, so numbers stay comparable. Judgements "
+     "are stored with the model name and the date."),
+    ("site-archive-page", "project", "site",
+     "The archive page is the only missing piece; it needs tags first", ""),
+    ("inbox-rules", "project", "inbox-zero",
+     "Mail is filed by sender domain first, then by keyword, never by content",
+     "Filing by content was tried and dropped: it was slow and it was wrong in ways that "
+     "were hard to notice. A message that matches nothing stays in the inbox."),
+    ("signalworks-alert-rules", "project", "signalworks",
+     "An alert needs two consecutive out-of-range readings before it pages anyone",
+     "One reading is noise, two in a row is a trend. The threshold and the window are per "
+     "sensor type, and the defaults are conservative."),
+    ("signalworks-log-format", "project", "signalworks",
+     "Sensor logs are CSV with a UTC timestamp, one file per device per day",
+     "The header row is mandatory. A file is closed at midnight UTC and never edited "
+     "afterwards; corrections go in a sidecar file."),
+    ("fieldcraft-packing-list", "project", "fieldcraft",
+     "One packing list per trip type; the spare batteries line has been missed twice",
+     "The list is checked off at the door, not in the van. After a trip the list is "
+     "updated the same day, while the misses are still fresh."),
+    ("kiln-cache-keys", "project", "kiln",
+     "Cache keys hash inputs and the tool version; a version bump invalidates everything",
+     "Keys never include timestamps or absolute paths. A cold cache is expected after a "
+     "tool upgrade and is not treated as a bug."),
+    ("postcard-template", "project", "postcard",
+     "One template, one data file; clients never edit the HTML", ""),
+    ("gutter-rotation", "project", "gutter",
+     "Rotate at 100 MB or weekly, keep four archives",
+     "Archives are compressed and named with the date. The job logs what it removed, so a "
+     "missing file can be explained after the fact."),
+    ("spindle-models", "project", "spindle",
+     "The speech model runs offline; a night of audio takes about two hours",
+     "Long recordings are cut at silences of two seconds or more. Timestamps refer to the "
+     "original file, not the cut pieces."),
+    ("almanac-format", "project", "almanac",
+     "One line per release: date, project, what broke, which commit fixed it",
+     "The log is append-only and plain text, so it can be searched with grep. A release "
+     "that broke nothing gets no line."),
+    ("machine-setup", "reference", None,
+     "Where the models live and why the cache is on the external drive",
+     "Models are large and rarely change, so they sit on the external drive with a cache "
+     "of the two in use on the internal one. The paths are set in one shell file."),
+    ("backup-routine", "reference", None,
+     "Nightly snapshot of the projects folder, weekly copy to the external drive",
+     "Snapshots are kept for 30 days. A restore is tested on the first of the month, on "
+     "a scratch folder, and the result is written in the log."),
+    ("ci-runners", "reference", "harbour",
+     "Two self-hosted runners; the second one is only for releases",
+     "The release runner has the signing key and no network access except the artifact "
+     "store. The other one runs everything else and can be wiped freely."),
+    ("glossary-retrieval", "reference", "field-notes",
+     "Recall at k, MRR and nDCG as used in chapter three, with the exact formulas",
+     "Each metric is defined once, with the cutoff written out, so a number quoted in the "
+     "text can be recomputed from the tables."),
+    ("style-guide-docs", "reference", "lumen",
+     "Docs headings are sentence case; code samples are runnable",
+     "A sample that cannot be pasted and run is marked as a sketch. Commands are shown "
+     "without a prompt character so they copy cleanly."),
+    ("release-calendar", "reference", None,
+     "Lumen ships on the first Tuesday of the month, Apiary whenever a provider changes",
+     "Other projects ship when they are ready. A release never goes out on a Friday or "
+     "the day before a trip."),
+    ("vault-layout", "reference", "apiary",
+     "Secrets live under one prefix per project; read access is per project",
+     "The gateway can read its own prefix and nothing else. Adding a project means "
+     "adding a prefix and a policy, in that order."),
+    ("hosting-notes", "reference", "backlot",
+     "Static sites on one small host behind a CDN; exports go to object storage",
+     "The host serves nothing dynamic. DNS changes are made by hand and written in the "
+     "log, with the old value, before they are made."),
+    ("editor-setup", "reference", None,
+     "Editor settings live in the dotfiles repo; formatters run on save", ""),
 ]
+
+# Chi rimanda a chi: i `[[nome]]` che una scheda scrive. Ogni legame e' scritto una
+# volta sola (dal lato piu' vecchio): il grafo li tratta come archi non orientati.
+# Le schede che qui non compaiono in nessuna lista sono gli orfani della demo.
+LEGAMI_MEMORIA = {
+    "user-role": ["writing-style", "explain-tradeoffs", "plain-status-updates"],
+    "user-schedule": ["plain-status-updates", "release-calendar", "inbox-rules"],
+    "user-thesis-status": ["thesis-scope", "thesis-reading-list"],
+    "user-hardware": ["machine-setup", "ci-runners", "spindle-models", "fieldcraft-packing-list"],
+    "writing-style": ["style-guide-docs", "commit-messages"],
+    "commit-messages": ["small-prs", "test-first-on-bugs"],
+    "no-surprise-refactors": ["small-prs", "lumen-architecture"],
+    "test-first-on-bugs": ["lumen-markdown-quirks", "apiary-providers"],
+    "ask-before-deleting": ["backup-routine", "gutter-rotation"],
+    "small-prs": ["lumen-release-checklist"],
+    "dependency-policy": ["lumen-architecture", "harbour-config-format"],
+    "explain-tradeoffs": ["atlas-embedding-models", "apiary-providers"],
+    "lumen-architecture": ["lumen-index-format", "lumen-markdown-quirks",
+                           "lumen-release-checklist", "style-guide-docs"],
+    "lumen-release-checklist": ["release-calendar", "ci-runners"],
+    "apiary-budgets": ["apiary-providers", "apiary-logging", "apiary-key-rotation"],
+    "apiary-key-rotation": ["vault-layout"],
+    "apiary-providers": ["apiary-logging"],
+    "thesis-scope": ["thesis-replication-plan", "glossary-retrieval", "atlas-eval-protocol"],
+    "thesis-reading-list": ["thesis-replication-plan"],
+    "atlas-corpus": ["atlas-embedding-models", "atlas-eval-protocol"],
+    "atlas-eval-protocol": ["glossary-retrieval"],
+    "harbour-config-format": ["harbour-rollback", "vault-layout", "ci-runners"],
+    "signalworks-alert-rules": ["signalworks-log-format", "fieldcraft-packing-list",
+                                "gutter-rotation"],
+    "signalworks-log-format": ["gutter-rotation"],
+    "kiln-cache-keys": ["lumen-index-format", "hosting-notes"],
+    "hosting-notes": ["backup-routine"],
+    "almanac-format": ["lumen-release-checklist", "kiln-cache-keys"],
+    "machine-setup": ["backup-routine"],
+}
 
 
 # La lavagna: quello che i tre agenti hanno aperto in questo momento.
@@ -539,13 +764,22 @@ def main():
             (stato, testo, "https://x.com/example/status/1" if stato == "pubblicato" else None,
              ids[key], fonte, ts if stato == "pubblicato" else None, ts, ts))
 
-    for nome, descrizione, tipo, key in MEMORIA:
+    # Un generatore a parte: aggiungere o togliere schede non deve spostare i numeri
+    # casuali di tutto quello che viene dopo nell'archivio.
+    caso_memoria = random.Random(41)
+    nomi_memoria = {m[0] for m in MEMORIA}
+    for nome, tipo, key, descrizione, dettaglio in MEMORIA:
+        vicini = [v for v in LEGAMI_MEMORIA.get(nome, []) if v in nomi_memoria and v != nome]
+        corpo = f"# {nome}\n\n{descrizione}\n"
+        if dettaglio:
+            corpo += f"\n{dettaglio}\n"
+        if vicini:
+            corpo += "\nSee also " + ", ".join(f"[[{v}]]" for v in vicini) + ".\n"
         conn.execute(
             "INSERT INTO knowledge(name, path, scope, description, type, body, links, "
             "project_id, updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
-            (nome, f"/demo/{nome}.md", "demo", descrizione, tipo,
-             f"# {nome}\n\n{descrizione}\n", "[]",
-             ids.get(key), quando(random.randint(1, 20))))
+            (nome, f"/demo/{nome}.md", "demo", descrizione, tipo, corpo,
+             json.dumps(vicini), ids.get(key), quando(caso_memoria.randint(1, 20))))
 
     for nome, kind, descrizione in [
             ("plancia", "skill", "Read and update Plancia from any session"),

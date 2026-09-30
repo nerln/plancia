@@ -21,11 +21,16 @@ solo, e le cartelle diventano una proprietà sua.
 import collections
 import hashlib
 import json
-import math
 import os
 import sqlite3
+import subprocess
+import sys
+import threading
+import time
+from pathlib import Path
 
-from . import richiamo
+from . import config, piattaforma, richiamo
+from . import disposizione as disposizione_pura
 
 # «Quasi vuote» vuol dire esattamente quello che il richiamo scarta: la stessa
 # soglia, non una simile. Se le due regole divergono, la vista dice che una
@@ -44,79 +49,182 @@ def _righe(conn) -> list:
         return []
 
 
-def _seme(nome: str) -> float:
-    """Un numero fisso ricavato dal nome. Serve a partire sempre dallo stesso
-    punto: una mappa che si ridispone a ogni apertura non si impara mai."""
-    h = hashlib.sha1(nome.encode("utf-8")).digest()
-    return int.from_bytes(h[:4], "big") / 0xFFFFFFFF
+# ---------------------------------------------------------------------------
+# La disposizione: calcolata una volta, fuori dal server, e ricordata
+# ---------------------------------------------------------------------------
+#
+# Le coordinate dipendono solo da CHI c'e' e da CHI e' legato a chi: nomi e archi.
+# Una descrizione riscritta, una scheda toccata, non le spostano. Quindi l'impronta
+# (`impronta`) e' quella, e finche' non cambia la disposizione resta quella che si
+# e' calcolata: dieci aperture della mappa costano un calcolo, non dieci.
+#
+# Il calcolo (plancia/disposizione.py) e' pura CPU in Python: nello stesso processo
+# del server toglierebbe il fiato alle altre richieste (il GIL le mette in fila
+# dietro di lui). Per questo gira in un processo figlio, a priorita' bassa; chi
+# chiede la mappa aspetta la risposta, ma il resto del server non se ne accorge.
+# Se il figlio non parte, si calcola sul posto: piu' lento, non sbagliato.
+
+_LUCCHETTO = threading.Lock()
+_MEMORIA = collections.OrderedDict()    # impronta -> {nome: [x, y]}, le ultime
+_IN_CORSO = {}                          # impronta -> Event, un calcolo alla volta per impronta
+_PROVVISORIE = {}                       # impronta -> (posizioni, scadenza): il figlio non ha finito in tempo
+_VALIDITA_PROVVISORIA = 60.0
+_UNO_ALLA_VOLTA = threading.Semaphore(1)
+_MEMORIA_MAX = 4
+_TEMPO_MAX = 120.0                      # secondi per il processo figlio
+# Le sole prove leggono queste due: quante volte si e' calcolato davvero e come.
+STATISTICHE = {"calcoli": 0, "figli": 0, "sul_posto": 0, "partenze_calde": 0, "scaduti": 0}
 
 
-def disposizione(nodi: list, archi: list, giri: int = 260) -> None:
+def impronta(nomi: list, archi: list) -> str:
+    """Chi c'e' e chi e' legato a chi. Cambia solo se cambiano le schede o i legami."""
+    h = hashlib.sha1()
+    h.update(("\n".join(sorted(nomi))).encode("utf-8"))
+    h.update(b"\0")
+    h.update(("\n".join(sorted("%s\t%s" % (a, b) for a, b in archi))).encode("utf-8"))
+    return h.hexdigest()
+
+
+def _file_cache() -> Path:
+    return config.DATA_DIR / "cache" / "mappa-disposizione.json"
+
+
+def _leggi_disco() -> dict:
+    try:
+        dati = json.loads(_file_cache().read_text(encoding="utf-8"))
+        if isinstance(dati, dict) and isinstance(dati.get("posizioni"), dict):
+            return dati
+    except (OSError, ValueError):
+        pass
+    return {}
+
+
+def _scrivi_disco(chiave: str, posizioni: dict) -> None:
+    percorso = _file_cache()
+    try:
+        percorso.parent.mkdir(parents=True, exist_ok=True)
+        tmp = percorso.with_name(percorso.name + ".%d.tmp" % os.getpid())
+        tmp.write_text(json.dumps({"impronta": chiave, "posizioni": posizioni}),
+                       encoding="utf-8")
+        os.replace(str(tmp), str(percorso))
+    except OSError:
+        pass        # la cache e' un'accelerazione: se non si scrive, si ricalcola
+
+
+def _ricorda(chiave: str, posizioni: dict) -> None:
+    with _LUCCHETTO:
+        _MEMORIA[chiave] = posizioni
+        _MEMORIA.move_to_end(chiave)
+        while len(_MEMORIA) > _MEMORIA_MAX:
+            _MEMORIA.popitem(last=False)
+
+
+def _calcola_fuori(nomi: list, archi: list, partenza: dict) -> tuple:
+    """(coordinate, definitive). Le calcola in un processo figlio; sul posto se il
+    figlio non riesce a partire. Se il figlio non finisce in tempo (la macchina e'
+    sotto un carico enorme) NON si ripiega sul calcolo intero nel server, che
+    sarebbe peggio: si danno le posizioni di partenza senza rifinirle
+    (`giri=0`, costo lineare), segnate come non definitive: valgono per questa
+    risposta e non si scrivono su disco, cosi' la prossima volta si riprova."""
+    richiesta = json.dumps({"nomi": nomi, "archi": [list(a) for a in archi],
+                            "partenza": partenza})
+    if sys.executable:
+        env = dict(os.environ)
+        env["PYTHONPATH"] = os.pathsep.join(
+            [str(config.ROOT)] + ([env["PYTHONPATH"]] if env.get("PYTHONPATH") else []))
+        try:
+            fatto = subprocess.run(
+                [sys.executable, "-m", "plancia.disposizione"], input=richiesta,
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+                timeout=_TEMPO_MAX, cwd=str(config.ROOT), env=env,
+                **piattaforma.opzioni_figlio(), **piattaforma.opzioni_utf8())
+            if fatto.returncode == 0:
+                risultato = json.loads(fatto.stdout)
+                if isinstance(risultato, dict) and set(risultato) == set(nomi):
+                    STATISTICHE["figli"] += 1
+                    return risultato, True
+        except subprocess.TimeoutExpired:
+            STATISTICHE["scaduti"] += 1
+            return disposizione_pura.calcola(nomi, archi, partenza, giri=0), False
+        except (OSError, ValueError, subprocess.SubprocessError):
+            pass
+    STATISTICHE["sul_posto"] += 1
+    return disposizione_pura.calcola(nomi, archi, partenza), True
+
+
+def posizioni(nomi: list, archi: list) -> dict:
+    """{nome: [x, y]} per questi nodi e questi archi, dalla cache se l'impronta
+    e' la stessa, altrimenti calcolata (una volta sola anche se le richieste sono
+    dieci insieme) a partire dalle posizioni della disposizione precedente."""
+    chiave = impronta(nomi, archi)
+    while True:
+        with _LUCCHETTO:
+            trovata = _MEMORIA.get(chiave)
+            if trovata is not None:
+                _MEMORIA.move_to_end(chiave)
+                return trovata
+            provvisoria = _PROVVISORIE.get(chiave)
+            if provvisoria is not None and provvisoria[1] > time.time():
+                return provvisoria[0]
+            attesa = _IN_CORSO.get(chiave)
+            if attesa is None:
+                attesa = _IN_CORSO[chiave] = threading.Event()
+                mio = True
+            else:
+                mio = False
+        if not mio:
+            attesa.wait(_TEMPO_MAX * 2)
+            continue    # o e' in memoria adesso, o chi calcolava e' caduto e tocca a noi
+        try:
+            # Anche su disco, per non rifare da zero a ogni riavvio del server.
+            disco = _leggi_disco()
+            if disco.get("impronta") == chiave and set(disco["posizioni"]) == set(nomi):
+                _ricorda(chiave, disco["posizioni"])
+                return disco["posizioni"]
+            # La partenza: l'ultima disposizione nota (memoria o disco), qualunque
+            # impronta avesse. Le schede che c'erano restano dove stavano.
+            partenza = {}
+            with _LUCCHETTO:
+                if _MEMORIA:
+                    partenza = dict(next(reversed(_MEMORIA.values())))
+            if not partenza:
+                partenza = disco.get("posizioni", {})
+            if partenza:
+                STATISTICHE["partenze_calde"] += 1
+            with _UNO_ALLA_VOLTA:
+                STATISTICHE["calcoli"] += 1
+                risultato, definitive = _calcola_fuori(nomi, archi, partenza)
+            if definitive:
+                _ricorda(chiave, risultato)
+                _scrivi_disco(chiave, risultato)
+            else:
+                with _LUCCHETTO:
+                    _PROVVISORIE.clear()
+                    _PROVVISORIE[chiave] = (risultato, time.time() + _VALIDITA_PROVVISORIA)
+            return risultato
+        finally:
+            with _LUCCHETTO:
+                _IN_CORSO.pop(chiave, None)
+            attesa.set()
+
+
+def disposizione(nodi: list, archi: list) -> None:
     """Mette le coordinate dentro i nodi, in un quadrato da 0 a 1.
 
-    Molle sugli archi e repulsione fra tutti, il metodo di sempre. Quello che
-    conta qui non è l'eleganza del layout ma che sia lo stesso ogni volta: le
-    posizioni di partenza escono dal nome, non dal caso, e non c'è animazione.
-    Si calcola qui e non nel browser perché il browser lo rifarebbe a ogni
-    apertura, leggermente diverso.
-
-    Stabile a parità di dati, non stabile in assoluto: un legame nuovo verso un
-    nodo molto collegato sposta anche i vicini, e la mappa di domani non sarà
-    sovrapponibile a quella di oggi. Vale per riaprirla dieci volte in un
-    pomeriggio, non per impararla a memoria una volta per sempre.
+    Stabile a parita' di dati, non stabile in assoluto: un legame nuovo verso un
+    nodo molto collegato sposta anche i vicini (poco: si riparte dalle posizioni di
+    prima), e la mappa di domani non sara' sovrapponibile a quella di oggi. Vale
+    per riaprirla dieci volte in un pomeriggio, non per impararla a memoria una
+    volta per sempre.
     """
     if not nodi:
         return
-    n = len(nodi)
-    indice = {x["nome"]: i for i, x in enumerate(nodi)}
-    # Partenza su una spirale: i nodi non nascono mai sovrapposti, e chi ha più
-    # legami parte più al centro, dove poi resterà.
-    px, py = [], []
-    for i, nodo in enumerate(nodi):
-        ang = 2.399963 * i + _seme(nodo["nome"]) * 0.6
-        raggio = 0.08 + 0.42 * math.sqrt((i + 0.5) / n)
-        px.append(0.5 + raggio * math.cos(ang))
-        py.append(0.5 + raggio * math.sin(ang))
-
-    legami = [(indice[a["da"]], indice[a["a"]]) for a in archi
-              if a["da"] in indice and a["a"] in indice]
-    k = math.sqrt(1.0 / n)          # distanza di riposo fra due nodi
-    passo = 0.1
-    for giro in range(giri):
-        fx = [0.0] * n
-        fy = [0.0] * n
-        for i in range(n):
-            for j in range(i + 1, n):
-                dx, dy = px[i] - px[j], py[i] - py[j]
-                d2 = dx * dx + dy * dy
-                if d2 < 1e-9:
-                    dx, dy, d2 = (i - j) * 1e-4, (j - i) * 1e-4, 2e-8
-                forza = (k * k) / d2
-                fx[i] += dx * forza; fy[i] += dy * forza
-                fx[j] -= dx * forza; fy[j] -= dy * forza
-        for a, b in legami:
-            dx, dy = px[a] - px[b], py[a] - py[b]
-            d = math.hypot(dx, dy) or 1e-6
-            forza = (d * d) / k / d
-            fx[a] -= dx * forza; fy[a] -= dy * forza
-            fx[b] += dx * forza; fy[b] += dy * forza
-        # Il passo si raffredda: prima si sistema la forma grossa, poi si limano
-        # le sovrapposizioni senza più stravolgere niente.
-        limite = passo * (1.0 - giro / giri) + 0.002
-        for i in range(n):
-            d = math.hypot(fx[i], fy[i]) or 1e-9
-            px[i] += fx[i] / d * min(d, limite)
-            py[i] += fy[i] / d * min(d, limite)
-            px[i] = min(0.99, max(0.01, px[i]))
-            py[i] = min(0.99, max(0.01, py[i]))
-
-    minx, maxx = min(px), max(px)
-    miny, maxy = min(py), max(py)
-    larghezza = (maxx - minx) or 1.0
-    altezza = (maxy - miny) or 1.0
-    for i, nodo in enumerate(nodi):
-        nodo["x"] = round(0.03 + 0.94 * (px[i] - minx) / larghezza, 4)
-        nodo["y"] = round(0.03 + 0.94 * (py[i] - miny) / altezza, 4)
+    nomi = [x["nome"] for x in nodi]
+    coppie = [(a["da"], a["a"]) for a in archi]
+    pos = posizioni(nomi, coppie)
+    for nodo in nodi:
+        xy = pos.get(nodo["nome"], [0.5, 0.5])
+        nodo["x"], nodo["y"] = xy[0], xy[1]
 
 
 def mappa(conn) -> dict:

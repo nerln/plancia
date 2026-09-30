@@ -694,8 +694,17 @@ sys.path.insert(0, %(radice)r)
 from plancia import jarvis, store
 conn = store.connect(); store.init_db(conn)
 scelta = json.loads(%(scelta)r)
-d = jarvis._dizionario("it")
-esito = jarvis._esegui_proposta(conn, scelta, d, "it", lett=conn)
+# 22-SERVER: una proposta non parte da sola. Si prepara la scheda (quella che "fallo"
+# e "rilancia" preparano) e parte con la conferma, l'unica porta.
+a = scelta["azione"]
+if a["tipo"] == "rilancia":
+    scheda = jarvis.proponi("rilancia", {"run": a["run"]}, conn, conn, "it")
+else:
+    scheda = jarvis.proponi("lancia", {
+        "titolo": a["titolo"], "agente": a.get("agente", "claude"),
+        "progetto": a.get("progetto"), "scrive": a.get("modo") == "esegui",
+        "task_id": a.get("task_id")}, conn, conn, "it")
+esito = jarvis.conferma(scheda["id"], "it", conn=conn)
 registro = %(registro)r
 atteso = %(atteso)d
 partenza = %(partenza)d

@@ -136,6 +136,7 @@ const EN = {
   // IT_TESTI perché l'ordine delle parole intorno al segnaposto cambia da
   // una lingua all'altra, come 'dopo_conta' di LOTTO-L2-VISTA.
   'Riprendi': 'Resume', 'Rilancia': 'Relaunch', 'Apri': 'Open',
+  'Conferma': 'Confirm', 'Annulla': 'Cancel',
   'aggiorno': 'Checking…',
   'in_background': 'In the background',
   'riprendi_viva': 'Open in the app, {cwd}',
@@ -436,6 +437,9 @@ function storageGet(chiave) { try { return localStorage.getItem(chiave); } catch
 function storageSet(chiave, valore) { try { localStorage.setItem(chiave, valore); } catch (e) { /* pazienza */ } }
 
 const UIPARAM = new URLSearchParams(location.search).get('ui');
+// `?memoria=grafo` apre la Memoria gia' sul grafo invece che sull'elenco: serve a
+// chi deve fotografare la vista (tools/scatti.sh) e non puo' premere il pulsante.
+const MODO_MEMORIA = new URLSearchParams(location.search).get('memoria') === 'grafo' ? 'grafo' : 'elenco';
 let UILANG = UIPARAM || storageGet('plancia-ui') ||
   (navigator.language.startsWith('it') ? 'it' : 'en');
 if (UIPARAM) storageSet('plancia-ui', UIPARAM);
@@ -638,12 +642,69 @@ views.oggi = async () => {
   </div>`;
 };
 
+/* La scheda di una proposta di Jarvis: cosa succederebbe, riga per riga, con
+   Conferma e Annulla. E' l'unico modo in cui la dashboard fa partire qualcosa che
+   scrive o avvia un agente da una frase (/api/jarvis/conferma), e la scheda
+   propone Annulla per prima: il focus parte li'. Annulla, Esc e un click fuori
+   la buttano (/api/jarvis/rifiuta). Torna l'esito della conferma, o null. */
+function schedaJarvis(p, lingua) {
+  const vecchia = document.getElementById('jscheda');
+  if (vecchia) vecchia.remove();
+  const el = document.createElement('div');
+  el.id = 'jscheda';
+  el.className = 'jscheda';
+  el.setAttribute('role', 'dialog');
+  el.setAttribute('aria-modal', 'true');
+  el.setAttribute('aria-label', p.titolo || '');
+  el.innerHTML = `<div class="jscheda-box rischio-${esc(p.rischio || '')}">
+    <h2>${esc(p.titolo || '')}</h2>
+    <dl>${(p.righe || []).map((r) => `<dt>${esc(r.k)}</dt><dd>${esc(r.v)}</dd>`).join('')}</dl>
+    ${p.avviso ? `<p class="jscheda-avviso">${esc(p.avviso)}</p>` : ''}
+    <div class="jscheda-az">
+      <button type="button" class="ghost" data-j="annulla">${T('Annulla')}</button>
+      <button type="button" class="primary" data-j="conferma">${T('Conferma')}</button>
+    </div>
+  </div>`;
+  document.body.appendChild(el);
+  return new Promise((resolve) => {
+    let chiusa = false;
+    const chiudi = (esito) => {
+      if (chiusa) return;
+      chiusa = true;
+      document.removeEventListener('keydown', tasto);
+      el.remove();
+      resolve(esito);
+    };
+    const rifiuta = async () => {
+      try { await api('/api/jarvis/rifiuta', { method: 'POST', body: { id: p.id, lang: lingua } }); }
+      catch (e) { /* la scheda scade da sola in cinque minuti */ }
+      chiudi(null);
+    };
+    const tasto = (ev) => { if (ev.key === 'Escape') rifiuta(); };
+    document.addEventListener('keydown', tasto);
+    el.addEventListener('click', async (ev) => {
+      const b = ev.target.closest('[data-j]');
+      if (b && b.dataset.j === 'conferma') {
+        el.querySelectorAll('button').forEach((x) => { x.disabled = true; });
+        try {
+          chiudi(await api('/api/jarvis/conferma', { method: 'POST', body: { id: p.id, lang: lingua } }));
+        } catch (err) { toast(err.message, true); chiudi(null); }
+      } else if ((b && b.dataset.j === 'annulla') || ev.target === el) {
+        rifiuta();
+      }
+    });
+    el.querySelector('[data-j="annulla"]').focus();
+  });
+}
+
 /* Una proposta e un solo pulsante. "Riprendi" su una proposta "manda" apre il
    cassetto (con o senza task, come apriRiprendi gia' sa fare): il lancio parte
    solo dal click su "In background" li' dentro, mai da questo pulsante da solo.
-   "Rilancia" chiama davvero cantiere.avvia (plancia/jarvis.py, _esegui_proposta):
-   e' la risposta a "Il lancio e' fallito. Lo riprovo?", per questo dice
-   Rilancia e non Riprendi. "Apri" segue la navigazione che jarvis risponde. */
+   "Rilancia" chiede a Jarvis (plancia/jarvis.py, azione "rilancia") di preparare la
+   scheda del rilancio e la mostra con Conferma e Annulla (schedaJarvis): e' la
+   risposta a "Il lancio e' fallito. Lo riprovo?", per questo dice Rilancia e non
+   Riprendi, e non parte niente finche' non si preme Conferma. "Apri" segue la
+   navigazione che jarvis risponde. */
 function rigaProposta(p, i) {
   const az = p.azione || {};
   const frase = i === 0 ? 'fallo' : ['', 'la seconda', 'la terza', 'la quarta'][i] || 'fallo';
@@ -1230,7 +1291,7 @@ function vaiA(vai) {
   } else if (tipo === 'progetti') {
     dest = '#/progetti/' + encodeURIComponent(id);
   } else if (tipo === 'memoria') {
-    const f = state.filters.memoria || (state.filters.memoria = { lente: '', modo: 'elenco', livello: 0 });
+    const f = state.filters.memoria || (state.filters.memoria = { lente: '', modo: MODO_MEMORIA, livello: 0 });
     f.lente = '';
     dest = '#/memoria/' + encodeURIComponent(id);
   } else if (tipo === 'sessioni') {
@@ -1919,7 +1980,7 @@ function guaiMem(d) {
 }
 
 views.memoria = async () => {
-  const f = state.filters.memoria || (state.filters.memoria = { lente: '', modo: 'elenco', livello: 0 });
+  const f = state.filters.memoria || (state.filters.memoria = { lente: '', modo: MODO_MEMORIA, livello: 0 });
   const m = state.mappa = await api('/api/memoria/mappa');
   const d = m.diagnosi;
   if (!d.totale) return `<div class="vuoto">${T('nessuna memoria')}</div>`;
@@ -2693,10 +2754,10 @@ document.addEventListener('click', async (ev) => {
         const b = $('#prova-mem'); b.hidden = !b.hidden;
         if (!b.hidden) $('#mfrase').focus();
       } else if (name === 'mem-lente') {
-        const f = state.filters.memoria || (state.filters.memoria = { lente: '', modo: 'elenco', livello: 0 });
+        const f = state.filters.memoria || (state.filters.memoria = { lente: '', modo: MODO_MEMORIA, livello: 0 });
         f.lente = act.dataset.value; await route();
       } else if (name === 'mem-grafo') {
-        const f = state.filters.memoria || (state.filters.memoria = { lente: '', modo: 'elenco', livello: 0 });
+        const f = state.filters.memoria || (state.filters.memoria = { lente: '', modo: MODO_MEMORIA, livello: 0 });
         f.modo = 'grafo'; f.livello = 1; f.lente = ''; state.sel.memoria = act.dataset.nome; await route();
       } else if (name === 'grafo-livello') {
         const f = state.filters.memoria; f.livello = +act.dataset.v;
@@ -2838,9 +2899,19 @@ document.addEventListener('click', async (ev) => {
             progetto: act.dataset.progetto });
           return;
         }
+        const etichetta = act.textContent;
         act.disabled = true; act.textContent = '…';
-        const r = await api('/api/jarvis', { method: 'POST',
-          body: { testo: act.dataset.frase || 'fallo', lang: state.recap?.lang || '', voce: false } });
+        const lingua = state.recap?.lang || '';
+        let r = await api('/api/jarvis', { method: 'POST',
+          body: { testo: act.dataset.frase || 'fallo', lang: lingua, voce: false } });
+        if (r.proposta) {
+          // Niente parte da una frase: Jarvis ha preparato una scheda, e il lavoro
+          // parte solo dal suo Conferma. Annulla (o Esc) la butta.
+          const fatto = await schedaJarvis(r.proposta, lingua);
+          act.disabled = false; act.textContent = etichetta;
+          if (!fatto) return;
+          r = fatto;
+        }
         toast(r.risposta || T('riprendi_avviato'));
         // Consigliata dal critico (costa una riga): "vai" torna un'azione di
         // navigazione che finora restava ignorata - il bottone "Apri"

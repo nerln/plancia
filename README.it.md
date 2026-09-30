@@ -398,10 +398,15 @@ testo e ti dice dove scaricarne una.
 Il campo di testo in fondo serve quando il microfono non è disponibile.
 
 ```bash
-plancia jarvis "ricordami di scrivere la nota di migrazione"   # scritto: l'hai scritto tu, parte
+plancia jarvis "ricordami di scrivere la nota di migrazione"   # mostra la scheda e chiede [s/N]
 ```
 
-Il Jarvis della dashboard (Windows e Linux) funziona come prima.
+Il terminale e la dashboard (Windows e Linux) seguono le stesse regole. Di Jarvis ce
+n'è uno solo, in sola lettura: il secondo di prima, che teneva un modello con i tool
+di scrittura aperti ed eseguiva quello che scrivevi, non c'è più. `plancia jarvis`
+stampa la scheda e chiede la conferma da tastiera; senza un terminale vero (uno
+script, una pipe, un altro agente che lo lancia) non conferma mai. Nella dashboard la
+scheda compare con Conferma e Annulla, e anche il pulsante Rilancia passa da lì.
 
 Claude Code ha la voce [da marzo 2026](https://claudefa.st/blog/guide/mechanics/voice-mode):
 tieni premuta la barra spaziatrice e detti. È solo dettatura in ingresso, e una

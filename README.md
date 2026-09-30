@@ -296,10 +296,15 @@ installed it stays text-only and tells you where to download one.
 The text field at the bottom covers the case where the microphone is unavailable.
 
 ```bash
-plancia jarvis "remind me to write the migration note"   # typed: you wrote it, it runs
+plancia jarvis "remind me to write the migration note"   # shows the card, asks [y/N]
 ```
 
-The dashboard's own Jarvis (Windows and Linux) works as before.
+The terminal and the dashboard (Windows and Linux) use the same rules. There is one
+Jarvis, read-only: the old second one, which kept a model with the write tools open
+and ran what you typed, is gone. `plancia jarvis` prints the card and asks you to
+confirm at the keyboard; without a real terminal (a script, a pipe, another agent
+calling it) it never confirms. On the dashboard the card shows up with Confirm and
+Cancel, and the Retry button goes through it too.
 
 Claude Code has had [voice input since March 2026](https://claudefa.st/blog/guide/mechanics/voice-mode):
 you hold the spacebar and dictate. It is input only, and by design there is no

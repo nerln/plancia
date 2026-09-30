@@ -244,17 +244,56 @@ def cmd_ask(args):
         _avvisa_se_muto(info)
 
 
+def _stampa_scheda(proposta):
+    """La scheda di una proposta di Jarvis, riga per riga, come la vede il pannello."""
+    print(f"  {proposta['titolo']}")
+    for r in proposta.get("righe") or []:
+        print(f"    {r['k']}: {r['v']}")
+    if proposta.get("avviso"):
+        print(f"  {proposta['avviso']}")
+
+
+def _conferma_a_tastiera(lang) -> bool:
+    """Chiede a chi e' davanti al terminale. Senza un terminale vero (un agente che
+    lancia il comando, una pipe, uno script) non si chiede e non si conferma: la
+    conferma e' di una persona, e una risposta preparata nello stdin non lo e'."""
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        return False
+    domanda = {"it": "Confermi? [s/N] ", "es": "Confirmas? [s/N] "}.get(lang, "Confirm? [y/N] ")
+    try:
+        risposta = input(domanda).strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        return False
+    return risposta in ("s", "si", "sì", "y", "yes")
+
+
 def cmd_jarvis(args):
-    from . import jarvis, voice
+    from . import jarvis, recap, voice
     frase = " ".join(args.frase)
+    lang = recap.lang_or_default(args.lang)
     v = _vista()
     try:
-        esito = jarvis.esegui(frase, args.lang, vista=v)
+        esito = jarvis.esegui(frase, lang, vista=v)
+        print(f"[{esito['tipo']}] {esito['risposta']}")
+        if esito.get("azione"):
+            print(f"  azione: {esito['azione']}")
+        proposta = esito.get("proposta")
+        if proposta:
+            # Niente parte da una frase: la scheda si mostra, e parte solo se la
+            # persona davanti al terminale risponde di si'.
+            _stampa_scheda(proposta)
+            if _conferma_a_tastiera(lang):
+                fatto = jarvis.conferma(proposta["id"], lang, vista=v)
+                print(f"[{fatto['tipo']}] {fatto['risposta']}")
+                if fatto.get("azione"):
+                    print(f"  azione: {fatto['azione']}")
+                esito = fatto
+            else:
+                jarvis.rifiuta(proposta["id"], (v.visore or "") if v else "")
+                print("  non eseguito: serve la conferma di una persona a un terminale "
+                      "interattivo (o il pulsante Conferma della dashboard).")
     finally:
         v.chiudi()
-    print(f"[{esito['tipo']}] {esito['risposta']}")
-    if esito.get("azione"):
-        print(f"  azione: {esito['azione']}")
     if args.speak and not esito.get("muto"):
         info = voice.parla(esito["risposta"], esito.get("lingua", "it"), attendi=True)
         _avvisa_se_muto(info)
