@@ -429,12 +429,42 @@ read it before anything changes.
 ```bash
 plancia riordina --proponi                    # writes the proposed map to a file
 plancia riordina --mostra <file>              # prints it as a table
-plancia riordina --applica <file>             # assigns every parent in it
-plancia riordina --annulla <batch>            # undoes exactly that application
+plancia riordina --applica <file>             # assigns the parents, states and mergers in it
+plancia riordina --annulla <batch>            # puts back exactly what it changed
 ```
 
+The file is plain JSON, one row per project, and you can edit it by hand or
+have an agent that has studied your projects write it. Beyond `padre` (the
+parent's key) a row can carry:
+
+```json
+[
+  {"chiave": "old-experiment", "inglobato_in": "atlas",
+   "motivo": "the code now lives inside the atlas folder"},
+  {"chiave": "thesis-draft", "stato": "concluso",
+   "motivo": "handed in last June"}
+]
+```
+
+- `stato`: `attivo`, `archiviato` or `concluso`. Missing means the state is left
+  alone.
+- `inglobato_in`: the project this one was folded into. It means parent = that
+  project, state `archiviato`, and a line "Inglobato in atlas: <reason>" added
+  to the end of the project's summary.
+- `motivo`: the reason, one sentence. It is required on every row that has a
+  `stato` or an `inglobato_in`; `--applica` refuses a row without one and
+  `--mostra` marks it `[DA CORREGGERE]`.
+
+`--mostra` prints all of it as one table (key, parent, rule, state, reason).
+A row is all or nothing: if the parent is refused, the state does not change.
+A manual project is only touched by a row that names it with a parent, a state
+or an `inglobato_in`; a project that is not in the file is never touched. The
+format is documented in full at the top of `plancia/riordina.py`.
+
 Applying is one batch, and undoing it restores each project's previous parent,
-not just a blank one. Today (the recap view) and Next up group projects by
+state and summary, not just a blank one. Undo works field by field and only
+where the field is still what the batch left: a state you changed by hand
+afterwards, or set with a later batch, is not overwritten. Today (the recap view) and Next up group projects by
 area once this map exists; before it does, they fall back to one flat list, so
 nothing breaks for a fresh install.
 
@@ -579,7 +609,7 @@ warning each time). The full list is in the docstring of `plancia/compartimenti.
 git config core.hooksPath .githooks
 ```
 
-Turns on the hook that runs `python3 tools/prova.py` before every push: 4142
+Turns on the hook that runs `python3 tools/prova.py` before every push: 4183
 checks in a few minutes, against a throwaway archive that never touches
 yours. They cover the schema, the board, the proposals, the search index, the
 recap, the MCP surface and its token budget, every read route of the HTTP API,

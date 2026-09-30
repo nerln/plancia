@@ -1,4 +1,4 @@
-"""Propone, applica e annulla la mappa dei padri (verdetto §A, L1-RIORDINA).
+"""Propone, applica e annulla il riordino dei progetti: padri, stati, inglobamenti.
 
 `slot.set_parent` sa assegnare un padre e rifiutarlo con un motivo; sa
 `slot.annulla` disfare un batch. Quello che manca è la parte DECIDE (verdetto
@@ -6,6 +6,64 @@
 per ogni progetto automatico senza uno, scriverlo in un file che Eugenio può
 leggere e correggere a mano, e solo dopo la sua occhiata applicarlo. Questo
 modulo fa quella parte; non tocca `projects` finché non è `--applica`.
+
+Il file di proposta
+-------------------
+Un JSON: una lista di righe, una per progetto, che `--proponi` scrive e che si
+corregge a mano (o con un agente che ha studiato i progetti). Campi:
+
+    chiave        obbligatorio. La chiave esatta del progetto (mai un nome
+                  approssimato: un refuso viene rifiutato, non indovinato).
+    nome, regola, path
+                  informativi, li scrive `--proponi`; l'applicazione li ignora.
+    padre         la chiave del padre (un progetto manuale, di profondità 0).
+                  Vuoto = nessun padre proposto.
+    stato         "attivo", "archiviato" o "concluso". Assente = lo stato non
+                  si tocca.
+    inglobato_in  la chiave del progetto dentro cui questo è confluito. Vale
+                  come padre = quella chiave + stato "archiviato" + una nota
+                  in coda al sommario del progetto, "Inglobato in <chiave>:
+                  <motivo>". Se c'è anche `padre` deve essere la stessa chiave;
+                  se c'è anche `stato` deve essere "archiviato".
+    motivo        il perché, in una frase. OBBLIGATORIO in ogni riga che ha
+                  `stato` o `inglobato_in` (una riga senza viene rifiutata da
+                  `--applica` e segnata "da correggere" da `--mostra`); per le
+                  righe di solo padre lo scrive `--proponi`.
+
+Esempio:
+
+    [
+      {"chiave": "prove-vecchie", "inglobato_in": "atlante",
+       "motivo": "il codice vive ora nella cartella di atlante"},
+      {"chiave": "bozza-tesi", "stato": "concluso",
+       "motivo": "consegnata a giugno"},
+      {"chiave": "field-notes-alpha", "padre": "field-notes", "regola": "prefisso",
+       "motivo": "la chiave comincia con «field-notes-»"}
+    ]
+
+Regole di `--applica`
+---------------------
+- Un batch solo, col nome del file senza estensione. Ogni riga che cambia
+  qualcosa scrive un evento `padre:<batch>` con i valori di PRIMA e di DOPO
+  di padre, stato e sommario (`slot.riordina_progetto`).
+- Tutto o niente per riga: se il padre viene rifiutato (padre automatico, già
+  figlio, progetto con figli...) lo stato di quella riga non cambia. Le righe
+  rifiutate non fermano le altre e tornano nell'esito con il motivo.
+- Un progetto manuale (auto=0) si tocca solo se il file ha una riga che lo
+  nomina con un `padre`, uno `stato` o un `inglobato_in`: una riga vuota su un
+  manuale non lo sposta nemmeno con `--resto-in-cartelle-viste`. Un progetto
+  che nel file non c'è non si tocca mai.
+- Una riga di solo `stato` non finisce sotto `cartelle-viste`: quel resto vale
+  solo per le righe senza padre e senza stato.
+- Riapplicare lo stesso file non cambia niente (le righe tornano "invariate")
+  e non ripete la nota.
+
+Regole di `--annulla`
+---------------------
+Rimette i valori di prima, campo per campo, in ordine inverso, e solo dove il
+campo è ancora quello lasciato da quel batch: uno stato, un padre o un
+sommario cambiati dopo (a mano o da un altro batch) non vengono scavalcati.
+Si annulla passando il nome del batch o il file stesso.
 """
 
 import json
@@ -245,18 +303,77 @@ def carica(percorso):
     return json.loads(Path(percorso).expanduser().read_text(encoding="utf-8"))
 
 
+STATI_AMMESSI = slot.STATI_RIORDINO
+
+
+def azione_riga(riga):
+    """Cosa chiede una riga oltre al solo padre, senza toccare l'archivio.
+
+    Torna `(azione, errore)`. `azione` è None se la riga è di solo padre (o
+    vuota) e va per la strada di sempre, `slot.set_parent`; altrimenti un dict
+    `{padre, stato, nota, inglobato}` da passare a `slot.riordina_progetto`.
+    `errore` è il motivo di rifiuto detto in parole, oppure None. La stessa
+    funzione serve a `applica` (per rifiutare) e a `tabella` (per segnare la
+    riga "da correggere"), così le due non possono divergere.
+    """
+    chiave = riga.get("chiave")
+    if not isinstance(chiave, str) or not chiave.strip():
+        return None, "manca la chiave del progetto"
+    campi = {c: riga.get(c) for c in ("padre", "stato", "inglobato_in", "motivo")}
+    for nome, valore in campi.items():
+        if valore is not None and not isinstance(valore, str):
+            return None, f"il campo «{nome}» deve essere un testo"
+    padre = (campi["padre"] or "").strip()
+    stato = (campi["stato"] or "").strip()
+    inglobato = (campi["inglobato_in"] or "").strip()
+    if not stato and not inglobato:
+        return None, None
+    if stato and stato not in STATI_AMMESSI:
+        return None, f"stato non valido: «{stato}». Ammessi: {', '.join(STATI_AMMESSI)}"
+    motivo = " ".join((campi["motivo"] or "").split())
+    if not motivo:
+        return None, ("manca il motivo: ogni riga con «stato» o «inglobato_in» "
+                      "deve dire perché")
+    nota = ""
+    if inglobato:
+        if padre and padre != inglobato:
+            return None, (f"la riga dice padre «{padre}» e inglobato in «{inglobato}»: "
+                          "un progetto inglobato ha per padre la destinazione")
+        if stato and stato != "archiviato":
+            return None, (f"un progetto inglobato è archiviato, non «{stato}»: "
+                          "togli lo stato o scrivi «archiviato»")
+        if inglobato == chiave.strip():
+            return None, "un progetto non può essere inglobato in sé stesso"
+        padre, stato = inglobato, "archiviato"
+        nota = f"Inglobato in {inglobato}: {motivo}"
+    return {"padre": padre, "stato": stato, "nota": nota, "inglobato": bool(inglobato)}, None
+
+
+def _e_manuale(conn, chiave):
+    riga = conn.execute("SELECT auto FROM projects WHERE key=?", (chiave,)).fetchone()
+    return bool(riga) and not riga["auto"]
+
+
 def applica(conn, percorso, resto_in_cartelle_viste=False):
-    """Chiama `slot.set_parent` per ogni riga con un padre. Le righe rifiutate
-    non fermano le altre: tornano nel risultato, la CLI le stampa.
+    """Applica il file: padri con `slot.set_parent`, righe con stato o
+    inglobamento con `slot.riordina_progetto`. Le righe rifiutate non
+    fermano le altre: tornano nel risultato, la CLI le stampa.
 
     Il batch è il nome del file senza estensione: è quello che `--annulla`
     dovrà ripassare a `slot.annulla`, quindi deve essere lo stesso.
+
+    Torna `applicate` (righe che hanno cambiato qualcosa), `rifiutate`,
+    `dettagli_rifiutate`, e per le righe con stato o inglobamento anche
+    `stati` (stati cambiati), `inglobati` (inglobamenti riusciti) e
+    `invariate` (già com'erano: non scrivono niente).
     """
     percorso = Path(percorso).expanduser()
     righe = carica(percorso)
     batch = percorso.stem
 
-    if resto_in_cartelle_viste and any(not r.get("padre") for r in righe):
+    if resto_in_cartelle_viste and any(
+            not r.get("padre") and not r.get("stato") and not r.get("inglobato_in")
+            for r in righe):
         # Un bucket manuale come un altro: se non esiste ancora lo crea,
         # se esiste già _force=True non serve (auto/kind non sono nella
         # lista che upsert_project protegge da un ingest successivo).
@@ -264,12 +381,38 @@ def applica(conn, percorso, resto_in_cartelle_viste=False):
         conn.commit()
 
     applicate = 0
+    stati = 0
+    inglobati = 0
+    invariate = 0
     rifiutate = []
     for riga in righe:
         chiave = riga.get("chiave")
+        azione, errore = azione_riga(riga)
+        if errore:
+            rifiutate.append({"chiave": chiave, "motivo": errore,
+                              "padre": riga.get("inglobato_in") or riga.get("padre") or ""})
+            continue
+        if azione:
+            esito = slot.riordina_progetto(
+                conn, chiave, batch, padre_key=azione["padre"] or None,
+                stato=azione["stato"] or None, nota=azione["nota"] or None)
+            if not esito["ok"]:
+                rifiutate.append({"chiave": chiave, "padre": azione["padre"],
+                                  "motivo": esito["motivo"]})
+            elif not esito["cambiato"]:
+                invariate += 1
+            else:
+                applicate += 1
+                if esito["stato_dopo"] != esito["stato_prima"]:
+                    stati += 1
+                if azione["inglobato"]:
+                    inglobati += 1
+            continue
         padre = riga.get("padre") or ""
         if not padre:
-            if not resto_in_cartelle_viste:
+            # Il resto vale per chi non ha proposto niente, mai per un manuale
+            # che il file nomina senza dire cosa farne.
+            if not resto_in_cartelle_viste or _e_manuale(conn, chiave):
                 continue
             padre = CARTELLE_VISTE
         esito = slot.set_parent(conn, chiave, padre, batch)
@@ -278,7 +421,9 @@ def applica(conn, percorso, resto_in_cartelle_viste=False):
         else:
             rifiutate.append({"chiave": chiave, "padre": padre, "motivo": esito["motivo"]})
     conn.commit()
-    return {"applicate": applicate, "rifiutate": len(rifiutate), "dettagli_rifiutate": rifiutate}
+    return {"applicate": applicate, "rifiutate": len(rifiutate),
+            "dettagli_rifiutate": rifiutate, "stati": stati, "inglobati": inglobati,
+            "invariate": invariate}
 
 
 def annulla(conn, batch):
@@ -295,32 +440,55 @@ _LARGHEZZA_MINIMA = 10
 
 def tabella(righe):
     """Il testo di `--mostra`: chiave, padre, regola, motivo; per padre poi
-    chiave, e i "nessuna" (senza padre) in fondo, come chiede il lotto.
+    chiave, le righe di solo stato dopo, e i "nessuna" (senza padre) in fondo.
 
-    Le colonne chiave e padre si allargano sulla riga più lunga davvero
-    presente: una larghezza fissa (28/20, la versione precedente) va storta
-    non appena una chiave la supera - e sul dato vero capita per un decimo
-    delle chiavi. `.get("chiave", "")` invece di `r["chiave"]` perché una
-    riga corretta a mano da Eugenio senza quel campo non deve far fallire
-    l'intera tabella con un KeyError: meglio una cella vuota.
+    Se almeno una riga dice uno stato o un inglobamento, fra la regola e il
+    motivo compare la colonna dello stato (`concluso`, `archiviato`,
+    `inglobato`); senza, la tabella è quella di sempre. Una riga che
+    `--applica` rifiuterebbe per come è scritta (manca il motivo, lo stato non
+    esiste...) porta in coda «[DA CORREGGERE: ...]».
+
+    Le colonne si allargano sulla riga più lunga davvero presente: una
+    larghezza fissa (28/20, la versione precedente) va storta non appena una
+    chiave la supera - e sul dato vero capita per un decimo delle chiavi.
+    `.get("chiave", "")` invece di `r["chiave"]` perché una riga corretta a
+    mano da Eugenio senza quel campo non deve far fallire l'intera tabella
+    con un KeyError: meglio una cella vuota.
     """
-    con_padre = sorted((r for r in righe if r.get("padre")),
-                       key=lambda r: (r["padre"], r.get("chiave", "")))
-    senza_padre = sorted((r for r in righe if not r.get("padre")),
+    def padre_di(r):
+        return r.get("padre") or r.get("inglobato_in") or ""
+
+    def stato_di(r):
+        return "inglobato" if r.get("inglobato_in") else (r.get("stato") or "")
+
+    con_padre = sorted((r for r in righe if padre_di(r)),
+                       key=lambda r: (padre_di(r), r.get("chiave", "")))
+    solo_stato = sorted((r for r in righe if not padre_di(r) and stato_di(r)),
                         key=lambda r: r.get("chiave", ""))
-    tutte = con_padre + senza_padre
+    senza_padre = sorted((r for r in righe if not padre_di(r) and not stato_di(r)),
+                         key=lambda r: r.get("chiave", ""))
+    tutte = con_padre + solo_stato + senza_padre
+    con_stato = any(stato_di(r) for r in tutte)
     larghezza_chiave = max([len(r.get("chiave", "")) for r in tutte] + [_LARGHEZZA_MINIMA])
-    larghezza_padre = max([len(r.get("padre") or "-") for r in tutte] + [_LARGHEZZA_MINIMA])
+    larghezza_padre = max([len(padre_di(r) or "-") for r in tutte] + [_LARGHEZZA_MINIMA])
 
     def riga_fmt(r):
-        return (f"{r.get('chiave', ''):<{larghezza_chiave}} "
-                f"{(r.get('padre') or '-'):<{larghezza_padre}} "
-                f"{r.get('regola', ''):<10} {r.get('motivo', '')}")
+        testo = (f"{r.get('chiave', ''):<{larghezza_chiave}} "
+                 f"{(padre_di(r) or '-'):<{larghezza_padre}} "
+                 f"{r.get('regola', ''):<10} ")
+        if con_stato:
+            testo += f"{(stato_di(r) or '-'):<10} "
+        testo += r.get("motivo", "") or ""
+        _, errore = azione_riga(r)
+        if errore:
+            testo += f"  [DA CORREGGERE: {errore}]"
+        return testo.rstrip()
 
     linee = [riga_fmt(r) for r in con_padre]
-    if senza_padre:
-        if linee:
-            linee.append("")
-        linee.append("nessuna:")
-        linee.extend(riga_fmt(r) for r in senza_padre)
+    for titolo, gruppo in (("solo stato:", solo_stato), ("nessuna:", senza_padre)):
+        if gruppo:
+            if linee:
+                linee.append("")
+            linee.append(titolo)
+            linee.extend(riga_fmt(r) for r in gruppo)
     return "\n".join(linee)

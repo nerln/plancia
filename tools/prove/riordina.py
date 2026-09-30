@@ -352,6 +352,343 @@ def _prova_mostra(prova):
           pos["z-orfano"] > pos["a-progetto"] and pos["z-orfano"] > pos["delta"], str(pos))
 
 
+def _riga_progetto(conn, chiave):
+    return dict(conn.execute("SELECT * FROM projects WHERE key=?", (chiave,)).fetchone())
+
+
+def _stato_completo(conn):
+    """Stato, padre e nota di ogni progetto: quello che --annulla deve
+    rimettere esattamente."""
+    return [(r["key"], r["status"], r["parent_id"], r["summary"]) for r in
+            conn.execute("SELECT key, status, parent_id, summary FROM projects ORDER BY key")]
+
+
+def _prova_stato_e_inglobato_applica(prova):
+    from plancia import riordina
+
+    conn = _conn()
+    atlante = _progetto(conn, "atlante", auto=0)
+    _progetto(conn, "vecchio-esperimento", auto=1, summary="Prime prove.")
+    _progetto(conn, "bozza-chiusa", auto=1)
+    _progetto(conn, "riaperto", auto=1, status="archiviato")
+    prima = _stato_completo(conn)
+    n = _conta_progetti(conn)
+
+    righe = [
+        {"chiave": "vecchio-esperimento", "padre": "", "regola": "nessuna",
+         "inglobato_in": "atlante", "motivo": "il codice vive ora dentro atlante"},
+        {"chiave": "bozza-chiusa", "stato": "concluso", "motivo": "consegnato a giugno"},
+        {"chiave": "riaperto", "stato": "attivo", "motivo": "si riprende a ottobre"},
+    ]
+    dest = _scrivi_json(righe, nome="prova-stato-inglobato")
+    esito = riordina.applica(conn, dest)
+    prova("applica: tre righe applicate, nessuna rifiutata",
+          esito["applicate"] == 3 and esito["rifiutate"] == 0, str(esito))
+
+    v = _riga_progetto(conn, "vecchio-esperimento")
+    prova("inglobato: padre = atlante, stato archiviato",
+          v["parent_id"] == atlante and v["status"] == "archiviato", str(v))
+    prova("inglobato: la nota 'Inglobato in atlante' con il motivo e in coda al sommario",
+          v["summary"] == "Prime prove.\nInglobato in atlante: il codice vive ora dentro atlante",
+          repr(v["summary"]))
+    prova("stato concluso scritto, il padre non si muove",
+          _riga_progetto(conn, "bozza-chiusa")["status"] == "concluso"
+          and _riga_progetto(conn, "bozza-chiusa")["parent_id"] is None, "")
+    prova("stato attivo rimette in vita un archiviato",
+          _riga_progetto(conn, "riaperto")["status"] == "attivo", "")
+    prova("applica non crea ne toglie progetti", _conta_progetti(conn) == n, "")
+
+    # Un secondo --applica dello stesso file non cambia niente e non raddoppia la nota
+    esito2 = riordina.applica(conn, dest)
+    prova("secondo applica: niente di nuovo, la nota non si ripete",
+          esito2["applicate"] == 0 and esito2.get("invariate") == 3
+          and _riga_progetto(conn, "vecchio-esperimento")["summary"].count("Inglobato") == 1,
+          str(esito2))
+
+    k = riordina.annulla(conn, dest.stem)
+    prova("annulla: rimette stato, padre e nota di tutti e tre esattamente",
+          k == 3 and _stato_completo(conn) == prima, f"k={k}\n{_stato_completo(conn)}\n{prima}")
+
+
+def _prova_motivo_obbligatorio_e_rifiuti(prova):
+    from plancia import riordina
+
+    conn = _conn()
+    _progetto(conn, "atlante", auto=0)
+    _progetto(conn, "a", auto=1)
+    _progetto(conn, "b", auto=1)
+    _progetto(conn, "c", auto=1)
+    _progetto(conn, "d", auto=1)
+    _progetto(conn, "e", auto=1)
+    prima = _stato_completo(conn)
+
+    righe = [
+        {"chiave": "a", "stato": "archiviato"},
+        {"chiave": "b", "stato": "archiviato", "motivo": "   "},
+        {"chiave": "c", "stato": "dimenticato", "motivo": "stato inventato"},
+        {"chiave": "d", "inglobato_in": "atlante", "stato": "concluso", "motivo": "incoerente"},
+        {"chiave": "e", "inglobato_in": "atlante", "padre": "altro", "motivo": "due padri"},
+        {"chiave": "a", "inglobato_in": "non-esiste", "motivo": "destinazione assente"},
+    ]
+    esito = riordina.applica(conn, _scrivi_json(righe, nome="prova-rifiuti-stato"))
+    motivi = [d["motivo"] for d in esito["dettagli_rifiutate"]]
+    prova("sei righe sbagliate: tutte rifiutate, nessuna applicata",
+          esito["applicate"] == 0 and esito["rifiutate"] == 6, str(esito))
+    prova("senza motivo o con motivo vuoto: il rifiuto dice 'motivo'",
+          "motivo" in motivi[0] and "motivo" in motivi[1], str(motivi))
+    prova("stato inventato: il rifiuto elenca gli stati ammessi",
+          "archiviato" in motivi[2] and "concluso" in motivi[2], str(motivi))
+    prova("inglobato con stato diverso da archiviato e contraddizione rifiutata",
+          "archiviato" in motivi[3], str(motivi))
+    prova("inglobato con un altro padre e contraddizione rifiutata",
+          "atlante" in motivi[4] and "altro" in motivi[4], str(motivi))
+    prova("inglobato in un progetto che non esiste e rifiutato",
+          "non-esiste" in motivi[5], str(motivi))
+    prova("le righe rifiutate non toccano niente (nemmeno lo stato)",
+          _stato_completo(conn) == prima, "")
+
+    # tutto o niente sulla riga: padre rifiutato = stato invariato
+    conn2 = _conn()
+    _progetto(conn2, "auto-padre", auto=1)
+    _progetto(conn2, "figlio", auto=1)
+    prima2 = _stato_completo(conn2)
+    esito2 = riordina.applica(conn2, _scrivi_json(
+        [{"chiave": "figlio", "inglobato_in": "auto-padre", "motivo": "padre automatico"}],
+        nome="prova-tutto-o-niente"))
+    prova("padre rifiutato da set_parent: anche lo stato resta com'era",
+          esito2["rifiutate"] == 1 and _stato_completo(conn2) == prima2, str(esito2))
+
+
+def _prova_manuale_solo_con_riga_esplicita(prova):
+    from plancia import riordina
+
+    conn = _conn()
+    _progetto(conn, "tesi", auto=0)
+    _progetto(conn, "atlante", auto=0)
+    _progetto(conn, "figlio-auto", auto=1)
+    prima = _stato_completo(conn)
+
+    # Una riga senza padre ne stato su un manuale non lo tocca, nemmeno col resto
+    righe = [{"chiave": "tesi", "padre": "", "regola": "nessuna", "motivo": "x", "path": []}]
+    dest = _scrivi_json(righe, nome="prova-manuale-implicito")
+    esito = riordina.applica(conn, dest, resto_in_cartelle_viste=True)
+    creati = conn.execute("SELECT 1 FROM projects WHERE key='cartelle-viste'").fetchone()
+    parent_tesi = conn.execute("SELECT parent_id FROM projects WHERE key='tesi'").fetchone()[0]
+    prova("una riga vuota su un manuale non lo sposta in cartelle-viste",
+          esito["applicate"] == 0 and parent_tesi is None, str(esito))
+
+    # Una riga di solo stato non viene spostata in cartelle-viste dal resto
+    riordina.applica(conn, _scrivi_json(
+        [{"chiave": "figlio-auto", "stato": "archiviato", "motivo": "fermo"},
+         {"chiave": "atlante", "padre": "", "regola": "nessuna", "motivo": "x", "path": []}],
+        nome="prova-solo-stato-resto"), resto_in_cartelle_viste=True)
+    prova("una riga di solo stato non finisce in cartelle-viste col resto",
+          _riga_progetto(conn, "figlio-auto")["parent_id"] is None
+          and _riga_progetto(conn, "figlio-auto")["status"] == "archiviato", "")
+    prova("un manuale con riga vuota non finisce in cartelle-viste nemmeno cosi",
+          _riga_progetto(conn, "atlante")["parent_id"] is None, "")
+    conn.execute("UPDATE projects SET status='attivo' WHERE key='figlio-auto'")
+    conn.commit()
+
+    # Un progetto che non e' nel file non si tocca: solo le righe scritte contano
+    riordina.applica(conn, _scrivi_json(
+        [{"chiave": "figlio-auto", "stato": "concluso", "motivo": "finito"}],
+        nome="prova-manuale-fuori-file"))
+    prova("i manuali che non sono nel file restano identici",
+          [r for r in _stato_completo(conn) if r[0] in ("tesi", "atlante")]
+          == [r for r in prima if r[0] in ("tesi", "atlante")], "")
+
+    # Una riga esplicita sul manuale lo cambia (e --annulla lo rimette)
+    esplicita = _scrivi_json(
+        [{"chiave": "tesi", "stato": "concluso", "motivo": "discussa"}], nome="prova-manuale-esplicito")
+    esito3 = riordina.applica(conn, esplicita)
+    prova("una riga esplicita sul manuale cambia il suo stato",
+          esito3["applicate"] == 1 and _riga_progetto(conn, "tesi")["status"] == "concluso",
+          str(esito3))
+    riordina.annulla(conn, esplicita.stem)
+    prova("annulla rimette lo stato del manuale",
+          _riga_progetto(conn, "tesi")["status"] == "attivo", "")
+
+
+def _prova_annulla_dopo_modifiche_successive(prova):
+    """Annulla un batch dopo che altro e' cambiato: si rimette solo quello che
+    il batch aveva lasciato ancora com'era, campo per campo."""
+    from plancia import riordina, slot
+
+    conn = _conn()
+    atlante = _progetto(conn, "atlante", auto=0)
+    _progetto(conn, "x", auto=1, summary="Nota originale.")
+    _progetto(conn, "y", auto=1)
+    _progetto(conn, "z", auto=1)
+    prima = _stato_completo(conn)
+
+    a = _scrivi_json([
+        {"chiave": "x", "inglobato_in": "atlante", "motivo": "primo giro"},
+        {"chiave": "y", "stato": "archiviato", "motivo": "primo giro"},
+        {"chiave": "z", "stato": "archiviato", "motivo": "primo giro"},
+    ], nome="prova-successive-a")
+    riordina.applica(conn, a)
+    dopo_a = _stato_completo(conn)
+
+    # Dopo il batch A: x viene riaperto a mano (stato), y passa a concluso in un
+    # batch B, z non si tocca.
+    conn.execute("UPDATE projects SET status='attivo' WHERE key='x'")
+    conn.commit()
+    b = _scrivi_json([{"chiave": "y", "stato": "concluso", "motivo": "secondo giro"}],
+                     nome="prova-successive-b")
+    riordina.applica(conn, b)
+
+    k = riordina.annulla(conn, a.stem)
+    x = _riga_progetto(conn, "x")
+    prova("annulla A: x, riaperto a mano, resta attivo ma torna senza padre e senza nota",
+          x["status"] == "attivo" and x["parent_id"] is None and x["summary"] == "Nota originale.",
+          str(x))
+    prova("annulla A: y, portato a concluso da B, non e' scavalcato",
+          _riga_progetto(conn, "y")["status"] == "concluso", "")
+    prova("annulla A: z torna com'era", _riga_progetto(conn, "z")["status"] == "attivo", "")
+    prova("annulla A conta i progetti davvero toccati (x e z)", k == 2, f"k={k}")
+
+    # Annullando B, y torna a archiviato (lo lascio' A); poi annullando ancora A, attivo.
+    riordina.annulla(conn, b.stem)
+    prova("annulla B rimette archiviato", _riga_progetto(conn, "y")["status"] == "archiviato", "")
+    riordina.annulla(conn, a.stem)
+    prova("annulla A dopo B: y torna attivo", _riga_progetto(conn, "y")["status"] == "attivo", "")
+    prova("alla fine e' tutto com'era all'inizio", _stato_completo(conn) == prima,
+          f"{_stato_completo(conn)}\n{prima}")
+
+    # Una nota modificata a mano dopo il batch non viene cancellata
+    conn2 = _conn()
+    _progetto(conn2, "atlante", auto=0)
+    _progetto(conn2, "w", auto=1, summary="Base.")
+    c = _scrivi_json([{"chiave": "w", "inglobato_in": "atlante", "motivo": "m"}],
+                     nome="prova-successive-nota")
+    riordina.applica(conn2, c)
+    conn2.execute("UPDATE projects SET summary=summary || ' Aggiunta a mano.' WHERE key='w'")
+    conn2.commit()
+    riordina.annulla(conn2, c.stem)
+    w = _riga_progetto(conn2, "w")
+    prova("una nota modificata a mano dopo il batch non viene cancellata dall'annulla",
+          "Aggiunta a mano." in w["summary"] and w["parent_id"] is None
+          and w["status"] == "attivo", str(w))
+
+
+def _prova_annulla_compatibile_con_eventi_vecchi(prova):
+    """Un batch scritto da set_parent (senza stato ne nota) si annulla come
+    prima, e non tocca lo stato."""
+    from plancia import riordina, slot
+
+    conn = _conn()
+    atlante = _progetto(conn, "atlante", auto=0)
+    _progetto(conn, "f", auto=1)
+    esito = slot.set_parent(conn, "f", "atlante", "prova-vecchio-formato")
+    conn.execute("UPDATE projects SET status='concluso' WHERE key='f'")
+    conn.commit()
+    k = riordina.annulla(conn, "prova-vecchio-formato")
+    f = _riga_progetto(conn, "f")
+    prova("evento del formato vecchio: rimette il padre e non tocca lo stato",
+          esito["ok"] and k == 1 and f["parent_id"] is None and f["status"] == "concluso", str(f))
+
+
+def _prova_mostra_stato_e_inglobato(prova):
+    from plancia import riordina
+
+    righe = [
+        {"chiave": "vecchio", "nome": "V", "padre": "atlante", "regola": "nessuna",
+         "inglobato_in": "atlante", "motivo": "confluito in atlante", "path": []},
+        {"chiave": "chiuso", "nome": "C", "padre": "", "regola": "nessuna",
+         "stato": "concluso", "motivo": "consegnato", "path": []},
+        {"chiave": "figlio", "nome": "F", "padre": "atlante", "regola": "prefisso",
+         "motivo": "somiglianza-nel-nome", "path": []},
+        {"chiave": "orfano", "nome": "O", "padre": "", "regola": "nessuna",
+         "motivo": "nessuna regola", "path": []},
+        {"chiave": "senza-motivo", "nome": "S", "padre": "", "regola": "nessuna",
+         "stato": "archiviato", "path": []},
+    ]
+    testo = riordina.tabella(righe)
+    per_chiave = {l.split()[0]: l for l in testo.split("\n") if l.strip() and l[0] != " "}
+    prova("la tabella mostra lo stato scritto in una riga",
+          "concluso" in per_chiave["chiuso"] and "consegnato" in per_chiave["chiuso"], testo)
+    prova("la tabella mostra l'inglobamento con destinazione e motivo",
+          "inglobato" in per_chiave["vecchio"] and "atlante" in per_chiave["vecchio"]
+          and "confluito in atlante" in per_chiave["vecchio"], testo)
+    prova("una riga senza motivo e segnalata nella tabella",
+          "motivo" in per_chiave["senza-motivo"].lower()
+          and "da correggere" in per_chiave["senza-motivo"].lower(), testo)
+    prova("le righe di solo stato non finiscono fra le 'nessuna'",
+          testo.index("chiuso") < testo.index("nessuna:") < testo.index("orfano"), testo)
+    prova("le colonne restano allineate: il motivo comincia allo stesso offset",
+          per_chiave["vecchio"].index("confluito in atlante")
+          == per_chiave["figlio"].index("somiglianza-nel-nome")
+          == per_chiave["chiuso"].index("consegnato"), testo)
+
+    # Senza righe con stato la tabella e' quella di prima (nessuna colonna in piu')
+    solo_padri = [{"chiave": "a", "nome": "A", "padre": "p", "regola": "path", "motivo": "m1",
+                   "path": []}]
+    prova("senza stato ne inglobamenti la tabella non cambia formato",
+          riordina.tabella(solo_padri).split() == ["a", "p", "path", "m1"],
+          riordina.tabella(solo_padri))
+
+
+def _prova_cli_stato_e_inglobato(prova):
+    """Il giro intero da riga di comando su un archivio di prova, per
+    --mostra, --applica, --annulla."""
+    import os
+    import subprocess
+    import sys
+
+    radice = Path(__file__).resolve().parent.parent.parent
+    casa = Path(tempfile.mkdtemp(prefix="plancia-prova-riordina-cli-"))
+    env = dict(os.environ, PLANCIA_HOME=str(casa), HOME=str(casa),
+               CLAUDE_CONFIG_DIR=str(casa / "claude"), CODEX_HOME=str(casa / "codex"),
+               PYTHONPATH=str(radice))
+    (casa / "claude").mkdir()
+    (casa / "codex").mkdir()
+    # Un archivio con due progetti, scritto direttamente nel database di prova
+    import sqlite3
+    from plancia import store
+    conn = sqlite3.connect(str(casa / "plancia.db"))
+    conn.row_factory = sqlite3.Row
+    store.init_db(conn)
+    store.upsert_project(conn, "atlante", "Atlante", auto=0, _force=True)
+    store.upsert_project(conn, "vecchio", "Vecchio", auto=1, summary="Base.")
+    conn.commit()
+    conn.close()
+    file = casa / "mappa.json"
+    file.write_text(json.dumps([{"chiave": "vecchio", "inglobato_in": "atlante",
+                                 "motivo": "confluito"}]), encoding="utf-8")
+
+    def lancia(*argv):
+        return subprocess.run([sys.executable, str(radice / "bin" / "plancia"), "riordina", *argv],
+                              cwd=str(radice), env=env, capture_output=True, text=True,
+                              timeout=60)
+
+    r = lancia("--mostra", str(file))
+    prova("cli --mostra: tabella con l'inglobamento",
+          r.returncode == 0 and "inglobato" in r.stdout and "confluito" in r.stdout,
+          r.stdout + r.stderr)
+    r = lancia("--applica", str(file))
+    prova("cli --applica: dice quante applicate e quanti stati/inglobati",
+          r.returncode == 0 and "applicate: 1" in r.stdout and "inglobati: 1" in r.stdout,
+          r.stdout + r.stderr)
+    conn = sqlite3.connect(str(casa / "plancia.db"))
+    conn.row_factory = sqlite3.Row
+    v = dict(conn.execute("SELECT * FROM projects WHERE key='vecchio'").fetchone())
+    prova("cli --applica: archiviato, sotto atlante, con la nota",
+          v["status"] == "archiviato" and v["parent_id"] is not None
+          and "Inglobato in atlante: confluito" in v["summary"], str(v))
+    conn.close()
+    r = lancia("--annulla", "mappa")
+    conn = sqlite3.connect(str(casa / "plancia.db"))
+    conn.row_factory = sqlite3.Row
+    v = dict(conn.execute("SELECT * FROM projects WHERE key='vecchio'").fetchone())
+    prova("cli --annulla: stato, padre e nota di prima",
+          r.returncode == 0 and "rimesse: 1" in r.stdout and v["status"] == "attivo"
+          and v["parent_id"] is None and v["summary"] == "Base.", r.stdout + r.stderr + str(v))
+    conn.close()
+    import shutil
+    shutil.rmtree(casa, ignore_errors=True)
+
+
 def esegui(prova) -> None:
     _prova_proponi_prefisso_e_path(prova)
     _prova_proponi_esclude_manuali_e_infra_speciale(prova)
@@ -361,6 +698,13 @@ def esegui(prova) -> None:
     _prova_resto_in_cartelle_viste(prova)
     _prova_mostra(prova)
     _prova_mostra_larghezze_dinamiche(prova)
+    _prova_stato_e_inglobato_applica(prova)
+    _prova_motivo_obbligatorio_e_rifiuti(prova)
+    _prova_manuale_solo_con_riga_esplicita(prova)
+    _prova_annulla_dopo_modifiche_successive(prova)
+    _prova_annulla_compatibile_con_eventi_vecchi(prova)
+    _prova_mostra_stato_e_inglobato(prova)
+    _prova_cli_stato_e_inglobato(prova)
 
 
 if __name__ == "__main__":

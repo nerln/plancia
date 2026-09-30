@@ -538,6 +538,9 @@ def cmd_riordina(args):
                 print(f"file non trovato: {args.applica}")
                 return 1
             print(f"applicate: {esito['applicate']}  rifiutate: {esito['rifiutate']}")
+            if esito["stati"] or esito["inglobati"] or esito["invariate"]:
+                print(f"  stati cambiati: {esito['stati']}  inglobati: {esito['inglobati']}  "
+                      f"invariate: {esito['invariate']}")
             for r in esito["dettagli_rifiutate"]:
                 print(f"  rifiutata {r['chiave']} -> {r['padre']}: {r['motivo']}")
         elif args.annulla:
@@ -1127,12 +1130,12 @@ def build_parser():
     s.add_argument("--voce", choices=["auto", "voicebox", "say"])
     s.set_defaults(func=cmd_voice)
 
-    s = sub.add_parser("riordina", help="propone, applica e annulla la mappa dei padri")
+    s = sub.add_parser("riordina", help="propone, applica e annulla il riordino: padri, stati, inglobamenti")
     g = s.add_mutually_exclusive_group(required=True)
     g.add_argument("--proponi", action="store_true", help="calcola la mappa e la scrive in un file")
-    g.add_argument("--mostra", metavar="FILE", help="stampa in tabella la mappa di un file")
-    g.add_argument("--applica", metavar="FILE", help="assegna i padri della mappa di un file")
-    g.add_argument("--annulla", metavar="BATCH", help="rimette il padre di prima di un'applicazione")
+    g.add_argument("--mostra", metavar="FILE", help="stampa in tabella la mappa di un file (padri, stati, inglobamenti)")
+    g.add_argument("--applica", metavar="FILE", help="applica la mappa di un file: padri, stati, inglobamenti (un batch)")
+    g.add_argument("--annulla", metavar="BATCH", help="rimette padre, stato e note di prima di un'applicazione")
     s.add_argument("--dove", help="dove scrivere il JSON di --proponi "
                                   "(default ~/.plancia/riordino/<data>.json)")
     s.add_argument("--resto-in-cartelle-viste", action="store_true",

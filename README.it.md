@@ -532,12 +532,43 @@ leggi prima che cambi qualcosa.
 ```bash
 plancia riordina --proponi                    # scrive la mappa proposta in un file
 plancia riordina --mostra <file>              # la stampa in tabella
-plancia riordina --applica <file>             # assegna tutti i padri che contiene
-plancia riordina --annulla <batch>            # disfa esattamente quell'applicazione
+plancia riordina --applica <file>             # assegna padri, stati e inglobamenti che contiene
+plancia riordina --annulla <batch>            # rimette esattamente quello che ha cambiato
 ```
 
-Applicare è un batch solo, e annullarlo rimette il padre precedente di ogni
-progetto, non un padre vuoto. Oggi (il riepilogo) e Prossimi raggruppano i
+Il file è JSON semplice, una riga per progetto, e lo correggi a mano o lo fai
+scrivere a un agente che ha studiato i tuoi progetti. Oltre a `padre` (la
+chiave del padre) una riga può portare:
+
+```json
+[
+  {"chiave": "vecchio-esperimento", "inglobato_in": "atlante",
+   "motivo": "il codice vive ora dentro la cartella di atlante"},
+  {"chiave": "bozza-tesi", "stato": "concluso",
+   "motivo": "consegnata a giugno"}
+]
+```
+
+- `stato`: `attivo`, `archiviato` o `concluso`. Assente vuol dire che lo stato
+  non si tocca.
+- `inglobato_in`: il progetto dentro cui questo è confluito. Vale come padre =
+  quel progetto, stato `archiviato`, e una riga "Inglobato in atlante:
+  <motivo>" in coda al sommario del progetto.
+- `motivo`: il perché, in una frase. È obbligatorio in ogni riga che ha uno
+  `stato` o un `inglobato_in`; `--applica` rifiuta la riga che ne è priva e
+  `--mostra` la segna `[DA CORREGGERE]`.
+
+`--mostra` fa vedere tutto in una tabella sola (chiave, padre, regola, stato,
+motivo). Una riga è tutto o niente: se il padre viene rifiutato, lo stato non
+cambia. Un progetto manuale si tocca solo con una riga che lo nomina con un
+padre, uno stato o un `inglobato_in`; un progetto che nel file non c'è non si
+tocca mai. Il formato è documentato per intero in cima a
+`plancia/riordina.py`.
+
+Applicare è un batch solo, e annullarlo rimette padre, stato e sommario di
+prima di ogni progetto, non un padre vuoto. L'annullamento va campo per campo
+e solo dove il campo è ancora quello lasciato dal batch: uno stato cambiato a
+mano dopo, o da un batch successivo, non viene scavalcato. Oggi (il riepilogo) e Prossimi raggruppano i
 progetti per area appena questa mappa esiste; prima che esista, ripiegano su
 una lista piatta, così su un'installazione nuova non si rompe niente.
 
@@ -686,7 +717,7 @@ git config core.hooksPath .githooks
 ```
 
 Accende il gancio che fa girare `python3 tools/prova.py` prima di ogni push:
-4142 controlli in pochi minuti, su un archivio finto che non tocca
+4183 controlli in pochi minuti, su un archivio finto che non tocca
 il tuo.
 
 ## Licenza
