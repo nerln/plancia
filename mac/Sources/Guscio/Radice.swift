@@ -1,4 +1,4 @@
-// La finestra: barra laterale di sistema con le sei sezioni, il contenuto, la barra degli
+// La finestra: barra laterale (Guscio/Barra.swift) con le sei sezioni, il contenuto, la barra degli
 // strumenti (compartimento se attivi, Aggiorna), il campo di ricerca di sistema e lo stato
 // nel sottotitolo. Niente logo, niente pulsanti Tema o lingua, niente sfondi propri: i
 // materiali li danno i controlli standard.
@@ -9,6 +9,8 @@ struct Radice: View {
     @Environment(Archivio.self) private var archivio
     @Environment(Lingua.self) private var lingua
     @AppStorage("aspetto") private var aspetto = Aspetto.sistema.rawValue
+    @AppStorage(StileApp.chiave) private var stile = StileApp.sistema.rawValue
+    @AppStorage(DimensioneTesto.chiave) private var passoTesto = DimensioneTesto.predefinito
 
     var body: some View {
         @Bindable var a = archivio
@@ -18,17 +20,12 @@ struct Radice: View {
             set: { if let s = $0 { archivio.vai(s) } })
 
         NavigationSplitView {
-            List(selection: sezione) {
-                ForEach(Sezione.allCases) { s in
-                    Label(s.titolo, systemImage: s.simbolo)
-                        .badge(archivio.conteggio(s) ?? 0)
-                        .tag(s)
-                }
-            }
-            .listStyle(.sidebar)
+            BarraLaterale(selezione: sezione)
+                .listStyle(.sidebar)
             .navigationSplitViewColumnWidth(min: 170, ideal: 200, max: 260)
         } detail: {
             contenuto
+                .stileVista()
                 .navigationTitle(archivio.ricerca.trimmed.isEmpty ? archivio.sezione.titolo : tr("Ricerca", "Search"))
                 .navigationSubtitle(archivio.sottotitolo)
         }
@@ -51,7 +48,19 @@ struct Radice: View {
         }
         .onChange(of: archivio.ricerca) { archivio.avviaRicerca() }
         .task(id: archivio.sezione) { await archivio.carica(archivio.sezione) }
-        .preferredColorScheme((Aspetto(rawValue: aspetto) ?? .sistema).schema)
+        // Legno: la finestra e' sempre scura, la carta del contenuto e' chiara o scura (StileVista)
+        .preferredColorScheme(stile == StileApp.legno.rawValue ? .dark : (Aspetto(rawValue: aspetto) ?? .sistema).schema)
+        .background(FondoFinestra(legno: stile == StileApp.legno.rawValue, scuro: fondoScuro))
+        .scalaTesto(passoTesto)
+    }
+
+    /// Il legno della finestra: chiaro o scuro come la carta.
+    private var fondoScuro: Bool {
+        switch Aspetto(rawValue: aspetto) ?? .sistema {
+        case .scuro: return true
+        case .chiaro: return false
+        case .sistema: return AspettoSistema.condiviso.scuro
+        }
     }
 
     @ViewBuilder private var contenuto: some View {
