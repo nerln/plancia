@@ -14,7 +14,7 @@ import AppKit
 
 /// Una sessione, con le chiavi che servono a ordinare (mai opzionali: la Table non ordina
 /// gli opzionali).
-private struct RigaSessioneArch: Identifiable, Hashable {
+struct RigaSessioneArch: Identifiable, Hashable {
     let sessione: Sessione
 
     init(_ s: Sessione) { sessione = s }
@@ -36,7 +36,7 @@ private struct RigaSessioneArch: Identifiable, Hashable {
     }
 }
 
-private struct RigaEventoArch: Identifiable, Hashable {
+struct RigaEventoArch: Identifiable, Hashable {
     let evento: EventoRegistro
 
     init(_ e: EventoRegistro) { evento = e }
@@ -49,7 +49,7 @@ private struct RigaEventoArch: Identifiable, Hashable {
     var origine: String { evento.origine ?? "" }
 }
 
-private enum ModoArch: String, CaseIterable, Identifiable {
+enum ModoArch: String, CaseIterable, Identifiable {
     case sessioni, registro
     var id: String { rawValue }
     @MainActor var titolo: String {
@@ -63,7 +63,7 @@ private enum ModoArch: String, CaseIterable, Identifiable {
 // MARK: - formati
 
 @MainActor
-private enum FormatoArch {
+enum FormatoArch {
     private static var formattatori: [String: DateFormatter] = [:]
 
     private static func formattatore(_ modello: String) -> DateFormatter {
@@ -138,14 +138,20 @@ private enum FormatoArch {
 struct VistaArchivio: View {
     @Environment(Archivio.self) private var archivio
 
-    @State private var modo: ModoArch = .sessioni
-    @State private var agente = ""                  // "" = tutti
-    @State private var tipo = ""                    // "" = tutti
+    // la modalita', i filtri e l'evento scelto stanno in ControlliVista (Guscio/Controlli.swift):
+    // li usano la barra degli strumenti e l'Inspector, che sono della finestra
+    private let c = ControlliVista.condiviso
+    private var modo: ModoArch { c.modoArchivio }
+    private var agente: String { c.agenteArchivio }
+    private var tipo: String { c.tipoEvento }
     @State private var ordineSessioni: [KeyPathComparator<RigaSessioneArch>] =
         [KeyPathComparator(\RigaSessioneArch.quando, order: .reverse)]
     @State private var ordineRegistro: [KeyPathComparator<RigaEventoArch>] =
         [KeyPathComparator(\RigaEventoArch.quando, order: .reverse)]
-    @State private var eventoScelto: String?
+    private var eventoScelto: String? {
+        get { c.eventoScelto }
+        nonmutating set { c.eventoScelto = newValue }
+    }
 
     private var righeSessioni: [RigaSessioneArch] {
         let tutte = archivio.sessioni.map(RigaSessioneArch.init)
@@ -181,36 +187,11 @@ struct VistaArchivio: View {
         }
         // solo nelle istantanee con --registro: apre il registro invece delle sessioni
         .onAppear {
-            if Istantanee.attive, CommandLine.arguments.contains("--registro") { modo = .registro }
+            if Istantanee.attive, CommandLine.arguments.contains("--registro") { c.modoArchivio = .registro }
         }
         .onChange(of: primoDelRegistroPerLeIstantanee, initial: true) { _, primo in
             if Istantanee.attive, CommandLine.arguments.contains("--registro"),
                eventoScelto == nil, let p = primo { eventoScelto = p }
-        }
-        .toolbar {
-            ToolbarItem(placement: .automatic) {
-                Picker(tr("Vista", "View"), selection: $modo) {
-                    ForEach(ModoArch.allCases) { Text($0.titolo).tag($0) }
-                }
-                .pickerStyle(.segmented)
-            }
-            ToolbarItem(placement: .automatic) {
-                switch modo {
-                case .sessioni:
-                    Picker(tr("Agente", "Agent"), selection: $agente) {
-                        Text(tr("Tutti gli agenti", "All agents")).tag("")
-                        Text("Claude").tag("claude")
-                        Text("Codex").tag("codex")
-                    }
-                    .pickerStyle(.menu)
-                case .registro:
-                    Picker(tr("Tipo", "Type"), selection: $tipo) {
-                        Text(tr("Tutti i tipi", "All types")).tag("")
-                        ForEach(tipiEvento, id: \.self) { Text($0).tag($0) }
-                    }
-                    .pickerStyle(.menu)
-                }
-            }
         }
     }
 
@@ -227,48 +208,32 @@ struct VistaArchivio: View {
                     TableColumn(tr("Quando", "When"), value: \.quando) { r in
                         Text(FormatoArch.quando(r.quando)).foregroundStyle(.secondary).lineLimit(1)
                     }
-                    .width(min: 110, ideal: 140)
+                    .width(min: 92, ideal: 96)
                     TableColumn(tr("Titolo", "Title"), value: \.titolo) { r in
                         Text(r.titolo).lineLimit(1)
                     }
-                    .width(min: 100, ideal: 420)
+                    .width(min: 70, ideal: 420)
                     TableColumn(tr("Progetto", "Project"), value: \.progetto) { r in
                         Text(r.progetto).foregroundStyle(.secondary).lineLimit(1)
                     }
-                    .width(min: 80, ideal: 120)
+                    .width(min: 60, ideal: 72)
                     TableColumn(tr("Agente", "Agent"), value: \.agente) { r in
                         Text(FormatoArch.agente(r.agente)).foregroundStyle(.secondary)
                     }
-                    .width(min: 70, ideal: 70)
+                    .width(min: 56, ideal: 60)
                     TableColumn(tr("Durata", "Length"), value: \.durata) { r in
                         Text(FormatoArch.durata(r.durata)).foregroundStyle(.secondary)
                     }
-                    .width(min: 70, ideal: 70)
+                    .width(min: 56, ideal: 60)
                     TableColumn(tr("Messaggi", "Messages"), value: \.messaggi) { r in
                         Text(r.messaggi.formatted()).foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .trailing)
                     }
-                    .width(min: 70, ideal: 80)
+                    .width(min: 62, ideal: 66)
                 }
                 .alternatingRowBackgrounds(.disabled)
             }
         }
-        .inspector(isPresented: mostraSessione) {
-            if let r = sessioneScelta {
-                DettaglioSessioneArch(riga: r)
-                    .inspectorColumnWidth(min: 260, ideal: 320, max: 460)
-            }
-        }
-    }
-
-    private var sessioneScelta: RigaSessioneArch? {
-        guard let id = archivio.sessioneScelta else { return nil }
-        return archivio.sessioni.first { $0.identita == id }.map(RigaSessioneArch.init)
-    }
-
-    private var mostraSessione: Binding<Bool> {
-        Binding(get: { modo == .sessioni && sessioneScelta != nil },
-                set: { if !$0 { archivio.sessioneScelta = nil } })
     }
 
     @ViewBuilder private var vuotoSessioni: some View {
@@ -289,53 +254,38 @@ struct VistaArchivio: View {
     // MARK: registro
 
     @ViewBuilder private var registro: some View {
+        @Bindable var cc = c
         let elenco = righeRegistro
         Group {
             if elenco.isEmpty {
                 vuotoRegistro
             } else {
-                Table(elenco, selection: $eventoScelto, sortOrder: $ordineRegistro) {
+                Table(elenco, selection: $cc.eventoScelto, sortOrder: $ordineRegistro) {
                     TableColumn(tr("Quando", "When"), value: \.quando) { r in
                         Text(FormatoArch.quando(r.quando)).foregroundStyle(.secondary).lineLimit(1)
                     }
-                    .width(min: 110, ideal: 140)
+                    .width(min: 92, ideal: 96)
                     TableColumn(tr("Tipo", "Type"), value: \.tipo) { r in
                         Text(r.tipo).foregroundStyle(.secondary).lineLimit(1)
                     }
-                    .width(min: 100, ideal: 200)
+                    .width(min: 84, ideal: 110)
                     TableColumn(tr("Titolo", "Title"), value: \.titolo) { r in
                         Text(r.titolo).lineLimit(1)
                     }
-                    .width(min: 110, ideal: 380)
+                    .width(min: 70, ideal: 380)
                     TableColumn(tr("Progetto", "Project"), value: \.progetto) { r in
                         Text(r.progetto).foregroundStyle(.secondary).lineLimit(1)
                     }
-                    .width(min: 80, ideal: 120)
+                    .width(min: 60, ideal: 72)
                     TableColumn(tr("Origine", "Origin"), value: \.origine) { r in
                         Text(r.origine).foregroundStyle(.secondary).lineLimit(1)
                     }
-                    .width(min: 76, ideal: 90)
+                    .width(min: 58, ideal: 72)
                 }
                 .alternatingRowBackgrounds(.disabled)
             }
         }
-        .inspector(isPresented: mostraEvento) {
-            if let r = eventoCorrente {
-                DettaglioEventoArch(riga: r)
-                    .inspectorColumnWidth(min: 260, ideal: 320, max: 460)
-            }
-        }
         .task { if archivio.registro == nil { await archivio.carica(.archivio) } }
-    }
-
-    private var eventoCorrente: RigaEventoArch? {
-        guard let id = eventoScelto else { return nil }
-        return righeRegistro.first { $0.id == id }
-    }
-
-    private var mostraEvento: Binding<Bool> {
-        Binding(get: { modo == .registro && eventoCorrente != nil },
-                set: { if !$0 { eventoScelto = nil } })
     }
 
     @ViewBuilder private var vuotoRegistro: some View {
@@ -362,9 +312,23 @@ struct VistaArchivio: View {
     }
 }
 
+extension Archivio {
+    /// La sessione scelta, per l'Inspector della finestra (Guscio/Ispettore.swift).
+    func rigaSessioneScelta() -> RigaSessioneArch? {
+        guard let id = sessioneScelta else { return nil }
+        return sessioni.first { $0.identita == id }.map(RigaSessioneArch.init)
+    }
+
+    /// L'evento del registro scelto (la scelta sta in ControlliVista).
+    func rigaEventoScelta() -> RigaEventoArch? {
+        guard let id = ControlliVista.condiviso.eventoScelto else { return nil }
+        return registro?.eventi?.first { $0.identita == id }.map(RigaEventoArch.init)
+    }
+}
+
 // MARK: - il dettaglio di una sessione (Inspector)
 
-private struct DettaglioSessioneArch: View {
+struct DettaglioSessioneArch: View {
     let riga: RigaSessioneArch
     @Environment(Archivio.self) private var archivio
 
@@ -418,7 +382,7 @@ private struct DettaglioSessioneArch: View {
 
 // MARK: - il dettaglio di un evento (Inspector)
 
-private struct DettaglioEventoArch: View {
+struct DettaglioEventoArch: View {
     let riga: RigaEventoArch
 
     private var dati: [(String, String)] {

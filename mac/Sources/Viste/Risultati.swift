@@ -399,19 +399,18 @@ struct VistaRisultati: View {
                 .listStyle(.inset)
                 .contextMenu(forSelectionType: String.self) { ids in
                     if let r = tutte.first(where: { ids.contains($0.id) }), r.apri != .nessuna {
-                        Button(tr("Apri", "Open")) { apri(r) }
+                        Button(tr("Apri", "Open")) { VistaRisultati.apri(r) }
                     }
                 } primaryAction: { ids in
-                    if let r = tutte.first(where: { ids.contains($0.id) }) { apri(r) }
+                    if let r = tutte.first(where: { ids.contains($0.id) }) { VistaRisultati.apri(r) }
                 }
             }
         }
-        .inspector(isPresented: mostraDettaglio(tutte)) {
-            if let r = tutte.first(where: { $0.id == scelto }) {
-                DettaglioRisultato(riga: r, termini: risTermini(q)) { apri(r) }
-                    .inspectorColumnWidth(min: 260, ideal: 320, max: 460)
-            }
+        // l'Inspector e' della finestra (Guscio/Ispettore.swift): la riga scelta gli passa il suo dettaglio
+        .onChange(of: tutte.first(where: { $0.id == scelto }), initial: true) { _, corrente in
+            pubblica(corrente)
         }
+        .onDisappear { ControlliVista.condiviso.dettaglioRisultato = nil }
         // solo nelle istantanee con --primo-risultato: sceglie la prima riga, per fotografare l'Inspector
         .onChange(of: tutte.first?.id, initial: true) { _, primo in
             if scelto == nil, let p = primo, Istantanee.attive,
@@ -447,14 +446,17 @@ struct VistaRisultati: View {
         }
     }
 
-    private func mostraDettaglio(_ tutte: [RigaRis]) -> Binding<Bool> {
-        Binding(get: { scelto != nil && tutte.contains { $0.id == scelto } },
-                set: { if !$0 { scelto = nil } })
+    private func pubblica(_ riga: RigaRis?) {
+        let termini = risTermini(q)
+        ControlliVista.condiviso.dettaglioRisultato = riga.map { r in
+            AnyView(DettaglioRisultato(riga: r, termini: termini) { VistaRisultati.apri(r) })
+        }
     }
 
     // MARK: azioni
 
-    private func apri(_ r: RigaRis) {
+    private static func apri(_ r: RigaRis) {
+        let archivio = Archivio.condiviso
         switch r.apri {
         case .task(let id):
             archivio.vai(.task)

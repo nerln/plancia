@@ -182,15 +182,10 @@ struct JarvisVista: View {
             Button { m.toggleMicrofono() } label: {
                 Image(systemName: m.microfonoAcceso ? "waveform" : "mic.fill")
                     .symbolEffect(.variableColor.iterative, isActive: m.microfonoAcceso)
-                    .fontWeight(.semibold)
+                    .font(.body.weight(.semibold))
                     .frame(width: 22, height: 22)
             }
-            .buttonStyle(.borderedProminent)
-            .buttonBorderShape(.circle)
-            // microfono acceso: rosso pieno con l'icona bianca piena (l'arancione di prima
-            // diventava un giallo pallido, quasi senza contrasto con l'icona chiara)
-            .tint(m.microfonoAcceso || m.microfonoInApertura ? .red : .accentColor)
-            .controlSize(.large)
+            .buttonStyle(PulsanteMicrofono(acceso: m.microfonoAcceso || m.microfonoInApertura))
             .accessibilityLabel(m.microfonoAcceso
                                 ? (m.lingua == "it" ? "Spegni il microfono e invia" : "Turn the microphone off and send")
                                 : (m.lingua == "it" ? "Accendi il microfono" : "Turn the microphone on"))
@@ -212,13 +207,6 @@ struct JarvisVista: View {
                 }
             }
             Spacer(minLength: 4)
-            if m.voicebox == .inAvvio {
-                ProgressView().controlSize(.small)
-            } else if m.offriVoicebox {
-                Button(m.lingua == "it" ? "Avvia Voicebox" : "Start Voicebox") { m.avviaVoicebox(daUtente: true) }
-                    .buttonStyle(.borderless)
-                    .accessibilityLabel(m.lingua == "it" ? "Avvia Voicebox" : "Start Voicebox")
-            }
             MenuImpostazioniJarvis(m: m)
         }
         .font(.caption)
@@ -387,6 +375,23 @@ struct SchedaProposta: View {
     }
 }
 
+/// Il pulsante del microfono: un cerchio pieno con l'icona bianca. Acceso e' rosso scurito, come il
+/// pulsante di conferma, perche' con la tinta di sistema (borderedProminent) in scuro il rosso
+/// diventava un rosa pallido e l'icona bianca quasi non si leggeva.
+struct PulsanteMicrofono: ButtonStyle {
+    let acceso: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundStyle(.white)
+            .frame(width: 36, height: 36)
+            .background(Circle().fill(acceso ? Color.red.mix(with: .black, by: 0.3) : Color.accentColor))
+            .overlay(Circle().strokeBorder(.white.opacity(acceso ? 0.35 : 0), lineWidth: 1))
+            .opacity(configuration.isPressed ? 0.8 : 1)
+            .contentShape(Circle())
+    }
+}
+
 /// Il pulsante che fa partire qualcosa: pieno, con il colore del rischio scurito perche' il testo
 /// bianco si legga sempre, anche sul vetro e con la finestra non in primo piano.
 struct PulsanteConferma: ButtonStyle {
@@ -430,9 +435,6 @@ struct MenuImpostazioniJarvis: View {
             Toggle(it ? "Conversazione continua" : "Continuous conversation",
                    isOn: Binding(get: { Preferenze.conversazione },
                                  set: { Preferenze.conversazione = $0; m.preferenzeCambiate() }))
-            Toggle(it ? "Avvia Voicebox da solo" : "Start Voicebox automatically",
-                   isOn: Binding(get: { Preferenze.avviaVoicebox },
-                                 set: { Preferenze.avviaVoicebox = $0; m.preferenzeCambiate() }))
             Toggle(it ? "Consenti anche la voce di base" : "Also allow the basic voice",
                    isOn: Binding(get: { Preferenze.voceBase },
                                  set: { Preferenze.voceBase = $0; m.preferenzeCambiate() }))

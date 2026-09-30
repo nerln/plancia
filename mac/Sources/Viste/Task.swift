@@ -34,7 +34,7 @@ struct RigaTask: Identifiable, Hashable {
     var dettaglio: String { (voce.dettaglio ?? compito?.body ?? "").trimmed }
 }
 
-private enum FiltroStato: String, CaseIterable, Identifiable {
+enum FiltroStato: String, CaseIterable, Identifiable {
     case aperti, fatti, tutti
     var id: String { rawValue }
     @MainActor var titolo: String {
@@ -72,10 +72,10 @@ private func simboloStato(_ s: String) -> String {
 struct VistaTask: View {
     @Environment(Archivio.self) private var archivio
 
-    @State private var stato: FiltroStato = .aperti
-    @State private var fonte: String = ""          // "" = tutte
+    // i filtri e il foglio del nuovo task stanno in ControlliVista: li muove la barra degli
+    // strumenti, che e' una sola per tutta la finestra (Guscio/Controlli.swift)
+    private let c = ControlliVista.condiviso
     @State private var ordine: [KeyPathComparator<RigaTask>] = []
-    @State private var nuovo = false
 
     private var righe: [RigaTask] {
         let perId = Dictionary(archivio.compiti.compactMap { c in c.id.map { ($0, c) } },
@@ -83,6 +83,7 @@ struct VistaTask: View {
         let tutte = (archivio.lavagna?.voci ?? []).map { v in
             RigaTask(voce: v, compito: v.taskId.flatMap { perId[$0] })
         }
+        let stato = c.statoTask, fonte = c.fonteTask
         let filtrate = tutte.filter { r in
             (fonte.isEmpty || r.fonte == fonte)
                 && (stato == .tutti || (stato == .aperti ? !r.chiuso : r.chiuso))
@@ -92,9 +93,8 @@ struct VistaTask: View {
 
     var body: some View {
         @Bindable var a = archivio
+        @Bindable var cc = c
         let elenco = righe
-        // calcolata una volta per giro: righe costa un giro di tutti i task
-        let sceltaRiga = riga(scelta: archivio.taskScelto, in: elenco)
         Group {
             if elenco.isEmpty {
                 vuoto
@@ -121,50 +121,18 @@ struct VistaTask: View {
                 .alternatingRowBackgrounds(.disabled)
             }
         }
-        .inspector(isPresented: mostraDettaglio(sceltaRiga != nil)) {
-            if let r = sceltaRiga {
-                DettaglioTask(riga: r)
-                    .inspectorColumnWidth(min: 260, ideal: 320, max: 460)
-            }
-        }
-        .toolbar {
-            ToolbarItem(placement: .automatic) {
-                Picker(tr("Stato", "Status"), selection: $stato) {
-                    ForEach(FiltroStato.allCases) { Text($0.titolo).tag($0) }
-                }
-                .pickerStyle(.segmented)
-            }
-            ToolbarItem(placement: .automatic) {
-                Picker(tr("Fonte", "Source"), selection: $fonte) {
-                    Text(tr("Tutte le fonti", "All sources")).tag("")
-                    Text("Plancia").tag("plancia")
-                    Text("Claude").tag("claude")
-                    Text("Codex").tag("codex")
-                }
-                .pickerStyle(.menu)
-            }
-            ToolbarItem(placement: .primaryAction) {
-                Button { nuovo = true } label: {
-                    Label(tr("Nuovo task", "New task"), systemImage: "plus")
-                }
-                .keyboardShortcut("n", modifiers: .command)
-                .help(tr("Nuovo task", "New task"))
-            }
-        }
-        .sheet(isPresented: $nuovo) { NuovoTask() }
+        .sheet(isPresented: $cc.nuovoTask) { NuovoTask() }
+        // un task che il nuovo filtro nasconde non resta scelto: l'Inspector si chiude
+        .onChange(of: c.statoTask) { toglieSceltaNascosta() }
+        .onChange(of: c.fonteTask) { toglieSceltaNascosta() }
+    }
+
+    private func toglieSceltaNascosta() {
+        guard let id = archivio.taskScelto, !righe.contains(where: { $0.id == id }) else { return }
+        archivio.taskScelto = nil
     }
 
     // MARK: pezzi
-
-    private func riga(scelta id: String?, in elenco: [RigaTask]) -> RigaTask? {
-        guard let id = id else { return nil }
-        return elenco.first { $0.id == id }
-    }
-
-    private func mostraDettaglio(_ presente: Bool) -> Binding<Bool> {
-        Binding(get: { presente },
-                set: { if !$0 { archivio.taskScelto = nil } })
-    }
 
     @ViewBuilder private var vuoto: some View {
         if archivio.lavagna == nil {
@@ -177,7 +145,7 @@ struct VistaTask: View {
                     description: Text(tr("Appena risponde, i task compaiono qui.",
                                          "Tasks appear here as soon as it answers.")))
             }
-        } else if stato == .aperti && fonte.isEmpty {
+        } else if c.statoTask == .aperti && c.fonteTask.isEmpty {
             ContentUnavailableView(
                 tr("Nessun task aperto", "No open tasks"),
                 systemImage: "checkmark.circle")
@@ -204,7 +172,18 @@ struct VistaTask: View {
 
 // MARK: - il dettaglio (Inspector)
 
-private struct DettaglioTask: View {
+extension Archivio {
+    /// La riga del task scelto, per l'Inspector della finestra (Guscio/Ispettore.swift). Una
+    /// ricerca sola, non il giro di tutti i task che fa l'elenco.
+    func rigaTaskScelta() -> RigaTask? {
+        guard let id = taskScelto,
+              let v = lavagna?.voci?.first(where: { $0.identita == id }) else { return nil }
+        let compito = v.taskId.flatMap { t in compiti.first { $0.id == t } }
+        return RigaTask(voce: v, compito: compito)
+    }
+}
+
+struct DettaglioTask: View {
     let riga: RigaTask
     @Environment(Archivio.self) private var archivio
 
@@ -367,7 +346,7 @@ private struct DettaglioTask: View {
 
 // MARK: - nuovo task (⌘N)
 
-private struct NuovoTask: View {
+struct NuovoTask: View {
     @Environment(Archivio.self) private var archivio
     @Environment(\.dismiss) private var dismiss
 

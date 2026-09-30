@@ -67,8 +67,10 @@ for rel in ("Viste/Task.swift", "Viste/Archivio.swift"):
     for k, b in enumerate(blocchi, 1):
         b = b.split("alternatingRowBackgrounds")[0]
         minimi = [int(m) for m in re.findall(r"\.width\(min: (\d+)", b)] + [int(m) for m in re.findall(r"\.width\((\d+)\)", b)]
-        controlla("%s, tabella %d: le larghezze minime delle colonne (%d) stanno accanto all'Inspector a 125%%"
-                  % (rel.split("/")[-1], k, sum(minimi)), sum(minimi) <= 500)
+        # ogni colonna ha ~12 pt di margine suo: minimi + margini devono stare in ~500 pt
+        totale = sum(minimi) + 12 * len(minimi)
+        controlla("%s, tabella %d: minimi + margini delle colonne (%d) stanno accanto all'Inspector a 125%%"
+                  % (rel.split("/")[-1], k, totale), totale <= 500)
 
 # 5. i collegamenti nel Legno sono d'ottone: nessun buttonStyle(.link) fuori dal modificatore
 fuori = []
@@ -79,15 +81,40 @@ for f in sorgenti:
         fuori.append(os.path.relpath(f, radice))
 controlla("nessun collegamento blu di sistema fuori dal modificatore .collegamento()", not fuori, ", ".join(fuori))
 
-# 6. Jarvis: Voicebox spento si avvia (nascosto, senza rubare il primo piano) e il pulsante c'e'
-vb = leggi("Sistema/JarvisVoicebox.swift")
-controlla("Voicebox si apre nascosto e senza attivarsi", "conf.activates = false" in vb and "conf.hides = true" in vb)
-controlla("le prove non aprono Voicebox vero (JarvisProva e PLANCIA_SENZA_AVVIO_APP)",
-          "JarvisProva.attivo" in vb and "PLANCIA_SENZA_AVVIO_APP" in vb)
-controlla("il pannello di Jarvis ha il pulsante per avviare Voicebox", "avviaVoicebox(daUtente: true)" in leggi("Sistema/JarvisVista.swift"))
+# 6. Jarvis non avvia piu' nessuna app di voce: la voce neurale e' un servizio a parte (Kokoro)
+controlla("Jarvis non apre Voicebox ne' nessun'altra app di voce",
+          not os.path.exists(os.path.join(radice, "mac", "Sources", "Sistema", "JarvisVoicebox.swift"))
+          and "avviaVoicebox" not in leggi("Sistema/JarvisModello.swift")
+          and "Voicebox.avvia" not in leggi("Sistema/JarvisModello.swift")
+          and "openApplication" not in "".join(open(f, encoding="utf-8").read() for f in sorgenti if "Jarvis" in f))
 
 # 7. il banco dei fotogrammi della mappa e' nel repo
 controlla("il banco dei fotogrammi della mappa e' nell'app (--mappa-misura)",
           "--mappa-misura" in leggi("Sistema/MisuraMappa.swift") and "MisuraMappa" in leggi("Sistema/Delegato.swift"))
+
+# 8. il cambio di sezione non ricostruisce la barra degli strumenti ne' l'Inspector: ce n'e' uno
+#    solo, in Guscio, con gli stessi elementi in ogni sezione (misurato: un .toolbar o un
+#    .inspector per vista costavano 30-60 e 10-25 ms a ogni cambio)
+def fuori_guscio(cerca):
+    trovati = []
+    for f in sorgenti:
+        rel = os.path.relpath(f, radice)
+        if "/Guscio/" in rel:
+            continue
+        for n, riga in enumerate(open(f, encoding="utf-8"), 1):
+            if riga.strip().startswith("//"):
+                continue
+            if re.search(cerca, riga):
+                trovati.append("%s:%d" % (rel, n))
+    return trovati
+
+t = fuori_guscio(r"\.toolbar\s*[({]")
+controlla("nessuna vista ha una barra degli strumenti sua: c'e' solo quella della finestra (Guscio)", not t, ", ".join(t[:6]))
+i = fuori_guscio(r"\.inspector\s*\(")
+controlla("nessuna vista ha un Inspector suo: c'e' solo quello della finestra (Guscio/Ispettore.swift)", not i, ", ".join(i[:6]))
+
+# 9. nessun interruttore di esperimento dimenticato
+resti = [os.path.relpath(f, radice) for f in sorgenti if re.search(r"\bSper\.|PLANCIA_SP\b", open(f, encoding="utf-8").read())]
+controlla("nessun interruttore di esperimento (Sper, PLANCIA_SP) nei sorgenti", not resti, ", ".join(resti))
 
 sys.exit(esito)

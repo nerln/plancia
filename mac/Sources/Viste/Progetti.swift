@@ -11,7 +11,7 @@ import AppKit
 
 // MARK: - l'albero, appiattito
 
-private enum FiltroProgetti: String, CaseIterable, Identifiable {
+enum FiltroProgetti: String, CaseIterable, Identifiable {
     case attivi, tutti
     var id: String { rawValue }
     @MainActor var titolo: String {
@@ -57,7 +57,7 @@ private func testoStatoProgetto(_ s: String?) -> String {
 struct VistaProgetti: View {
     @Environment(Archivio.self) private var archivio
 
-    @State private var filtro: FiltroProgetti = .attivi
+    private let c = ControlliVista.condiviso
     /// Le aree chiuse a mano; all'inizio sono tutte aperte.
     @State private var chiuse: Set<String> = []
 
@@ -69,7 +69,7 @@ struct VistaProgetti: View {
     private func visibile(_ p: Progetto) -> Bool {
         if (p.hidden ?? 0) != 0 { return false }
         if p.identita == archivio.progettoScelto { return true }
-        if filtro == .tutti { return true }
+        if c.filtroProgetti == .tutti { return true }
         return !["concluso", "archiviato"].contains(p.status ?? "")
     }
 
@@ -109,14 +109,6 @@ struct VistaProgetti: View {
                         .frame(minWidth: 380, maxWidth: .infinity, maxHeight: .infinity)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-        }
-        .toolbar {
-            ToolbarItem(placement: .automatic) {
-                Picker(tr("Mostra", "Show"), selection: $filtro) {
-                    ForEach(FiltroProgetti.allCases) { Text($0.titolo).tag($0) }
-                }
-                .pickerStyle(.segmented)
             }
         }
         .task(id: archivio.progettoScelto) {

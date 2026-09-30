@@ -25,27 +25,16 @@ struct Radice: View {
             .navigationSplitViewColumnWidth(min: 170, ideal: 200, max: 260)
         } detail: {
             contenuto
+                .ispettoreFinestra()
                 .stileVista()
-                .navigationTitle(archivio.ricerca.trimmed.isEmpty ? archivio.sezione.titolo : tr("Ricerca", "Search"))
-                .navigationSubtitle(archivio.sottotitolo)
+                .navigationTitle(Sper.titoloFisso ? "Plancia" : (archivio.ricerca.trimmed.isEmpty ? archivio.sezione.titolo : tr("Ricerca", "Search")))
+                .navigationSubtitle(Sper.titoloFisso ? "" : archivio.sottotitolo)
         }
         .searchable(text: $a.ricerca, isPresented: $a.ricercaAperta, placement: .toolbar, prompt: Text(tr("Cerca", "Search")))
         .searchScopes($a.ambito, activation: .onSearchPresentation) {
             ForEach(AmbitoRicerca.allCases) { Text($0.titolo).tag($0) }
         }
-        .toolbar {
-            if archivio.compartimenti.attivi {
-                ToolbarItem(placement: .automatic) { selettoreCompartimento }
-            }
-            ToolbarItem(placement: .automatic) {
-                Button {
-                    Task { await archivio.aggiorna() }
-                } label: {
-                    Label(tr("Aggiorna", "Refresh"), systemImage: "arrow.clockwise")
-                }
-                .help(tr("Aggiorna", "Refresh"))
-            }
-        }
+        .modifier(BarraStrumenti())
         .onChange(of: archivio.ricerca) { archivio.avviaRicerca() }
         .task(id: archivio.sezione) { await archivio.carica(archivio.sezione) }
         // Legno: la finestra e' sempre scura, la carta del contenuto e' chiara o scura (StileVista)
@@ -77,6 +66,39 @@ struct Radice: View {
             }
         }
     }
+}
+
+
+/// La barra degli strumenti della finestra: la stessa in ogni sezione (Guscio/Controlli.swift).
+struct BarraStrumenti: ViewModifier {
+    @Environment(Archivio.self) private var archivio
+    @ViewBuilder func body(content: Content) -> some View {
+        if Sper.barraId {
+            content.toolbar(id: "principale") {
+                if archivio.compartimenti.attivi {
+                    ToolbarItem(id: "compartimento", placement: .automatic) { selettoreCompartimento }
+                }
+                ToolbarItem(id: "aggiorna", placement: .automatic) { pulsanteAggiorna }
+                if !Sper.senzaToolbar {
+                    ToolbarItem(id: "primo", placement: .automatic) { PrimoControllo() }
+                    ToolbarItem(id: "secondo", placement: .automatic) { SecondoControllo() }
+                    ToolbarItem(id: "azione", placement: .primaryAction) { AzioneSezione() }
+                }
+            }
+        } else {
+            content.toolbar {
+                if archivio.compartimenti.attivi {
+                    ToolbarItem(placement: .automatic) { selettoreCompartimento }
+                }
+                ToolbarItem(placement: .automatic) { pulsanteAggiorna }
+                if !Sper.senzaToolbar {
+                    ToolbarItem(placement: .automatic) { PrimoControllo() }
+                    ToolbarItem(placement: .automatic) { SecondoControllo() }
+                    ToolbarItem(placement: .primaryAction) { AzioneSezione() }
+                }
+            }
+        }
+    }
 
     private var selettoreCompartimento: some View {
         let corrente = Binding<String>(
@@ -89,5 +111,14 @@ struct Radice: View {
         }
         .pickerStyle(.menu)
         .help(tr("Compartimento", "Compartment"))
+    }
+
+    private var pulsanteAggiorna: some View {
+        Button {
+            Task { await archivio.aggiorna() }
+        } label: {
+            Label(tr("Aggiorna", "Refresh"), systemImage: "arrow.clockwise")
+        }
+        .help(tr("Aggiorna", "Refresh"))
     }
 }

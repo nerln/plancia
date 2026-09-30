@@ -168,8 +168,20 @@ final class Archivio {
     private(set) var post: [Post] = []
     private(set) var sessioni: [Sessione] = []
     private(set) var registro: Registro?
-    private(set) var schede: [Scheda] = []
-    private(set) var mappa: MappaMemoria?
+    private(set) var schede: [Scheda] = [] { didSet { versioneMemoria &+= 1 } }
+    private(set) var mappa: MappaMemoria? { didSet { versioneMemoria &+= 1 } }
+    /// Cambia a ogni scrittura di `schede` o `mappa`: chiave della cache di `datiMemoria`.
+    @ObservationIgnored private var versioneMemoria = 0
+    @ObservationIgnored private var cacheDatiMemoria: (versione: Int, dati: DatiMemoria)?
+    /// Le schede e la mappa gia' unite per la vista Memoria e per il suo Inspector: si
+    /// ricalcolano solo quando cambiano i dati, non a ogni giro delle viste.
+    var datiMemoria: DatiMemoria {
+        let s = schede, m = mappa   // legge i due dati: cosi' chi lo chiede osserva i cambiamenti
+        if let c = cacheDatiMemoria, c.versione == versioneMemoria { return c.dati }
+        let d = DatiMemoria(schede: s, mappa: m)
+        cacheDatiMemoria = (versioneMemoria, d)
+        return d
+    }
     private(set) var lanci: [Lancio] = []
     private(set) var overview: Overview?
     private(set) var dettagli: [String: DettaglioProgetto] = [:]

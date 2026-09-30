@@ -130,8 +130,8 @@ final class VoceJarvis: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDele
             modo = .sistema
             descrizione = (it ? "Voce di sistema: " : "System voice: ") + VoceJarvis.etichetta(v)
             if neurale == nil {
-                avviso = it ? "Nessuna voce neurale locale in ascolto (Voicebox non risponde)."
-                            : "No local neural voice is listening (Voicebox is not answering)."
+                avviso = it ? "Nessuna voce neurale locale in ascolto."
+                            : "No local neural voice is listening."
             }
         } else {
             modo = .muta

@@ -120,7 +120,7 @@ enum FiltroMemoria: String, CaseIterable, Identifiable {
     }
 }
 
-private enum ModoMemoria: String, CaseIterable, Identifiable {
+enum ModoMemoria: String, CaseIterable, Identifiable {
     case elenco, vicinato, mappa
     var id: String { rawValue }
     @MainActor var titolo: String {
@@ -237,7 +237,6 @@ struct VistaMemoria: View {
     @AppStorage("memoriaModo") private var modoGuardato = ModoMemoria.elenco.rawValue
 
     @State private var filtro: FiltroMemoria = .tutte
-    @State private var provaAperta = false
 
     /// Nelle istantanee con --memoria-scena la mappa si apre da sola, senza scrivere le preferenze.
     private var modo: ModoMemoria {
@@ -247,9 +246,7 @@ struct VistaMemoria: View {
 
     var body: some View {
         @Bindable var a = archivio
-        let dati = DatiMemoria(schede: archivio.schede, mappa: archivio.mappa)
-        let modoBinding = Binding<ModoMemoria>(
-            get: { modo }, set: { if ScenaMappa.nome == nil { modoGuardato = $0.rawValue } })
+        let dati = archivio.datiMemoria
         let scelto = archivio.memoriaScelta.flatMap { dati.perNome[$0] }
 
         Group {
@@ -266,33 +263,6 @@ struct VistaMemoria: View {
                 }
             } else {
                 elenco(dati)
-            }
-        }
-        .inspector(isPresented: Binding(
-            get: { scelto != nil },
-            set: { if !$0 { archivio.memoriaScelta = nil } })) {
-            if let f = scelto {
-                DettaglioMemoria(fatto: f, dati: dati)
-                    .inspectorColumnWidth(min: 280, ideal: 340, max: 480)
-            }
-        }
-        .toolbar {
-            ToolbarItem(placement: .automatic) {
-                Picker(tr("Modo", "Mode"), selection: modoBinding) {
-                    ForEach(ModoMemoria.allCases) { Text($0.titolo).tag($0) }
-                }
-                .pickerStyle(.segmented)
-                .help(tr("Elenco, vicinato del fatto scelto, o mappa di tutta la memoria",
-                         "List, neighbourhood of the chosen fact, or map of all memory"))
-            }
-            ToolbarItem(placement: .primaryAction) {
-                Button { provaAperta.toggle() } label: {
-                    Label(tr("Prova la memoria", "Try memory"), systemImage: "text.magnifyingglass")
-                }
-                .labelStyle(.iconOnly)
-                .help(tr("Scrivi una frase e guarda cosa ti direbbe la memoria",
-                         "Write a sentence and see what memory would tell you"))
-                .popover(isPresented: $provaAperta, arrowEdge: .bottom) { ProvaRichiamo() }
             }
         }
         .task(id: dati.fatti.count) { assicuraScelta(dati) }
@@ -475,7 +445,7 @@ private struct RigaMemoria: View {
 
 // MARK: - il fatto per intero (Inspector)
 
-private struct DettaglioMemoria: View {
+struct DettaglioMemoria: View {
     let fatto: FattoMemoria
     let dati: DatiMemoria
     @Environment(Archivio.self) private var archivio
@@ -1010,7 +980,7 @@ private struct PannelloVicinato: View {
 
 // MARK: - prova del richiamo
 
-private struct ProvaRichiamo: View {
+struct ProvaRichiamo: View {
     @Environment(Archivio.self) private var archivio
     @Environment(\.dismiss) private var dismiss
 

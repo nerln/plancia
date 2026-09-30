@@ -116,6 +116,56 @@ struct FiloOttone: View {
     }
 }
 
+/// L'Inspector nello stile Legno: una superficie piena di carta calda, come il contenuto, e non
+/// il materiale di sistema (che lasciava vedere un fondo grigio sbiadito sopra il legno). La
+/// fascia in alto, dove stanno la barra degli strumenti e il campo Cerca, resta legno come il
+/// resto della barra; tra le due c'e' lo stesso filo d'ottone del contenuto, e un filo verticale
+/// lo separa dalla lista. Con lo stile Sistema non fa niente.
+struct StileIspettore: ViewModifier {
+    @AppStorage(StileApp.chiave) private var stile = StileApp.sistema.rawValue
+    @AppStorage("aspetto") private var aspetto = Aspetto.sistema.rawValue
+    private var sistema = AspettoSistema.condiviso
+
+    private var cartaScura: Bool {
+        switch Aspetto(rawValue: aspetto) ?? .sistema {
+        case .scuro: return true
+        case .chiaro: return false
+        case .sistema: return sistema.scuro
+        }
+    }
+
+    @ViewBuilder func body(content: Content) -> some View {
+        if stile == StileApp.legno.rawValue {
+            let p = PalettaLegno(scuro: cartaScura)
+            content
+                .environment(\.colorScheme, cartaScura ? .dark : .light)
+                .scrollContentBackground(.hidden)
+                // la carta parte sotto la barra degli strumenti; sopra, il legno
+                .background(p.carta, ignoresSafeAreaEdges: [.bottom, .leading, .trailing])
+                .background { SuperficieLegno(scuro: cartaScura).ignoresSafeArea() }
+                .overlay(alignment: .top) { FiloOttone() }
+                .overlay(alignment: .leading) { FiloOttoneVerticale() }
+        } else {
+            content
+        }
+    }
+}
+
+/// Il filo d'ottone verticale sul bordo di una colonna, dalla barra degli strumenti in giu'.
+struct FiloOttoneVerticale: View {
+    @Environment(\.fattoreTesto) private var fattore
+
+    var body: some View {
+        Rectangle().fill(PalettaLegno.ottoneIncisione.opacity(0.6))
+            .frame(width: 1 / max(fattore, 0.1))
+            .allowsHitTesting(false)
+    }
+}
+
+extension View {
+    func stileIspettore() -> some View { modifier(StileIspettore()) }
+}
+
 /// Lo sfondo della finestra: nello stile Legno le tavole di mogano (piastrella con il velo
 /// gia' dentro) dietro la barra degli strumenti e i bordi, dove il contenuto non arriva;
 /// nello stile Sistema il colore di sistema di sempre.

@@ -58,8 +58,11 @@ enum Istantanee {
 
         // la finestra la crea SwiftUI, un momento dopo l'avvio
         var finestra: NSWindow?
-        for _ in 0..<80 {
+        for n in 0..<400 {
             if let w = DelegatoApp.corrente?.finestraPrincipale(), w.isVisible { finestra = w; break }
+            // macOS, a un avvio su due dopo un'uscita con la finestra aperta, non la ripristina
+            // e SwiftUI non ne crea una: la si apre a mano, come farebbe un clic sull'icona
+            if n >= 20, n % 20 == 0 { DelegatoApp.corrente?.apriFinestra() }
             try? await Task.sleep(nanoseconds: 100_000_000)
         }
         guard let w = finestra else { esci(1, "la finestra non è comparsa") }
@@ -71,6 +74,14 @@ enum Istantanee {
         w.makeKey()
         NSApp.activate(ignoringOtherApps: true)
         try? await Task.sleep(nanoseconds: 800_000_000)
+        // le istantanee vogliono la finestra ATTIVA (semafori colorati, controlli pieni): se il
+        // sistema non ha ceduto il primo piano si riprova con il modo nuovo, poi con l'altro
+        for tentativo in 0..<6 where !(NSApp.isActive && w.isKeyWindow) {
+            if tentativo % 2 == 0 { NSApp.activate() } else { NSRunningApplication.current.activate(options: [.activateAllWindows]) }
+            w.makeKeyAndOrderFront(nil)
+            try? await Task.sleep(nanoseconds: 500_000_000)
+        }
+        FileHandle.standardOutput.write(Data("finestra attiva: \(NSApp.isActive && w.isKeyWindow)\n".utf8))
 
         let a = Archivio.condiviso
         var scritti: [String] = []
@@ -153,6 +164,7 @@ enum Istantanee {
             FileHandle.standardOutput.write(Data("clic: nessuna tabella\n".utf8))
             return
         }
+        FileHandle.standardOutput.write(Data("righe: altezza \(t.rect(ofRow: 0).height) pt, rowHeight \(t.rowHeight), automatica \(t.usesAutomaticRowHeights)\n".utf8))
         let r = t.convert(t.rect(ofRow: 2), to: nil)
         let alto = w.contentLayoutRect.height
         let x = r.midX, y = w.frame.height - r.midY

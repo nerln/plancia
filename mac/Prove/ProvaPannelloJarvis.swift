@@ -116,7 +116,6 @@ struct ProvaJarvis {
         prova("con il server spento il pannello lo dice e non resta appeso", fatto, m.messaggio ?? "")
         prova("...come errore grave, senza scheda", m.erroreGrave && m.proposta == nil)
         prova("...e il microfono e' spento", !m.microfonoAcceso && !m.microfonoInApertura)
-        await voiceboxSpento(pannello, serverAcceso: false)
         let f = await JarvisProva.scatta(.serverSpento, pannello: pannello, cartella: URL(fileURLWithPath: CommandLine.arguments[1]), aspetto: CommandLine.arguments[2] == "scuro" ? "scuro" : "chiaro")
         prova("scena server spento fotografata", f != nil)
     }
@@ -245,9 +244,6 @@ struct ProvaJarvis {
         // ---- la voce neurale (un Pocket finto, la sintesi vera passa dal server)
         await voceNeurale(pannello)
 
-        // ---- Voicebox spento: Jarvis lo avvia (qui un avvio finto) e la voce neurale compare
-        await voiceboxSpento(pannello, serverAcceso: true)
-
         // chiudere il pannello butta le schede
         m.invia(#"proponi: {"azione":"task_add","titolo":"Da buttare chiudendo"}"#)
         _ = await attendi(20) { !m.elabora && !m.parla && m.proposta != nil }
@@ -257,56 +253,6 @@ struct ProvaJarvis {
         let quarta = try? await ReteJarvis.conferma(id: id3, lingua: "it")
         prova("chiudere il pannello butta la scheda aperta", m.proposta == nil && quarta?.eseguita != true)
         _ = pannello
-    }
-
-    /// Voicebox e' spento e installato: Jarvis lo apre (un avvio finto, mai l'app vera) e, quando il
-    /// server vede la voce neurale, la usa; se il server non la vede mai, lo dice e lascia il pulsante.
-    @MainActor static func voiceboxSpento(_ pannello: JarvisPanel, serverAcceso: Bool) async {
-        let m = pannello.modello
-        let quale = serverAcceso ? "col server acceso" : "col server spento"
-        m.mostraScena(.voiceboxSpento)
-        prova("Voicebox spento e installato: il pannello offre il pulsante (\(quale))", m.offriVoicebox)
-
-        // in prova, senza l'avvio finto, non si apre niente
-        Voicebox.finto = nil
-        m.avviaVoicebox(daUtente: true)
-        prova("in prova Voicebox non si apre da solo (\(quale))", m.voicebox == .nessuno)
-
-        var aperture = 0
-        Voicebox.finto = { aperture += 1; return true }
-        Voicebox.intervallo = 0.05
-        Voicebox.tentativi = 24
-        defer { Voicebox.finto = nil; Voicebox.intervallo = 3; Voicebox.tentativi = 28 }
-
-        // la preferenza spenta ferma l'avvio automatico, non il pulsante
-        var dominio = UserDefaults.standard.volatileDomain(forName: UserDefaults.argumentDomain)
-        dominio["jarvisAvviaVoicebox"] = false
-        UserDefaults.standard.setVolatileDomain(dominio, forName: UserDefaults.argumentDomain)
-        m.avviaVoicebox(daUtente: false)
-        prova("con 'Avvia Voicebox da solo' spento l'avvio automatico non parte (\(quale))",
-              m.voicebox == .nessuno && aperture == 0, "aperture=\(aperture)")
-        dominio["jarvisAvviaVoicebox"] = true
-        UserDefaults.standard.setVolatileDomain(dominio, forName: UserDefaults.argumentDomain)
-
-        var vistoInAvvio = false
-        var avvisoInAvvio = ""
-        m.avviaVoicebox(daUtente: true)
-        if m.voicebox == .inAvvio { vistoInAvvio = true; avvisoInAvvio = m.voceAvviso ?? "" }
-        prova("il pulsante avvia: stato 'in avvio' e la riga lo dice (\(quale))",
-              vistoInAvvio && avvisoInAvvio.contains("Avvio Voicebox"), avvisoInAvvio)
-        m.avviaVoicebox(daUtente: true)
-        let finito = await attendi(8) { m.voicebox != .inAvvio }
-        prova("l'app di Voicebox viene aperta una volta sola (\(quale))", aperture == 1, "aperture=\(aperture)")
-        if serverAcceso {
-            prova("appena il server vede la voce neurale Jarvis la usa e lo dice",
-                  finito && m.voicebox == .nessuno && !m.voceSenzaNeurale && m.voceDescrizione.contains("Pocket"),
-                  "\(m.voicebox) \(m.voceDescrizione)")
-            prova("...e non offre piu' il pulsante", !m.offriVoicebox)
-        } else {
-            prova("se la voce neurale non compare mai lo dice e lascia riprovare",
-                  finito && m.voicebox == .nonPartito && (m.voceAvviso ?? "").contains("non ha risposto") && m.offriVoicebox,
-                  "\(m.voicebox) \(m.voceAvviso ?? "-")")
-        }
     }
 
     /// Le righe del registro del Pocket finto: (quando, testo).

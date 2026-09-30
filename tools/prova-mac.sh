@@ -69,7 +69,7 @@ controlla "dopo la scelta ogni lettura porta il compartimento" '^GET /api/lavagn
 controlla "dopo la scelta anche le scritture portano il compartimento" '^POST /api/sync\?compartimento=Lavoro token=token-di-prova$'
 controlla "la ricerca chiede /api/search con la parola" '^GET /api/search\?.*q=plancia'
 
-echo "==> controlli sui sorgenti: accenti, tasti del testo, mappa, colonne, collegamenti, Voicebox"
+echo "==> controlli sui sorgenti: accenti, tasti del testo, mappa, colonne, collegamenti, Jarvis"
 if python3 "$RADICE/mac/Prove/controlli_sorgenti.py" "$RADICE"; then :; else falliti=1; fi
 
 echo "==> lo stile Legno: contrasti, peso della texture, passi del testo"

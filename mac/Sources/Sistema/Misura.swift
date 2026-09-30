@@ -18,6 +18,8 @@
 //   lunghi    quanti giri hanno superato 16 ms di CPU (fotogrammi persi, a 60 Hz)
 //   rete      ms fino a che nessuna richiesta e' piu' in volo
 //   richieste e KB scaricati
+//   Mistr     milioni di istruzioni eseguite dal processo nel passo (tutti i thread): non cambiano
+//             con la macchina carica, e' il numero per confrontare due versioni
 // Non avvia il server: usa quello che trova sulla porta di $PLANCIA_HOME/config.json.
 // Non avvia la barra dei menu, Jarvis o le notifiche.
 
@@ -89,6 +91,7 @@ enum Misura {
         var rete = 0.0
         var richieste = 0
         var kb = 0
+        var mistr = 0.0
     }
 
     private static var righe: [Riga] = []
@@ -96,6 +99,17 @@ enum Misura {
     private static func valore(_ nome: String) -> String? {
         guard let i = CommandLine.arguments.firstIndex(of: nome), i + 1 < CommandLine.arguments.count else { return nil }
         return CommandLine.arguments[i + 1]
+    }
+
+    /// Le istruzioni eseguite dal processo finora (tutti i thread), dal contatore del kernel.
+    /// A differenza dei millisecondi non cambiano con la macchina carica: servono a confrontare
+    /// due versioni quando il tempo e' troppo rumoroso.
+    private static func istruzioni() -> UInt64 {
+        var ri = rusage_info_v4()
+        _ = withUnsafeMutablePointer(to: &ri) {
+            $0.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) { proc_pid_rusage(getpid(), RUSAGE_INFO_V4, $0) }
+        }
+        return ri.ri_instructions
     }
 
     private static func ora() -> Double { Double(DispatchTime.now().uptimeNanoseconds) / 1_000_000 }
@@ -120,7 +134,7 @@ enum Misura {
     private static func passo(_ scenario: String, _ voce: String, assestamento: UInt64 = 400_000_000,
                               _ azione: () async -> Void) async -> Riga {
         cron.azzera()
-        let r0 = Cliente.contatori.richieste, b0 = Cliente.contatori.byte
+        let r0 = Cliente.contatori.richieste, b0 = Cliente.contatori.byte, i0 = istruzioni()
         await azione()
         let rete = await quiete()
         try? await Task.sleep(nanoseconds: assestamento)
@@ -132,6 +146,7 @@ enum Misura {
         r.rete = rete
         r.richieste = Cliente.contatori.richieste - r0
         r.kb = (Cliente.contatori.byte - b0) / 1024
+        r.mistr = Double(istruzioni() &- i0) / 1_000_000
         righe.append(r)
         return r
     }
@@ -145,11 +160,18 @@ enum Misura {
 
     private static func esegui() async {
         var finestra: NSWindow?
-        for _ in 0..<80 {
+        for n in 0..<400 {
             if let w = DelegatoApp.corrente?.finestraPrincipale(), w.isVisible { finestra = w; break }
+            // macOS, a un avvio su due dopo un'uscita con la finestra aperta, non la ripristina
+            // e SwiftUI non ne crea una: la si apre a mano, come farebbe un clic sull'icona
+            if n >= 20, n % 20 == 0 { DelegatoApp.corrente?.apriFinestra() }
             try? await Task.sleep(nanoseconds: 100_000_000)
         }
-        guard let w = finestra else { FileHandle.standardError.write(Data("la finestra non è comparsa\n".utf8)); exit(1) }
+        guard let w = finestra else {
+            let elenco = NSApp.windows.map { "\($0.className) visibile=\($0.isVisible) main=\($0.canBecomeMain) contenuto=\($0.contentView != nil)" }
+            FileHandle.standardError.write(Data("la finestra non è comparsa (app nascosta=\(NSApp.isHidden), finestre: \(elenco))\n".utf8))
+            exit(1)
+        }
         w.setContentSize(NSSize(width: 1280, height: 820))
         w.setFrameTopLeftPoint(NSPoint(x: 60, y: (NSScreen.main?.visibleFrame.maxY ?? 900) - 40))
         w.orderFrontRegardless()
@@ -238,10 +260,10 @@ enum Misura {
 
     private static func stampa() {
         var out = ""
-        out += "scenario   voce                      occupato   massimo   parete  lunghi      rete  richieste       KB\n"
+        out += "scenario   voce                      occupato   massimo   parete  lunghi      rete  richieste       KB     Mistr\n"
         for r in righe {
             let voce = r.voce.padding(toLength: 24, withPad: " ", startingAt: 0)
-            out += "\(r.scenario.padding(toLength: 10, withPad: " ", startingAt: 0)) \(voce) \(f(r.occupato, 10)) \(f(r.massimo, 9)) \(f(r.parete, 8)) \(String(format: "%7d", r.lunghi)) \(f(r.rete, 9)) \(String(format: "%10d", r.richieste)) \(String(format: "%8d", r.kb))\n"
+            out += "\(r.scenario.padding(toLength: 10, withPad: " ", startingAt: 0)) \(voce) \(f(r.occupato, 10)) \(f(r.massimo, 9)) \(f(r.parete, 8)) \(String(format: "%7d", r.lunghi)) \(f(r.rete, 9)) \(String(format: "%10d", r.richieste)) \(String(format: "%8d", r.kb)) \(String(format: "%9.0f", r.mistr))\n"
         }
         // sintesi per scenario: somma dell'occupato, massimo dei massimi
         out += "\nsintesi (somma dell'occupato, massimo dei massimi, somma dei giri lunghi, somma delle richieste)\n"
@@ -249,13 +271,13 @@ enum Misura {
         for r in righe where !visti.contains(r.scenario) { visti.append(r.scenario) }
         for sc in visti {
             let v = righe.filter { $0.scenario == sc }
-            out += "\(sc.padding(toLength: 10, withPad: " ", startingAt: 0)) occupato \(f(v.reduce(0) { $0 + $1.occupato }, 9)) ms   massimo \(f(v.map(\.massimo).max() ?? 0, 7)) ms   lunghi \(v.reduce(0) { $0 + $1.lunghi })   richieste \(v.reduce(0) { $0 + $1.richieste })   KB \(v.reduce(0) { $0 + $1.kb })\n"
+            out += "\(sc.padding(toLength: 10, withPad: " ", startingAt: 0)) occupato \(f(v.reduce(0) { $0 + $1.occupato }, 9)) ms   massimo \(f(v.map(\.massimo).max() ?? 0, 7)) ms   lunghi \(v.reduce(0) { $0 + $1.lunghi })   richieste \(v.reduce(0) { $0 + $1.richieste })   KB \(v.reduce(0) { $0 + $1.kb })   Mistr \(String(format: "%.0f", v.reduce(0) { $0 + $1.mistr }))\n"
         }
         FileHandle.standardOutput.write(Data(out.utf8))
         if let file = valore("--misura-out") {
             let json: [[String: Any]] = righe.map {
                 ["scenario": $0.scenario, "voce": $0.voce, "occupato_ms": $0.occupato, "massimo_ms": $0.massimo, "parete_ms": $0.parete,
-                 "lunghi": $0.lunghi, "rete_ms": $0.rete, "richieste": $0.richieste, "kb": $0.kb]
+                 "lunghi": $0.lunghi, "rete_ms": $0.rete, "richieste": $0.richieste, "kb": $0.kb, "mistr": $0.mistr]
             }
             if let d = try? JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys]) {
                 try? d.write(to: URL(fileURLWithPath: file))

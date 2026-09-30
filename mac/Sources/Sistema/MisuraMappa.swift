@@ -1,7 +1,7 @@
 // Il banco dei fotogrammi della mappa della memoria, dentro l'app cosi' chi clona il repo lo
-// rifa' e ottiene gli stessi numeri delle note:
+// rifa' e ottiene gli stessi numeri del rapporto:
 //
-//   Plancia.app/Contents/MacOS/Plancia --mappa-misura [--mappa-nodi N] [--mappa-fisso]
+//   Plancia.app/Contents/MacOS/Plancia --mappa-misura [--mappa-nodi N] [--mappa-dal-server]
 //
 // Apre la VistaMappa vera in una finestra vera da 1100x760 e la fa lavorare: assestamento,
 // trascinamento di un nodo, i tre livelli, zoom a passi, pan continuo, poi una scena ferma

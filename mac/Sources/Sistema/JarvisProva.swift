@@ -22,7 +22,7 @@ enum JarvisProva {
 
     enum Scena: String, CaseIterable {
         case inattivo, ascolto, penso, risposta, scheda, schedaAgente, schedaSessione
-        case senzaVoce, serverSpento, lunga, voiceboxSpento, voiceboxAvvio
+        case senzaVoce, serverSpento, lunga
     }
 }
 
@@ -34,9 +34,9 @@ extension JarvisModello {
             trascritto = ""; pezzi = []; proposta = nil; messaggio = nil; erroreGrave = false
             microfonoAcceso = false; microfonoInApertura = false; elabora = false; parla = false
             confermaInCorso = false; livello.valore = 0
-            voceDescrizione = it ? "Voce neurale: Voicebox" : "Neural voice: Voicebox"
+            voceDescrizione = it ? "Voce neurale locale" : "Local neural voice"
             voceAvviso = nil
-            voicebox = .nessuno; voceSenzaNeurale = false; voiceboxInstallato = false
+            voceSenzaNeurale = false
         }
         func testo(_ t: String, eta: TimeInterval = 5) {
             pezzi = [Pezzo(id: 1, testo: t, arrivo: Date().addingTimeInterval(-eta))]
@@ -97,26 +97,11 @@ extension JarvisModello {
             voceDescrizione = it ? "Solo testo: nessuna voce avanzata installata" : "Text only: no enhanced voice installed"
             voceAvviso = it ? "Scarica una voce avanzata o premium in Impostazioni di sistema, Accessibilità, Contenuto letto."
                             : "Download an enhanced or premium voice in System Settings, Accessibility, Spoken Content."
-        case .voiceboxSpento, .voiceboxAvvio:
-            trascritto = it ? "cosa devo fare oggi su Atlas" : "what do I have to do today on Atlas"
-            testo(it ? "Su Atlas hai due task aperti: togliere i biglietti duplicati e confrontare i tre modelli."
-                     : "On Atlas you have two open tasks: dropping duplicate tickets and comparing the three models.")
-            voceDescrizione = it ? "Solo testo: nessuna voce avanzata installata" : "Text only: no enhanced voice installed"
-            voceSenzaNeurale = true
-            voiceboxInstallato = true
-            if s == .voiceboxAvvio {
-                voicebox = .inAvvio
-                voceAvviso = it ? "Avvio Voicebox: la voce neurale è pronta tra pochi secondi."
-                                : "Starting Voicebox: the neural voice is ready in a few seconds."
-            } else {
-                voceAvviso = it ? "Voicebox è spento: senza, la voce neurale non parte."
-                                : "Voicebox is off: without it the neural voice can't speak."
-            }
         case .serverSpento:
             avvisa(ErroreJarvis.nonRaggiungibile.localizedDescription, grave: true)
             voceDescrizione = it ? "Voce di sistema: Zoe (premium)" : "System voice: Zoe (premium)"
-            voceAvviso = it ? "Nessuna voce neurale locale in ascolto (Voicebox non risponde)."
-                            : "No local neural voice is listening (Voicebox is not answering)."
+            voceAvviso = it ? "Nessuna voce neurale locale in ascolto."
+                            : "No local neural voice is listening."
         }
     }
 }
