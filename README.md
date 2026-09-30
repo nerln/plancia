@@ -282,11 +282,23 @@ is not installed for on-device use, it says so and you type; audio never goes to
 server. It closes by itself after each sentence and reopens only if you turn on
 "Continuous conversation" in the panel menu. Esc or Stop ends everything at once.
 
-The voice is a neural one when there is one: Pocket or Voicebox running locally,
-sentence by sentence, so the second sentence is being made while the first plays.
-Without one it uses the enhanced or premium voices installed on the Mac and says so
-at the bottom of the panel. It never uses the basic robotic voice: with none
-installed it stays text-only and tells you where to download one.
+The voice is a neural one when there is one: Kokoro first, then Pocket, then
+Voicebox, all running locally, sentence by sentence, so the second sentence is being
+made while the first plays (the first sentence is cut at its commas, so the sound
+starts sooner). Without one it uses the enhanced or premium voices installed on the
+Mac and says so at the bottom of the panel. It never uses the basic robotic voice:
+with none installed it stays text-only and tells you where to download one.
+
+Kokoro is not installed by default. `plancia voce installa` builds a Python
+environment under `<PLANCIA_HOME>/voce`, tells you it will download about 354 MB of
+model files, and asks before doing it. It then runs as one warm background process of
+roughly 450 to 700 MB (about 1 GB for a moment on a long sentence) that starts when
+Jarvis opens and quits after 5 minutes of silence; if it dies or is too slow, the
+next engine speaks and the panel footer says so. The voice per language is
+`voce_kokoro` in config.json (defaults: `if_sara` for Italian, `af_heart` for
+English, `ef_dora` for Spanish; `im_nicola` is a male Italian one). `plancia voce
+prova` says which engine Jarvis would use and why, without playing anything. Tried on
+macOS only.
 
 The text field at the bottom covers the case where the microphone is unavailable.
 
@@ -589,7 +601,7 @@ warning each time). The full list is in the docstring of `plancia/compartimenti.
 git config core.hooksPath .githooks
 ```
 
-Turns on the hook that runs `python3 tools/prova.py` before every push: 4212
+Turns on the hook that runs `python3 tools/prova.py` before every push: 4302
 checks in a few minutes, against a throwaway archive that never touches
 yours. They cover the schema, the board, the proposals, the search index, the
 recap, the MCP surface and its token budget, every read route of the HTTP API,

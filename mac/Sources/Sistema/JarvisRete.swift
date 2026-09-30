@@ -8,9 +8,10 @@
 //                               la chiama il pulsante Conferma e nient'altro in questo programma
 //   POST /api/jarvis/rifiuta    butta la scheda
 //   POST /api/jarvis/ferma      Esc: il server smette di pensare
-//   POST /api/jarvis/pronto     scalda il modello (in sola lettura) e dice che voce neurale c'e'
-//   POST /api/voice/speak       una frase in un file audio, con il motore "neurale" (Pocket o
-//                               Voicebox, mai la voce robotica del server)
+//   POST /api/jarvis/pronto     scalda il modello (in sola lettura) e Kokoro, e dice che voce
+//                               neurale c'e'
+//   POST /api/voice/speak       una frase in un file audio, con il motore "neurale" (Kokoro,
+//                               Pocket o Voicebox, in quest'ordine; mai la voce robotica del server)
 
 import Foundation
 
@@ -95,8 +96,20 @@ struct EventoJarvis: Sendable {
 }
 
 struct InfoVoceServer: Sendable {
-    /// "pocket", "voicebox" o nil quando nessuna voce neurale locale risponde
+    /// "kokoro", "pocket", "voicebox" o nil quando nessuna voce neurale locale risponde
     var neurale: String?
+    /// Perche' Kokoro non parla, se non parla: "non_installato", "in_pausa", "spento",
+    /// "senza_voce". nil se parla, o se il server non lo dice.
+    var kokoroNo: String?
+}
+
+/// Una frase sintetizzata: il file, chi l'ha fatta, e se un motore piu' in alto ha ceduto.
+struct FraseSintetizzata: Sendable {
+    var url: URL?
+    /// "kokoro", "pocket", "voicebox" o "cache"
+    var motore: String?
+    /// C'e' un testo del server quando un motore piu' in alto non ha risposto.
+    var ripiego: String?
 }
 
 enum ErroreJarvis: Error, LocalizedError {
@@ -240,29 +253,35 @@ enum ReteJarvis {
               (r as? HTTPURLResponse)?.statusCode == 200 else { return nil }
         let j = json(dati)
         let n = j["neurale"] as? String
-        return InfoVoceServer(neurale: (n?.isEmpty ?? true) ? nil : n)
+        let k = j["kokoro"] as? String
+        return InfoVoceServer(neurale: (n?.isEmpty ?? true) ? nil : n,
+                              kokoroNo: (k?.isEmpty ?? true) ? nil : k)
     }
 
-    /// Una frase in un file audio. Il server prova Pocket e Voicebox e sollevera' un
-    /// "nota_voce" se nessuno risponde: allora nil, e chi chiama passa alla voce di
-    /// sistema. `attesa` e' quanto si e' disposti ad aspettare questa frase.
-    static func sintetizza(_ frase: String, lingua: String, attesa: TimeInterval) async -> URL? {
-        let req = richiesta("/api/voice/speak", ["testo": frase, "lang": lingua, "motore": "neurale"],
+    /// Una frase in un file audio. Il server prova Kokoro, Pocket e Voicebox e sollevera' un
+    /// "nota_voce" se nessuno risponde: allora `url` e' nil, e chi chiama passa alla voce di
+    /// sistema. `attesa` e' quanto si e' disposti ad aspettare questa frase; `velocita` e' un
+    /// fattore (1 e' la voce normale) che vale per Kokoro.
+    static func sintetizza(_ frase: String, lingua: String, attesa: TimeInterval,
+                           velocita: Double = 1) async -> FraseSintetizzata {
+        let req = richiesta("/api/voice/speak",
+                            ["testo": frase, "lang": lingua, "motore": "neurale", "velocita": velocita],
                             timeout: attesa)
         do {
-            if Casa.token.isEmpty { return nil }
+            if Casa.token.isEmpty { return FraseSintetizzata() }
             let (dati, r) = try await scambia(req)
             let codice = (r as? HTTPURLResponse)?.statusCode ?? 0
             let j = json(dati)
             guard codice == 200, let file = j["file"] as? String, !file.isEmpty,
                   FileManager.default.fileExists(atPath: file) else {
                 Log.write("jarvis: sintesi senza file (HTTP \(codice)) \((j["nota_voce"] as? String) ?? (j["errore"] as? String) ?? "")")
-                return nil
+                return FraseSintetizzata(url: nil, motore: nil, ripiego: j["nota_voce"] as? String)
             }
-            return URL(fileURLWithPath: file)
+            return FraseSintetizzata(url: URL(fileURLWithPath: file), motore: j["motore"] as? String,
+                                     ripiego: j["ripiego"] as? String)
         } catch {
             Log.write("jarvis: sintesi fallita: \(error.localizedDescription)")
-            return nil
+            return FraseSintetizzata()
         }
     }
 }

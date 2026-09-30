@@ -1,11 +1,13 @@
 // La voce di Jarvis.
 //
 // Due strade, nell'ordine, e la seconda si dice:
-//   1. Voce NEURALE locale (Pocket o Voicebox, quella che il server di Plancia trova su
-//      127.0.0.1). Il testo arriva a frasi e ogni frase viene sintetizzata mentre la
+//   1. Voce NEURALE locale (Kokoro, poi Pocket, poi Voicebox: la sceglie il server di Plancia,
+//      che lo dice a `prepara` e nel piede del pannello). Il testo arriva a frasi (la prima
+//      a clausole, se il motore e' Kokoro) e ogni frase viene sintetizzata mentre la
 //      precedente suona e la successiva sta ancora arrivando: la voce parte alla prima
 //      frase, non alla fine della risposta. Se una frase non arriva in tempo si passa alla
 //      voce di sistema per il resto della risposta, e per un minuto e mezzo non si riprova.
+//      La velocita' del pannello arriva a Kokoro come fattore.
 //   2. Le voci di sistema di qualita' avanzata o premium (AVSpeechSynthesizer). MAI la voce
 //      di base, quella robotica: se non ce n'e' installata nessuna Jarvis resta a testo e
 //      dice come scaricarne una (a meno che tu non abbia acconsentito alla voce base
@@ -68,6 +70,22 @@ final class VoceJarvis: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDele
         set { UserDefaults.standard.set(min(0.72, max(0.34, newValue)), forKey: "velocitaVoce") }
     }
 
+    /// La stessa velocita' come fattore per Kokoro: 0,52 (di serie) e' la voce normale, e da
+    /// 0,34 a 0,72 si va da circa 0,79 a 1,24.
+    nonisolated static var fattoreKokoro: Double {
+        min(1.4, max(0.7, 1 + 1.2 * (velocita - 0.52)))
+    }
+
+    /// Il nome di un motore neurale come lo scrive il piede del pannello.
+    nonisolated static func nomeMotore(_ m: String) -> String {
+        switch m {
+        case "kokoro": return "Kokoro"
+        case "pocket": return "Pocket"
+        case "voicebox": return "Voicebox"
+        default: return m
+        }
+    }
+
     /// Le voci di sistema che Jarvis usa: premium prima, poi avanzate, poi (solo se l'hai
     /// permesso) quelle di base non buffe. Ordine: qualita', poi la lingua esatta, poi il nome.
     static func vociDisponibili(lingua: String) -> [AVSpeechSynthesisVoice] {
@@ -109,8 +127,9 @@ final class VoceJarvis: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDele
         return "\(v.name) (\(q))"
     }
 
-    /// Da chiamare quando il pannello si apre: decide che voce avra' e lo scrive.
-    func prepara(lingua: String, neurale: String?) {
+    /// Da chiamare quando il pannello si apre: decide che voce avra' e lo scrive. `kokoroNo` e'
+    /// il perche' il server non usa Kokoro ("non_installato", "in_pausa"...), se non lo usa.
+    func prepara(lingua: String, neurale: String?, kokoroNo: String? = nil) {
         self.lingua = lingua
         neuraleOffertoDalServer = neurale
         avviso = nil
@@ -118,7 +137,11 @@ final class VoceJarvis: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDele
         if let n = neurale, Date() >= neuraleLentoFinoA {
             // anche in prova: la sintesi vera passa dal server, e solo il suono non c'e'
             modo = .neurale(n)
-            descrizione = (it ? "Voce neurale: " : "Neural voice: ") + (n == "pocket" ? "Pocket" : "Voicebox")
+            descrizione = (it ? "Voce neurale: " : "Neural voice: ") + VoceJarvis.nomeMotore(n)
+            if n != "kokoro", kokoroNo == "in_pausa" {
+                avviso = it ? "Kokoro non ha risposto: per ora parla \(VoceJarvis.nomeMotore(n))."
+                            : "Kokoro did not answer: \(VoceJarvis.nomeMotore(n)) is speaking for now."
+            }
         } else if JarvisProva.attivo {
             modo = .muta
             descrizione = it ? "Prova: nessun audio, voce recitata" : "Test: no audio, voice simulated"
@@ -126,8 +149,17 @@ final class VoceJarvis: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDele
             modo = .sistema
             descrizione = (it ? "Voce di sistema: " : "System voice: ") + VoceJarvis.etichetta(v)
             if neurale == nil {
-                avviso = it ? "Nessuna voce neurale locale in ascolto (Voicebox non risponde)."
-                            : "No local neural voice is listening (Voicebox is not answering)."
+                switch kokoroNo {
+                case "non_installato":
+                    avviso = it ? "Nessuna voce neurale locale. Per averne una: plancia voce installa (Kokoro)."
+                                : "No local neural voice. To get one: plancia voce installa (Kokoro)."
+                case "in_pausa":
+                    avviso = it ? "Kokoro non ha risposto: niente voce neurale per ora."
+                                : "Kokoro did not answer: no neural voice for now."
+                default:
+                    avviso = it ? "Nessuna voce neurale locale in ascolto."
+                                : "No local neural voice is listening."
+                }
             }
         } else {
             modo = .muta
@@ -173,13 +205,15 @@ final class VoceJarvis: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDele
             let attesa: TimeInterval = primaFrase ? base + 1 : max(25, base + 1)
             primaFrase = false
             let l = lingua
-            let t = Task<URL?, Never> {
+            let vel = VoceJarvis.fattoreKokoro
+            let t = Task<URL?, Never> { [weak self] in
                 _ = await precedente?.value
                 if Task.isCancelled { return nil }
                 let via = Date()
-                let u = await ReteJarvis.sintetizza(f, lingua: l, attesa: attesa)
-                Log.write("jarvis: voce neurale, frase di \(f.count) caratteri in \(String(format: "%.1f", Date().timeIntervalSince(via))) s: \(u == nil ? "niente" : "pronta")")
-                return u
+                let r = await ReteJarvis.sintetizza(f, lingua: l, attesa: attesa, velocita: vel)
+                Log.write("jarvis: voce neurale (\(r.motore ?? "nessuno")), frase di \(f.count) caratteri in \(String(format: "%.1f", Date().timeIntervalSince(via))) s: \(r.url == nil ? "niente" : "pronta")")
+                self?.motoreUsato(r)
+                return r.url
             }
             ultimaSintesi = t
             coda.append((f, t))
@@ -189,6 +223,19 @@ final class VoceJarvis: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDele
                 lettore = Task { [weak self] in await self?.leggi(g) }
             }
         }
+    }
+
+    /// Il server ha risposto con un motore diverso da quello annunciato (Kokoro ha ceduto a
+    /// Pocket o a Voicebox): il piede del pannello lo dice, e il nome cambia.
+    private func motoreUsato(_ r: FraseSintetizzata) {
+        guard r.url != nil, let m = r.motore, m != "cache" else { return }
+        guard case .neurale(let annunciato) = modo, annunciato != m else { return }
+        let it = lingua == "it"
+        modo = .neurale(m)
+        descrizione = (it ? "Voce neurale: " : "Neural voice: ") + VoceJarvis.nomeMotore(m)
+        avviso = it ? "\(VoceJarvis.nomeMotore(annunciato)) non ha risposto: parla \(VoceJarvis.nomeMotore(m))."
+                    : "\(VoceJarvis.nomeMotore(annunciato)) did not answer: \(VoceJarvis.nomeMotore(m)) is speaking."
+        onCambio?()
     }
 
     /// Non arrivano altre frasi.

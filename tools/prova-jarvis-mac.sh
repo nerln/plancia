@@ -9,6 +9,8 @@
 #   - una scena fissa per ogni stato (riposo, ascolto, pensa, risponde, scheda di conferma,
 #     scheda di un agente che scrive, scheda di una sessione, senza voce, server spento,
 #     risposta lunga), in chiaro e in scuro, fotografate con il vetro vero;
+#   - la voce neurale: prima con un Pocket finto, poi con un Kokoro finto acceso a meta' (il pannello
+#     lo nomina, la velocita' gli arriva, se rifiuta la frase parla Pocket e il piede lo dice);
 #   - il ciclo vero contro il server di prova: il testo scorre, una proposta diventa una
 #     scheda, "si" non conferma, il pulsante conferma una volta sola, Esc butta la scheda e
 #     ferma il server, chiudere il pannello butta la scheda, il microfono finto si accende
@@ -93,6 +95,21 @@ export PLANCIA_POCKET_LOG="$TMP/pocket.log"
 : > "$PLANCIA_POCKET_LOG"
 python3 "$RADICE/tools/prove/_pocket_finto.py" "$PORTA_POCKET" "$PLANCIA_POCKET_LOG" &
 POCKET=$!
+# Un lavoratore Kokoro finto (tools/prove/_kokoro_finto.py): il "Python" di kokoro_python e' un
+# piccolo script che lo lancia, e i "modelli" sono due file finti. La prova del pannello lo accende a
+# meta' scrivendo kokoro_python e kokoro_modelli nella configurazione, senza riavviare il server.
+mkdir -p "$TMP/kokoro-modelli"
+printf x > "$TMP/kokoro-modelli/kokoro-v1.0.onnx"
+printf x > "$TMP/kokoro-modelli/voices-v1.0.bin"
+export PLANCIA_KOKORO_LOG="$TMP/kokoro.log"
+export PLANCIA_KOKORO_CTL="$TMP/kokoro-ctl.json"
+export PLANCIA_KOKORO_MODELLI="$TMP/kokoro-modelli"
+export PLANCIA_KOKORO_PYTHON="$TMP/finti/python-kokoro"
+: > "$PLANCIA_KOKORO_LOG"
+printf '{"registro": "%s"}' "$PLANCIA_KOKORO_LOG" > "$PLANCIA_KOKORO_CTL"
+printf '#!/bin/sh\nexec /usr/bin/python3 -c '"'"'import sys; sys.path.insert(0, "%s/tools/prove"); import _kokoro_finto; sys.exit(_kokoro_finto.main(sys.argv, "%s"))'"'"' "$@"\n' \
+  "$RADICE" "$PLANCIA_KOKORO_CTL" > "$PLANCIA_KOKORO_PYTHON"
+chmod +x "$PLANCIA_KOKORO_PYTHON"
 python3 - "$PLANCIA_HOME/config.json" "$PORTA" "$TMP/finti/claude" "$PORTA_POCKET" <<'PY'
 import json, os, sys
 p, porta, claude, pocket = sys.argv[1], int(sys.argv[2]), sys.argv[3], int(sys.argv[4])

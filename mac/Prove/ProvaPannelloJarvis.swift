@@ -266,6 +266,118 @@ struct ProvaJarvis {
         }
     }
 
+    /// Le richieste che il Kokoro finto ha ricevuto: (testo, voce, velocita, pausa).
+    static func richiesteKokoro() -> [(String, String, String, String)] {
+        guard let p = ProcessInfo.processInfo.environment["PLANCIA_KOKORO_LOG"],
+              let t = try? String(contentsOfFile: p, encoding: .utf8) else { return [] }
+        return t.split(separator: "\n").compactMap { r in
+            let parti = r.split(separator: " ", maxSplits: 3).map(String.init)
+            guard parti.count == 4, parti[1] == "RICH" else { return nil }
+            let campi = parti[3].components(separatedBy: " | ")
+            guard campi.count == 4 else { return nil }
+            return (campi[0], campi[1], campi[2], campi[3])
+        }
+    }
+
+    static func avviiKokoro() -> Int {
+        guard let p = ProcessInfo.processInfo.environment["PLANCIA_KOKORO_LOG"],
+              let t = try? String(contentsOfFile: p, encoding: .utf8) else { return 0 }
+        return t.split(separator: "\n").filter { $0.contains(" AVVIO ") }.count
+    }
+
+    /// Cambia (o toglie, con nil) delle chiavi in config.json della casa di prova: il server la
+    /// rilegge a ogni richiesta, quindi vale subito.
+    static func scriviConfig(_ chiavi: [String: Any?]) {
+        guard let casa = ProcessInfo.processInfo.environment["PLANCIA_HOME"] else { return }
+        let url = URL(fileURLWithPath: casa).appendingPathComponent("config.json")
+        var c = ((try? Data(contentsOf: url)).flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any]) ?? [:]
+        for (k, v) in chiavi { if let v = v { c[k] = v } else { c.removeValue(forKey: k) } }
+        if let d = try? JSONSerialization.data(withJSONObject: c) { try? d.write(to: url) }
+    }
+
+    static func controlloKokoro(_ extra: [String: Any]) {
+        let env = ProcessInfo.processInfo.environment
+        guard let ctl = env["PLANCIA_KOKORO_CTL"], let log = env["PLANCIA_KOKORO_LOG"] else { return }
+        var c: [String: Any] = ["registro": log]
+        for (k, v) in extra { c[k] = v }
+        if let d = try? JSONSerialization.data(withJSONObject: c) { try? d.write(to: URL(fileURLWithPath: ctl)) }
+    }
+
+    @MainActor static func voceKokoro(_ pannello: JarvisPanel) async {
+        let env = ProcessInfo.processInfo.environment
+        guard env["PLANCIA_KOKORO_LOG"] != nil, let py = env["PLANCIA_KOKORO_PYTHON"],
+              let mod = env["PLANCIA_KOKORO_MODELLI"] else { return }
+        let m = pannello.modello
+        VoceJarvis.velocita = 0.52
+        controlloKokoro([:])
+        let richiestePrimaDiAprire = richiesteKokoro().count
+        scriviConfig(["kokoro_python": py, "kokoro_modelli": mod])
+        m.rifiuta()
+        m.chiudi()
+        try? await Task.sleep(nanoseconds: 400_000_000)
+        pannello.mostra()
+        m.apri(ascolta: false)
+        let vede = await attendi(8) { m.voceDescrizione.contains("Kokoro") }
+        prova("con Kokoro installato il server lo offre per primo e il pannello lo nomina", vede, m.voceDescrizione)
+        let partito = await attendi(6) { avviiKokoro() >= 1 }
+        prova("...e il lavoratore c'e' (parte quando il pannello si apre) senza che sia arrivata nessuna frase",
+              partito && richiesteKokoro().count == richiestePrimaDiAprire,
+              "avvii \(avviiKokoro()), richieste \(richiesteKokoro().count) contro \(richiestePrimaDiAprire)")
+
+        let sale = String(UUID().uuidString.prefix(6))
+        let prima = richiesteKokoro().count
+        m.invia("eco: Prima frase con Kokoro \(sale). Seconda frase con Kokoro \(sale), un po' piu' lunga della prima.")
+        var parlato = false
+        _ = await attendi(25) {
+            if m.parla { parlato = true }
+            return parlato && !m.elabora && !m.parla
+        }
+        let nuove = Array(richiesteKokoro().dropFirst(prima))
+        prova("con Kokoro ogni frase passa dalla sintesi del server, con la voce italiana di serie",
+              nuove.count >= 2 && nuove.allSatisfy { $0.1 == "if_sara" }, nuove.map { "\($0.0)|\($0.1)" }.joined(separator: " ; "))
+        prova("...alla velocita' normale del pannello (fattore 1)", nuove.allSatisfy { $0.2 == "1.0" }, nuove.map { $0.2 }.joined(separator: ","))
+
+        // "piu' veloce": un passo di 0,06 sulla velocita' del pannello arriva a Kokoro
+        VoceJarvis.velocita += 0.06
+        let prima2 = richiesteKokoro().count
+        m.invia("eco: Frase piu' veloce \(sale). Un'altra frase piu' veloce \(sale), per essere sicuri.")
+        parlato = false
+        _ = await attendi(25) {
+            if m.parla { parlato = true }
+            return parlato && !m.elabora && !m.parla
+        }
+        let veloci = Array(richiesteKokoro().dropFirst(prima2))
+        prova("la velocita' del pannello arriva a Kokoro (0,58 diventa 1,05)",
+              veloci.count >= 2 && veloci.allSatisfy { $0.2 == "1.05" }, veloci.map { $0.2 }.joined(separator: ","))
+        VoceJarvis.velocita = 0.52
+
+        // Kokoro rifiuta la frase: la fa Pocket, e il piede del pannello lo dice
+        controlloKokoro(["rifiuta": "cede"])
+        let pocketPrima = richiestePocket().count
+        m.invia("eco: Questa frase cede a Pocket \(sale). Anche questa cede, e poi finisce \(sale).")
+        parlato = false
+        _ = await attendi(25) {
+            if m.parla { parlato = true }
+            return parlato && !m.elabora && !m.parla
+        }
+        let daPocket = Array(richiestePocket().dropFirst(pocketPrima))
+        prova("se Kokoro non fa la frase la fa Pocket", daPocket.count >= 1 && daPocket[0].1.contains("cede a Pocket"),
+              daPocket.map { $0.1 }.joined(separator: " | "))
+        prova("...e il piede del pannello lo dice: Kokoro non ha risposto, parla Pocket",
+              m.voceDescrizione.contains("Pocket") && (m.voceAvviso ?? "").contains("Kokoro")
+                  && (m.voceAvviso ?? "").contains("Pocket"), "\(m.voceDescrizione) | \(m.voceAvviso ?? "-")")
+
+        // si rimette tutto com'era: il resto della prova parla con Pocket
+        controlloKokoro([:])
+        scriviConfig(["kokoro_python": nil, "kokoro_modelli": nil])
+        m.rifiuta()
+        m.chiudi()
+        try? await Task.sleep(nanoseconds: 400_000_000)
+        pannello.mostra()
+        m.apri(ascolta: false)
+        _ = await attendi(6) { m.voceDescrizione.contains("Pocket") }
+    }
+
     @MainActor static func voceNeurale(_ pannello: JarvisPanel) async {
         guard ProcessInfo.processInfo.environment["PLANCIA_POCKET_LOG"] != nil else { return }
         let m = pannello.modello
@@ -303,6 +415,9 @@ struct ProvaJarvis {
         try? await Task.sleep(nanoseconds: 1_500_000_000)
         prova("Esc mentre parla ferma la voce", !m.parla)
         prova("...e non parte nessuna altra sintesi", richiestePocket().count == dopoEsc, "\(dopoEsc) -> \(richiestePocket().count)")
+
+        // Kokoro, il primo motore: un lavoratore finto acceso a meta' scrivendo la configurazione
+        await voceKokoro(pannello)
 
         // il ripiego: una frase che il motore rifiuta -> voce di sistema (qui recitata), e lo dice
         m.invia("una frase guasto")

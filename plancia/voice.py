@@ -1,6 +1,7 @@
 """Voce: sintesi, riproduzione e ascolto.
 
-Due motori. Voicebox se il suo backend locale risponde, perché è la voce clonata
+I motori neurali, nell'ordine: Kokoro (un lavoratore tenuto caldo, `plancia/kokoro.py`),
+Pocket-TTS e Voicebox se il loro backend locale risponde. Voicebox è la voce clonata
 e regge bene le lingue. Altrimenti le voci di sistema, che non chiedono niente e
 partono in un decimo di secondo: `say` su macOS, il sintetizzatore di Windows
 (System.Speech, via PowerShell), `espeak-ng` o `espeak` su Linux. I comandi li
@@ -21,7 +22,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from . import config, piattaforma
+from . import config, kokoro, piattaforma
 from .voce_testo import per_voce
 
 
@@ -31,7 +32,7 @@ class NessunMotoreVoce(RuntimeError):
 
 
 class NessunaVoceNeurale(NessunMotoreVoce):
-    """Il motore "neurale" (Pocket o Voicebox) non risponde. Non e' un errore
+    """Il motore "neurale" (Kokoro, Pocket o Voicebox) non risponde. Non e' un errore
     grave: chi lo chiede (il pannello Jarvis dell'app Mac) ripiega da se' sulle
     voci avanzate di sistema e lo dice, invece di far parlare `say`."""
 
@@ -296,9 +297,12 @@ ATTESA_VOICEBOX = 5
 ATTESA_NEURALE = 9
 
 
-def voce_neurale() -> str:
-    """Quale voce neurale locale risponde adesso: "pocket", "voicebox" o "".
-    Sola lettura: due GET su 127.0.0.1, con il ricordo dell'ultimo no."""
+def voce_neurale(lang: str = None) -> str:
+    """Quale voce neurale locale risponde adesso: "kokoro", "pocket", "voicebox" o "".
+    Sola lettura: i file di Kokoro sul disco e due GET su 127.0.0.1, con il ricordo
+    dell'ultimo no. Non avvia niente."""
+    if kokoro.disponibile(lang):
+        return "kokoro"
     if pocket_vivo():
         return "pocket"
     if voicebox_vivo():
@@ -306,38 +310,85 @@ def voce_neurale() -> str:
     return ""
 
 
+def scalda_neurale(lang: str = None) -> bool:
+    """Quando Jarvis si prepara: se Kokoro e' il motore, il lavoratore parte adesso (in un
+    altro thread, senza aspettarlo) e la prima frase non paga il caricamento del
+    modello. Vero se ha provato ad avviarlo."""
+    if kokoro.disponibile(lang):
+        return kokoro.scalda()
+    return False
+
+
+def spegni_neurale() -> None:
+    """Chiude il lavoratore Kokoro se c'e'. Alla chiusura del server."""
+    kokoro.spegni()
+
+
+def _attesa_kokoro(motore: str, subito: bool) -> float:
+    if motore == "neurale":
+        return float(config.load_config().get("attesa_voce_neurale", ATTESA_NEURALE))
+    return 20.0 if subito else 120.0
+
+
 def sintesi(testo: str, lang: str = "it", motore: str = None, cache=True,
-            subito=False) -> dict:
+            subito=False, velocita: float = None) -> dict:
     """Il file audio, generato solo se non c'è già.
 
     `subito` è per quando qualcuno sta aspettando di sentire: si prova la voce
     clonata per pochi secondi e poi si passa a quella di sistema, invece di
     lasciare la persona davanti al silenzio.
 
-    `motore="neurale"` e' per Jarvis: Pocket, poi Voicebox, e MAI la voce di
-    `say`. Se nessuna delle due risponde solleva `NessunaVoceNeurale` e il
-    chiamante ripiega sulle voci avanzate di sistema. Aspetta al massimo
-    `ATTESA_NEURALE` secondi per frase.
+    `motore="neurale"` e' per Jarvis: Kokoro, poi Pocket, poi Voicebox, e MAI la voce
+    di `say`. Se nessuna risponde solleva `NessunaVoceNeurale` e il chiamante ripiega
+    sulle voci avanzate di sistema. Aspetta al massimo `ATTESA_NEURALE` secondi per
+    frase. `motore="auto"` prova gli stessi tre e poi `say`; `motore="kokoro"` solo
+    Kokoro.
+
+    `velocita` e' un fattore (1.0 e' la voce normale) e vale per Kokoro: le altre voci
+    hanno la loro. Se un motore piu' in alto ha fallito, `ripiego` dice perche'.
     """
     # Ultimo punto prima dell'audio: qui il testo diventa una cosa da dire.
     testo = per_voce(testo, lang)
     AUDIO_DIR.mkdir(parents=True, exist_ok=True)
     motore = motore or motore_scelto()
-    chiave = hashlib.sha1(f"{motore}|{lang}|{testo}".encode("utf-8")).hexdigest()[:16]
+    con_kokoro = motore in ("auto", "neurale", "kokoro")
+    firma = kokoro.impronta(lang, velocita) if con_kokoro else ""
+    base = f"{motore}|{lang}|{testo}" + (f"|{firma}" if firma else "")
+    chiave = hashlib.sha1(base.encode("utf-8")).hexdigest()[:16]
     out = AUDIO_DIR / f"{chiave}.wav"
     if cache and out.exists() and out.stat().st_size > 2048:
         return {"file": str(out), "motore": "cache", "lingua": lang}
 
     usato = None
-    # Prima si prova quello veloce, se c'è. Non è configurato da nessuna parte:
+    motivi = []    # perche' ogni motore non ha risposto: e' il testo dell'eccezione
+    ripiego = []   # lo stesso, ma solo da quando un motore che ci si aspettava ha fallito
+    # Prima Kokoro, se e' installato: e' la voce neurale che risponde in un secondo.
+    if con_kokoro:
+        if kokoro.disponibile(lang):
+            try:
+                kokoro.sintetizza(testo, lang, out, velocita, _attesa_kokoro(motore, subito))
+                usato = "kokoro"
+            except kokoro.ErroreKokoro as exc:
+                motivi.append(f"Kokoro: {exc}")
+                ripiego.append(f"Kokoro: {exc}")
+        else:
+            perche = kokoro.perche_no(lang)
+            motivi.append(perche)
+            if kokoro.installazione()[0] and kokoro.attivo():
+                ripiego.append(perche)
+    # Poi quello veloce, se c'è. Non è configurato da nessuna parte:
     # o risponde, o non esiste, e in un decimo di secondo si sa quale delle due.
-    if motore in ("auto", "pocket", "neurale"):
+    if usato is None and motore in ("auto", "pocket", "neurale"):
         try:
             if pocket_vivo():
                 sintesi_pocket(testo, out, config.load_config().get("voce_campione"))
                 usato = "pocket"
         except Exception:
             usato = None
+        if usato is None:
+            motivi.append(f"Pocket non risponde su {_url_pocket().split('//')[-1]}")
+            if ripiego:
+                ripiego.append("Pocket non risponde")
     if usato is None and motore in ("auto", "voicebox", "neurale"):
         try:
             if motore == "voicebox" and config.load_config().get("voicebox_avvio_automatico"):
@@ -352,17 +403,25 @@ def sintesi(testo: str, lang: str = "it", motore: str = None, cache=True,
                 usato = "voicebox"
         except Exception:
             usato = None
+        if usato is None:
+            motivi.append(f"Voicebox non risponde su {_url_voicebox().split('//')[-1]}")
+            if ripiego:
+                ripiego.append("Voicebox non risponde")
     if usato is None:
         if motore == "neurale":
-            raise NessunaVoceNeurale(
-                "nessuna voce neurale locale risponde (Pocket su 127.0.0.1:8811, "
-                "Voicebox su 127.0.0.1:17493)")
+            raise NessunaVoceNeurale("nessuna voce neurale locale risponde: " + "; ".join(motivi))
+        if motore == "kokoro":
+            raise NessunaVoceNeurale("Kokoro non risponde: "
+                                     + ("; ".join(motivi) or "senza dire perche'"))
         if motore == "voicebox":
             raise RuntimeError("Voicebox non risponde su 127.0.0.1:17493")
         sintesi_say(testo, lang, out)
         # il nome vero del motore: `say` su macOS, System.Speech o espeak fuori
         usato = piattaforma.motore_sistema() or "say"
-    return {"file": str(out), "motore": usato, "lingua": lang}
+    fuori = {"file": str(out), "motore": usato, "lingua": lang}
+    if ripiego:
+        fuori["ripiego"] = "; ".join(ripiego)
+    return fuori
 
 
 _riproduzione = None
@@ -522,6 +581,99 @@ def frasi_da_dire(testo: str, lang: str = "it") -> list:
     return [d for d in (per_voce(x, lang) for x in grezze) if d and d.strip(" .,;:")]
 
 
+# Le clausole: la prima frase di una risposta si taglia alle virgole, ai punti e virgola e ai
+# due punti, cosi' il primo audio parte dopo la prima clausola (misurato su un M4: 640 ms
+# contro 970 ms per la frase intera) e le altre si sintetizzano mentre suona la prima.
+# Ogni pezzo ha almeno MIN_PAROLE parole, o la prosodia si spezzetta. La regola e' quella
+# di un altro progetto dello stesso autore, dove e' stata misurata. Le altre frasi restano intere.
+MIN_PAROLE = 4
+_CESURA = re.compile(r"(?<=[,;:])\s+")
+
+
+def clausole(testo: str, minimo: int = MIN_PAROLE) -> list:
+    """`testo` tagliato alle virgole, ai punti e virgola e ai due punti. Un taglio non
+    dentro un numero ("3,5") o un orario ("12:30"): serve uno spazio dopo. I pezzi troppo
+    corti si uniscono al vicino. Torna `[testo]` se non c'e' niente da tagliare."""
+    testo = (testo or "").strip()
+    pezzi = []
+    for parte in _CESURA.split(testo):
+        if not parte:
+            continue
+        if pezzi and len(pezzi[-1].split()) < minimo:
+            pezzi[-1] = f"{pezzi[-1]} {parte}"
+        else:
+            pezzi.append(parte)
+    if len(pezzi) > 1 and len(pezzi[-1].split()) < minimo:
+        coda = pezzi.pop()
+        pezzi[-1] = f"{pezzi[-1]} {coda}"
+    return pezzi or [testo]
+
+
+def spezza_prima_frase(lang: str = "it") -> bool:
+    """La prima frase di una risposta va tagliata in clausole? Solo se il motore e' Kokoro,
+    che e' quello per cui il taglio e' stato misurato (con Voicebox, che mette decine di
+    secondi a frase, ogni pezzo in piu' sarebbe una richiesta in piu')."""
+    return kokoro.disponibile(lang)
+
+
+def _sonda(url: str, timeout: float = 1.5):
+    """(True, "") se `url` risponde 200, altrimenti (False, perche'). Sola lettura."""
+    try:
+        code, _ = _get(url, timeout=timeout)
+        return (code == 200), ("" if code == 200 else f"risponde {code}")
+    except Exception as exc:  # noqa: BLE001
+        motivo = getattr(exc, "reason", exc)
+        return False, str(motivo) or type(exc).__name__
+
+
+def spiega_neurale(lang: str = "it") -> dict:
+    """Quale motore userebbe Jarvis adesso e perche', motore per motore, nell'ordine in cui
+    li prova. Non suona niente e non avvia il lavoratore: guarda i file di Kokoro sul disco
+    e chiede `/health` a Pocket e `/profiles` a Voicebox su 127.0.0.1.
+
+    `{"lingua", "scelto": "kokoro"|"pocket"|"voicebox"|"", "voce", "righe": [{"motore",
+    "esito", "perche"}], "sistema": <cosa succede se nessuno risponde>}`."""
+    righe = []
+    scelto = ""
+    voce = kokoro.voce_per(lang)
+    ok, motivo = kokoro.installazione()
+    if not kokoro.attivo():
+        righe.append(("kokoro", "spento", "kokoro_attivo e' false in config.json"))
+    elif not ok:
+        righe.append(("kokoro", "non installato", motivo))
+    elif not voce:
+        righe.append(("kokoro", "senza voce", f"per la lingua {lang} non c'e' una voce (voce_kokoro)"))
+    elif kokoro.disponibile(lang):
+        scelto = "kokoro"
+        cfg = config.load_config()
+        righe.append(("kokoro", "pronto",
+                      f"Python e modelli trovati, voce {voce}; il lavoratore parte quando Jarvis "
+                      f"si prepara o alla prima frase e si chiude dopo "
+                      f"{int(float(cfg.get('kokoro_inattivo_secondi', kokoro.INATTIVO)))} secondi "
+                      f"senza richieste"))
+    else:
+        righe.append(("kokoro", "in pausa", kokoro.perche_no(lang)))
+    vivo, perche = _sonda(f"{_url_pocket()}/health")
+    if vivo:
+        righe.append(("pocket", "risponde" if not scelto else "risponde, ma viene dopo",
+                      f"{_url_pocket()}"))
+        scelto = scelto or "pocket"
+    else:
+        righe.append(("pocket", "non risponde", f"{_url_pocket()}: {perche}"))
+    vivo, perche = _sonda(f"{_url_voicebox()}/profiles")
+    if vivo:
+        righe.append(("voicebox", "risponde" if not scelto else "risponde, ma viene dopo",
+                      f"{_url_voicebox()} (decine di secondi a frase: quasi sempre oltre il tetto)"))
+        scelto = scelto or "voicebox"
+    else:
+        righe.append(("voicebox", "non risponde", f"{_url_voicebox()}: {perche}"))
+    return {"lingua": lang, "scelto": scelto, "voce": voce,
+            "righe": [{"motore": m, "esito": e, "perche": w} for m, e, w in righe],
+            "sistema": ("Se nessun motore neurale risponde, il pannello Jarvis usa le voci di sistema "
+                        "avanzate o premium installate sul Mac (le sceglie l'app, da qui non si "
+                        "vedono); senza, resta a testo.")}
+
+
 # --------------------------------------------------------------------------
 # ascolto
 # --------------------------------------------------------------------------
@@ -580,6 +732,8 @@ def stato() -> dict:
         "voci_sistema": len(voci_sistema()),
         "lingue_disponibili": sorted({loc[:2] for _, loc in voci_sistema()}),
     }
+    k = kokoro.stato()
+    fuori["kokoro"] = {"installato": k["installato"], "vivo": k["lavoratore"]["vivo"]}
     if piattaforma.nome() != piattaforma.MAC:
         # Windows e Linux: il motore col suo nome vero, e se l'elenco delle voci
         # e' vuoto il perche' (senza, il pannello delle voci sembra rotto)

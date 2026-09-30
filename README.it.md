@@ -384,11 +384,22 @@ tua lingua non è installata in locale lo dice e si scrive; l'audio non va mai a
 server. Si chiude da solo dopo ogni frase e si riapre solo se accendi
 "Conversazione continua" dal menu del pannello. Esc o Ferma spengono tutto insieme.
 
-La voce è neurale quando ce n'è una: Pocket o Voicebox in locale, una frase alla
-volta, così la seconda si prepara mentre suona la prima. Senza, usa le voci
+La voce è neurale quando ce n'è una: prima Kokoro, poi Pocket, poi Voicebox, tutte in
+locale, una frase alla volta, così la seconda si prepara mentre suona la prima (la
+prima frase si taglia alle virgole, così il suono parte prima). Senza, usa le voci
 avanzate o premium installate sul Mac e lo scrive in fondo al pannello. La voce di
 base, quella robotica, non la usa mai: se non ce n'è nessuna installata resta a
 testo e ti dice dove scaricarne una.
+
+Kokoro non è installato di serie. `plancia voce installa` crea un ambiente Python in
+`<PLANCIA_HOME>/voce`, ti dice che scaricherà circa 354 MB di modelli e chiede prima
+di farlo. Poi gira come un solo processo tenuto caldo, da circa 450 a 700 MB (circa
+1 GB per un momento su una frase lunga), che parte quando Jarvis si apre e si chiude
+dopo 5 minuti di silenzio; se muore o è troppo lento parla il motore dopo e il piede
+del pannello lo dice. La voce per lingua è `voce_kokoro` in config.json (di serie
+`if_sara` per l'italiano, `af_heart` per l'inglese, `ef_dora` per lo spagnolo;
+`im_nicola` è una voce maschile italiana). `plancia voce prova` dice quale motore
+userebbe Jarvis e perché, senza suonare niente. Provato solo su macOS.
 
 Il campo di testo in fondo serve quando il microfono non è disponibile.
 
@@ -698,7 +709,7 @@ git config core.hooksPath .githooks
 ```
 
 Accende il gancio che fa girare `python3 tools/prova.py` prima di ogni push:
-4212 controlli in pochi minuti, su un archivio finto che non tocca
+4302 controlli in pochi minuti, su un archivio finto che non tocca
 il tuo.
 
 ## Licenza
