@@ -791,6 +791,11 @@ class Handler(BaseHTTPRequestHandler):
             if m and method == "POST":
                 vista().oggetto(cantiere.dettaglio, int(m.group(1)), "il lancio")
                 return self._json({"annullato": cantiere.annulla(conn, int(m.group(1)))})
+            # Il pannello dell'app Mac: il percorso sicuro (sola lettura, proposte che
+            # partono solo dal pulsante). Tutto il codice sta in jarvis.py.
+            if path.startswith("/api/jarvis/") and path != "/api/jarvis/scalda" and \
+                    jarvis.rotta(self, method, path, body, vista, scelta):
+                return
             if path == "/api/jarvis/scalda" and method == "POST":
                 agente.scalda(recap.lang_or_default(body.get("lang")))
                 return self._json({"scaldato": True})

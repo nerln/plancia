@@ -363,33 +363,45 @@ di `plancia riordina`.
 
 ## Jarvis
 
-Non tieni premuto niente. `⌥Spazio` da qualsiasi app, oppure `plancia://jarvis`,
-apre un pannello che ascolta di continuo e capisce dal silenzio che hai finito di
-parlare, non da un tasto tenuto giù.
+`⌥Spazio` da qualsiasi app apre un pannello di vetro e accende il microfono. Un'onda
+segue la voce mentre ascolta, la risposta scorre man mano che arriva e comincia a
+parlare con la prima frase, non quando la risposta è finita.
 
-Quello che sente prende due strade. Le frasi che riconosce con certezza (apri una
-vista, segna un task, chiudilo, rileggi le fonti, leggimi il riepilogo) partono in
-un decimo di secondo, in locale. Tutto il resto va a Claude Code in modalità non
-interattiva con i tool `plancia_*` aperti, quindi il task lo aggiunge davvero, il
-progetto lo aggiorna davvero, l'archivio lo cerca davvero.
+Jarvis legge e propone. Il modello dietro il pannello è in sola lettura: i tool che
+scrivono sono negati per nome, non solo lasciati fuori da un elenco. Frasi come
+"segna un task", "ho fatto", "archivia Atlas", "fallo" o "riprendi il task 4" non
+partono mai da sole. Ognuna diventa una scheda che dice esattamente cosa succede
+(quale agente, in quale cartella, se può modificare file, da quale sessione
+riparte) e non succede niente finché non premi Conferma sulla scheda. Dire "sì" a
+voce non conferma. Esc o Annulla buttano la scheda, e la butta anche chiudere il
+pannello. Le uniche cose che succedono senza scheda sono aprire una vista e cambiare
+la velocità della voce.
 
-In fondo al pannello c'è un campo per scrivere: serve quando il microfono non è
-disponibile e per correggere una frase capita male senza ripeterla.
+Il microfono si apre solo quando lo chiedi, con la scorciatoia o col pulsante del
+microfono, e si vede: un punto arancione e "Microfono acceso" nel pannello, oltre
+all'indicatore del sistema. Il riconoscimento gira sul Mac. Se la dettatura per la
+tua lingua non è installata in locale lo dice e si scrive; l'audio non va mai a un
+server. Si chiude da solo dopo ogni frase e si riapre solo se accendi
+"Conversazione continua" dal menu del pannello. Esc o Ferma spengono tutto insieme.
 
-Il microfono resta aperto anche mentre risponde, quindi lo puoi interrompere
-ricominciando a parlare. È la cancellazione dell'eco sul nodo di ingresso a
-renderlo possibile: senza, si sente da solo e si interrompe da solo. "Annulla"
-ferma un lavoro partito, "basta" chiude il pannello. Quando un lancio finisce te
-lo dice a voce anche se nel frattempo stavi facendo altro.
+La voce è neurale quando ce n'è una: Pocket o Voicebox in locale, una frase alla
+volta, così la seconda si prepara mentre suona la prima. Senza, usa le voci
+avanzate o premium installate sul Mac e lo scrive in fondo al pannello. La voce di
+base, quella robotica, non la usa mai: se non ce n'è nessuna installata resta a
+testo e ti dice dove scaricarne una.
+
+Il campo di testo in fondo serve quando il microfono non è disponibile.
 
 ```bash
-plancia jarvis "ricordami di scrivere la nota di migrazione"   # lo stesso, scritto
+plancia jarvis "ricordami di scrivere la nota di migrazione"   # scritto: l'hai scritto tu, parte
 ```
+
+Il Jarvis della dashboard (Windows e Linux) funziona come prima.
 
 Claude Code ha la voce [da marzo 2026](https://claudefa.st/blog/guide/mechanics/voice-mode):
 tieni premuta la barra spaziatrice e detti. È solo dettatura in ingresso, e una
-modalità a mani libere non c'è per scelta. Questa è l'altra metà: risponde e
-agisce.
+modalità a mani libere non c'è per scelta. Questa è l'altra metà: risponde, e agisce
+quando confermi.
 
 ## Tutti i task
 

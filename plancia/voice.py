@@ -30,12 +30,30 @@ class NessunMotoreVoce(RuntimeError):
     messaggio dice cosa installare."""
 
 
+class NessunaVoceNeurale(NessunMotoreVoce):
+    """Il motore "neurale" (Pocket o Voicebox) non risponde. Non e' un errore
+    grave: chi lo chiede (il pannello Jarvis dell'app Mac) ripiega da se' sulle
+    voci avanzate di sistema e lo dice, invece di far parlare `say`."""
+
+
 VOICEBOX = "http://127.0.0.1:17493"
 # Pocket-TTS di Kyutai, se qualcuno lo tiene acceso. Misurato su questo Mac in
 # italiano, con il modello gia' caricato: 111 ms al primo audio contro i 42
 # secondi di Voicebox. Clona da un wav come l'altro, gira su due core e non
 # tocca il percorso MLX che qui fa cadere il server.
 POCKET = "http://127.0.0.1:8811"
+
+
+def _url_voicebox() -> str:
+    """L'indirizzo di Voicebox: quello di sempre, o `voicebox_url` in config.json (una
+    porta diversa; le prove ci mettono un finto, cosi' non toccano mai quello vero)."""
+    return str(config.load_config().get("voicebox_url") or VOICEBOX).rstrip("/")
+
+
+def _url_pocket() -> str:
+    """Come `_url_voicebox`, per Pocket (`pocket_url`)."""
+    return str(config.load_config().get("pocket_url") or POCKET).rstrip("/")
+
 AUDIO_DIR = config.DATA_DIR / "audio"
 
 # Voci di sistema preferite per lingua, con il ripiego sulla prima che combacia.
@@ -146,7 +164,7 @@ def voicebox_vivo(timeout=1.5) -> bool:
     if time.time() - _ultimo_no < RIPROVA_DOPO:
         return False
     try:
-        code, _ = _get(f"{VOICEBOX}/profiles", timeout=timeout)
+        code, _ = _get(f"{_url_voicebox()}/profiles", timeout=timeout)
         if code == 200:
             _ultimo_no = 0.0
             return True
@@ -166,7 +184,7 @@ def pocket_vivo(timeout=1.0) -> bool:
     if time.time() - _pocket_no < RIPROVA_DOPO:
         return False
     try:
-        code, _ = _get(f"{POCKET}/health", timeout=timeout)
+        code, _ = _get(f"{_url_pocket()}/health", timeout=timeout)
         if code == 200:
             _pocket_no = 0.0
             return True
@@ -189,7 +207,7 @@ def sintesi_pocket(testo: str, out: Path, voce_wav: str = None, timeout=60) -> P
                   f"filename=\"voce.wav\"\r\nContent-Type: audio/wav\r\n\r\n").encode() \
             + dati + b"\r\n"
     corpo += f"--{conf}--\r\n".encode()
-    req = urllib.request.Request(f"{POCKET}/tts", data=corpo, method="POST",
+    req = urllib.request.Request(f"{_url_pocket()}/tts", data=corpo, method="POST",
                                  headers={"Content-Type":
                                           f"multipart/form-data; boundary={conf}"})
     with urllib.request.urlopen(req, timeout=timeout) as r:
@@ -199,7 +217,7 @@ def sintesi_pocket(testo: str, out: Path, voce_wav: str = None, timeout=60) -> P
 
 def voicebox_profili() -> list:
     try:
-        _, body = _get(f"{VOICEBOX}/profiles")
+        _, body = _get(f"{_url_voicebox()}/profiles")
         data = json.loads(body.decode("utf-8"))
         return data if isinstance(data, list) else data.get("profiles", [])
     except Exception:
@@ -231,7 +249,7 @@ def sintesi_voicebox(testo: str, lang: str, out: Path, timeout=180) -> Path:
         if not profili:
             raise RuntimeError("Voicebox non ha profili vocali")
         profilo = profili[0].get("id") or profili[0].get("profile_id")
-    res = _post(f"{VOICEBOX}/generate", {
+    res = _post(f"{_url_voicebox()}/generate", {
         "profile_id": profilo, "text": testo, "language": lang,
         "engine": cfg.get("voicebox_engine", "qwen"),
     })
@@ -243,7 +261,7 @@ def sintesi_voicebox(testo: str, lang: str, out: Path, timeout=180) -> Path:
     scaduto = time.time() + timeout
     while time.time() < scaduto:
         try:
-            code, body = _get(f"{VOICEBOX}/audio/{gid}", timeout=10)
+            code, body = _get(f"{_url_voicebox()}/audio/{gid}", timeout=10)
             if code == 200 and len(body) > 2048:
                 out.write_bytes(body)
                 return out
@@ -270,6 +288,24 @@ def motore_scelto() -> str:
 ATTESA_VOICEBOX = 5
 
 
+# Attesa massima per una frase con il motore "neurale", quando qualcuno sta
+# ascoltando una risposta che arriva a pezzi. Piu' lunga di ATTESA_VOICEBOX
+# perche' qui il ripiego non e' `say`, che e' robotico e Jarvis non lo usa mai:
+# e' la voce avanzata di sistema, e la sceglie l'app quando l'attesa e' finita.
+# `attesa_voce_neurale` in config.json la cambia.
+ATTESA_NEURALE = 9
+
+
+def voce_neurale() -> str:
+    """Quale voce neurale locale risponde adesso: "pocket", "voicebox" o "".
+    Sola lettura: due GET su 127.0.0.1, con il ricordo dell'ultimo no."""
+    if pocket_vivo():
+        return "pocket"
+    if voicebox_vivo():
+        return "voicebox"
+    return ""
+
+
 def sintesi(testo: str, lang: str = "it", motore: str = None, cache=True,
             subito=False) -> dict:
     """Il file audio, generato solo se non c'è già.
@@ -277,6 +313,11 @@ def sintesi(testo: str, lang: str = "it", motore: str = None, cache=True,
     `subito` è per quando qualcuno sta aspettando di sentire: si prova la voce
     clonata per pochi secondi e poi si passa a quella di sistema, invece di
     lasciare la persona davanti al silenzio.
+
+    `motore="neurale"` e' per Jarvis: Pocket, poi Voicebox, e MAI la voce di
+    `say`. Se nessuna delle due risponde solleva `NessunaVoceNeurale` e il
+    chiamante ripiega sulle voci avanzate di sistema. Aspetta al massimo
+    `ATTESA_NEURALE` secondi per frase.
     """
     # Ultimo punto prima dell'audio: qui il testo diventa una cosa da dire.
     testo = per_voce(testo, lang)
@@ -290,24 +331,32 @@ def sintesi(testo: str, lang: str = "it", motore: str = None, cache=True,
     usato = None
     # Prima si prova quello veloce, se c'è. Non è configurato da nessuna parte:
     # o risponde, o non esiste, e in un decimo di secondo si sa quale delle due.
-    if motore in ("auto", "pocket"):
+    if motore in ("auto", "pocket", "neurale"):
         try:
             if pocket_vivo():
                 sintesi_pocket(testo, out, config.load_config().get("voce_campione"))
                 usato = "pocket"
         except Exception:
             usato = None
-    if usato is None and motore in ("auto", "voicebox"):
+    if usato is None and motore in ("auto", "voicebox", "neurale"):
         try:
             if motore == "voicebox" and config.load_config().get("voicebox_avvio_automatico"):
                 voicebox_avvia()
             if voicebox_vivo():
-                sintesi_voicebox(testo, lang, out,
-                                 timeout=ATTESA_VOICEBOX if subito else 180)
+                if motore == "neurale":
+                    attesa = float(config.load_config().get("attesa_voce_neurale",
+                                                            ATTESA_NEURALE))
+                else:
+                    attesa = ATTESA_VOICEBOX if subito else 180
+                sintesi_voicebox(testo, lang, out, timeout=attesa)
                 usato = "voicebox"
         except Exception:
             usato = None
     if usato is None:
+        if motore == "neurale":
+            raise NessunaVoceNeurale(
+                "nessuna voce neurale locale risponde (Pocket su 127.0.0.1:8811, "
+                "Voicebox su 127.0.0.1:17493)")
         if motore == "voicebox":
             raise RuntimeError("Voicebox non risponde su 127.0.0.1:17493")
         sintesi_say(testo, lang, out)
@@ -378,6 +427,102 @@ def parla(testo: str, lang: str = "it", motore: str = None, attendi=True) -> dic
 
 
 # --------------------------------------------------------------------------
+# testo che arriva a pezzi, voce che parte prima della fine
+# --------------------------------------------------------------------------
+
+class Frasi:
+    """Spezza un testo che arriva a pezzi in frasi da dire una alla volta.
+
+    E' quello che permette alla voce di partire mentre il modello sta ancora
+    scrivendo: appena una frase e' finita esce da `nutri`, e chi ascolta puo'
+    sintetizzarla mentre la successiva arriva. Il taglio e' su . ! ? … seguiti da
+    uno spazio (cosi' "3.5" e "github.com" non si spezzano) e sugli a capo.
+
+    Le frasi troppo corte si tengono insieme alla successiva ("Ok. Fatto." e' una
+    frase sola per la voce: due sintesi da una parola l'una suonano a scatti),
+    tranne la prima: quella parte appena c'e', perche' e' lei che decide quanto
+    aspetta chi ascolta. Una frase che non finisce mai si taglia comunque a
+    `massimo` caratteri, su una virgola o su uno spazio.
+    """
+
+    FINALI = ".!?…"
+
+    def __init__(self, minimo: int = 24, massimo: int = 200, minimo_prima: int = 8):
+        self.minimo = minimo
+        self.massimo = massimo
+        self.minimo_prima = minimo_prima
+        self._buf = ""
+        self._uscite = 0
+
+    def _soglia(self) -> int:
+        return self.minimo_prima if self._uscite == 0 else self.minimo
+
+    def _confine(self):
+        """Indice (esclusivo) della fine della prossima frase completa, o None."""
+        b = self._buf
+        soglia = self._soglia()
+        i = 0
+        while i < len(b):
+            c = b[i]
+            fine = False
+            if c == "\n":
+                fine = True
+            elif c in self.FINALI:
+                # aspetta di vedere cosa segue: uno spazio o un a capo chiude la frase
+                j = i + 1
+                while j < len(b) and b[j] in self.FINALI + "\"')»":
+                    j += 1
+                if j < len(b) and b[j].isspace():
+                    i = j
+                    fine = True
+                elif j >= len(b):
+                    return None
+                else:
+                    i = j - 1
+            if fine and len(b[:i + 1].strip()) >= soglia:
+                return i + 1
+            i += 1
+        if len(b) > self.massimo:
+            taglio = max(b.rfind(", ", 0, self.massimo), b.rfind("; ", 0, self.massimo))
+            if taglio < self.massimo // 2:
+                taglio = b.rfind(" ", 0, self.massimo)
+            return (taglio + 1) if taglio > 0 else self.massimo
+        return None
+
+    def nutri(self, pezzo: str) -> list:
+        """Aggiunge un pezzo e torna le frasi complete che ora ci sono."""
+        self._buf += pezzo or ""
+        fuori = []
+        while True:
+            fine = self._confine()
+            if fine is None:
+                break
+            frase = self._buf[:fine].strip()
+            self._buf = self._buf[fine:]
+            if frase:
+                fuori.append(frase)
+                self._uscite += 1
+        return fuori
+
+    def chiudi(self) -> list:
+        """Il testo e' finito: quello che resta e' l'ultima frase."""
+        resto = self._buf.strip()
+        self._buf = ""
+        if resto:
+            self._uscite += 1
+            return [resto]
+        return []
+
+
+def frasi_da_dire(testo: str, lang: str = "it") -> list:
+    """Il testo intero spezzato in frasi, ognuna ripulita per la voce. Le frasi
+    che dopo la pulizia restano vuote (un percorso da solo) spariscono."""
+    f = Frasi()
+    grezze = f.nutri(testo) + f.chiudi()
+    return [d for d in (per_voce(x, lang) for x in grezze) if d and d.strip(" .,;:")]
+
+
+# --------------------------------------------------------------------------
 # ascolto
 # --------------------------------------------------------------------------
 
@@ -417,7 +562,7 @@ def _multipart_transcribe(path: str) -> str:
         f"\r\n--{confine}--\r\n"
     ).encode()
     req = urllib.request.Request(
-        f"{VOICEBOX}/transcribe", data=corpo,
+        f"{_url_voicebox()}/transcribe", data=corpo,
         headers={"Content-Type": f"multipart/form-data; boundary={confine}"}, method="POST")
     with urllib.request.urlopen(req, timeout=300) as res:
         data = json.loads(res.read().decode("utf-8"))
