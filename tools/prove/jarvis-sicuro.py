@@ -261,7 +261,7 @@ def _esegui(prova) -> None:
               "/etc/passwd-finto" not in json.dumps(p_cwd), str(p_cwd)[:200])
         jarvis.rifiuta(p_cwd.get("id", ""), "")
 
-        # proseguire un task: riparte dalla sessione che lo ha salvato (fork), non da una nuova
+        # proseguire un task: riparte dalla sessione che lo ha salvato (la stessa, senza fork), non da una nuova
         from plancia import richiamo
         claude_vuota = tmp / "claude-config"
         (claude_vuota / "projects").mkdir(parents=True)
@@ -271,7 +271,10 @@ def _esegui(prova) -> None:
         config.CLAUDE_DIR = claude_vuota
         os.environ["PLANCIA_AGENTS_JSON"] = str(agenti_vuoto)
         try:
-            cwd_c = "/tmp/prova-jarvis-sicuro-sessione"
+            # la cartella deve esistere: senza, riprendi.piano() riparte da una sessione nuova
+            cwd_dir = tmp / "sessione-cwd"
+            cwd_dir.mkdir(parents=True, exist_ok=True)
+            cwd_c = str(cwd_dir)
             t_ses = actions.task_add(conn, "Task con sessione salvata", project="jv-sicuro",
                                      session_id="sid-jv-sicuro", cwd=cwd_c, agent="claude",
                                      host=socket.gethostname())
@@ -290,6 +293,32 @@ def _esegui(prova) -> None:
             kw = lanci[-1][1] if lanci else {}
             prova("...e alla conferma l'agente riprende quella sessione, non ne apre una nuova",
                   kw.get("sessione") == "sid-jv-sicuro" and kw.get("task_id") == t_ses["id"], str(kw)[:200])
+
+            # sessione APERTA: la scheda lo dice, e alla conferma non parte niente (un secondo
+            # processo sullo stesso jsonl lo rovinerebbe); il messaggio va negli appunti
+            lanci.clear()
+            agenti_vivo = tmp / "agents-vivo.json"
+            agenti_vivo.write_text(json.dumps([{"sessionId": "sid-jv-viva"}]), "utf-8")
+            os.environ["PLANCIA_AGENTS_JSON"] = str(agenti_vivo)
+            t_viva = actions.task_add(conn, "Task con sessione aperta", project="jv-sicuro",
+                                      session_id="sid-jv-viva", cwd=cwd_c, agent="claude",
+                                      host=socket.gethostname())
+            conn.commit()
+            _, es_v = proposta_da_modello(json.dumps(
+                {"azione": "lancia", "titolo": "Prosegui il task aperto", "agente": "claude",
+                 "task_id": t_viva["id"]}))
+            p_viva = (es_v or {}).get("proposta") or {}
+            prova("proseguire un task con la sessione aperta: la scheda dice che e' aperta",
+                  any("aperta" in r["v"] for r in p_viva.get("righe", [])), str(p_viva)[:200])
+            copiati = []
+            vecchia_copia = jarvis._copia_appunti
+            jarvis._copia_appunti = lambda t: copiati.append(t) or True
+            try:
+                jarvis.conferma(p_viva["id"], "it", conn=conn)
+            finally:
+                jarvis._copia_appunti = vecchia_copia
+            prova("...e alla conferma non parte nessun agente, il messaggio va negli appunti",
+                  not lanci and len(copiati) == 1, f"{lanci} {copiati}")
         finally:
             config.CLAUDE_DIR = vecchio_dir
             if vecchio_agenti is None:

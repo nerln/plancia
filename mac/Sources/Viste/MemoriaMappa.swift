@@ -481,7 +481,7 @@ private final class StatoGesto {
 
 /// Una NSView trasparente che ascolta la rotella e i tasti ⌘+ ⌘- ⌘0 solo quando il puntatore
 /// e' sopra la mappa: fuori di li' i comandi tornano al menu (la dimensione del testo).
-private struct AscoltoInput: NSViewRepresentable {
+struct AscoltoInput: NSViewRepresentable {
     var rotella: (_ punto: CGPoint, _ dx: CGFloat, _ dy: CGFloat, _ precisa: Bool, _ zoom: Bool) -> Void
     var tasto: (_ zoom: Int) -> Void     // +1 avanti, -1 indietro, 0 inquadra
 
@@ -504,6 +504,17 @@ private struct AscoltoInput: NSViewRepresentable {
         var tasto: ((Int) -> Void)?
         private var monitor: Any?
 
+        /// Le mappe vive: chi gestisce ⌘+ ⌘- ⌘0 altrove (la dimensione del testo) chiede
+        /// qui se il puntatore e' sopra una mappa, e in quel caso lascia i tasti a lei.
+        private static let vive = NSHashTable<VistaAscolto>.weakObjects()
+        static func puntatoreSopra(_ finestra: NSWindow?) -> Bool {
+            guard let w = finestra else { return false }
+            for v in vive.allObjects where v.window === w {
+                if v.bounds.contains(v.convert(w.mouseLocationOutsideOfEventStream, from: nil)) { return true }
+            }
+            return false
+        }
+
         override var isFlipped: Bool { true }
         override func hitTest(_ punto: NSPoint) -> NSView? { nil }
 
@@ -511,6 +522,7 @@ private struct AscoltoInput: NSViewRepresentable {
             super.viewDidMoveToWindow()
             rimuovi()
             guard window != nil else { return }
+            Self.vive.add(self)
             monitor = NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel, .keyDown]) { [weak self] e in
                 guard let self = self, let w = self.window, e.window === w else { return e }
                 if e.type == .scrollWheel {
@@ -538,6 +550,7 @@ private struct AscoltoInput: NSViewRepresentable {
         func rimuovi() {
             if let m = monitor { NSEvent.removeMonitor(m) }
             monitor = nil
+            Self.vive.remove(self)
         }
 
         deinit { if let m = monitor { NSEvent.removeMonitor(m) } }

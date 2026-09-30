@@ -141,8 +141,13 @@ dice cosa è collegato.
 **L'app.** Finestra nativa in SwiftUI (2.0, macOS 26 o più recente): barra
 laterale con Oggi, Task, Progetti, Social, Memoria e Archivio, il campo di
 ricerca di sistema, un Inspector a destra per quello che selezioni, e le
-Impostazioni per lingua e aspetto. Più la voce nella barra dei menu. Tiene su
-il backend da sola. Su macOS 13-15 l'ultima app che gira è la 1.1.0; la
+Impostazioni per lingua, aspetto e stile. Lo stile è Sistema (il macOS di
+sempre) oppure Legno, uno skeuomorfico moderno con tavole di mogano nella barra
+laterale e l'ottone per la selezione, preso dall'icona. La dimensione del testo
+segue ⌘+, ⌘- e ⌘0 (sette passi, da 85% a 125%). Memoria ha un terzo modo, Mappa:
+tutte le note come nodi di un grafo con fisica, da trascinare, coi livelli 1, 2 e
+Tutto e lo zoom a passi, calcolato fuori dal thread principale. Più il pannello
+vocale e la voce nella barra dei menu. Tiene su il backend da sola. Su macOS 13-15 l'ultima app che gira è la 1.1.0; la
 dashboard nel browser funziona ovunque. `plancia://recap`, `plancia://jarvis`, `plancia://ask?q=…`, `plancia://open?view=progetti` e
 `plancia://pdf` sono azioni da legare a una scorciatoia di sistema, a
 Raycast o a Comandi rapidi.
@@ -697,7 +702,7 @@ richiede macOS 26 o più recente e gli strumenti da riga di comando di Xcode per
 leggere i tuoi repo.
 
 L'app nativa per Mac 2.0 è in SwiftUI e richiede macOS 26 o più recente. Su macOS 13-15 resta la 1.1.0, oppure
-la dashboard nel browser (si installa come app web). La dashboard web non cambia nella 2.0.
+la dashboard nel browser (si installa come app web). La dashboard web è stata ridisegnata nella 2.0 sul modello dell'app Mac (font di sistema, barra laterale, tabelle con pannello di dettaglio, grafo a fisica per la memoria, dimensione del testo in cinque passi nelle Impostazioni).
 
 ## Sicurezza
 
@@ -736,7 +741,7 @@ git config core.hooksPath .githooks
 ```
 
 Accende il gancio che fa girare `python3 tools/prova.py` prima di ogni push:
-4183 controlli in pochi minuti, su un archivio finto che non tocca
+4252 controlli in pochi minuti, su un archivio finto che non tocca
 il tuo.
 
 ## Licenza

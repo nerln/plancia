@@ -69,6 +69,13 @@ controlla "dopo la scelta ogni lettura porta il compartimento" '^GET /api/lavagn
 controlla "dopo la scelta anche le scritture portano il compartimento" '^POST /api/sync\?compartimento=Lavoro token=token-di-prova$'
 controlla "la ricerca chiede /api/search con la parola" '^GET /api/search\?.*q=plancia'
 
+echo "==> lo stile Legno: contrasti, peso della texture, passi del testo"
+if python3 -c "import PIL, numpy" 2>/dev/null; then
+  if python3 "$RADICE/mac/Sources/Tema/prova_tema.py"; then echo "  ok   Tema/prova_tema.py"; else echo "  NO   Tema/prova_tema.py"; falliti=1; fi
+else
+  echo "  saltata: serve Pillow e numpy per misurare i contrasti sulla texture"
+fi
+
 if [ "$falliti" -ne 0 ]; then
   echo "FALLITA"
   exit 1

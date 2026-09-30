@@ -757,11 +757,12 @@ def main():
     prova("app.js non legge il riepilogo prima di averlo",
           app_js.index("const d = r.data;") > app_js.index("solo_cache=1"))
     # L'altra meta' del contratto qui sopra: chi chiama /api/search deve aprire
-    # l'oggetto. Due punti di chiamata, la vista Cerca e la palette, e uno dei
-    # due era rimasto indietro.
+    # l'oggetto. Dalla seconda passata di Plancia 2.0 il punto di chiamata e' uno
+    # solo, il campo di ricerca in alto (cercaOra): la vista Cerca e la palette
+    # non esistono piu'.
     chiamate = app_js.count("'/api/search?q='")
     prova("ogni chiamata a /api/search apre l'oggetto",
-          chiamate == 2 and app_js.count("d.turni || []") == 2, f"{chiamate} chiamate")
+          chiamate == 1 and app_js.count("d.turni || []") == 1, f"{chiamate} chiamate")
     # La prova va sempre contata, con o senza node: se sparisce quando node
     # manca, il numero totale di prove eseguite cambia da una macchina
     # all'altra (188 senza node, 189 con), il README dichiara un solo numero

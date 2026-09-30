@@ -142,9 +142,14 @@ connected.
 
 **The app.** A native SwiftUI window (2.0, macOS 26 or later): a sidebar with
 Today, Tasks, Projects, Social, Memory and Archive, the system search field,
-an inspector on the right for whatever you select, and Settings for language
-and appearance. Plus a menu bar item and the voice. It supervises the
-backend, so there is nothing to start by hand. On macOS 13 to 15 the 1.1.0
+an inspector on the right for whatever you select, and Settings for language,
+appearance and style. Style is System (the standard macOS look) or Wood, a warm
+skeuomorphic one with mahogany boards in the sidebar and brass for the selection,
+drawn from the app icon. Text size follows ⌘+, ⌘- and ⌘0 (seven steps, 85% to
+125%). Memory has a third mode, Map: every note as a node in a physics graph you
+can drag, with levels 1, 2 and All and a smooth zoom, running off the main thread.
+Plus a menu bar item and the voice panel. It supervises the backend, so there is
+nothing to start by hand. On macOS 13 to 15 the 1.1.0
 app is the last one that runs; the dashboard in the browser works everywhere. `plancia://recap`,
 `plancia://jarvis`, `plancia://ask?q=…`, `plancia://open?view=projects` and
 `plancia://pdf` are
@@ -590,7 +595,7 @@ Python 3.9+ and Claude Code, on macOS 13 or later, Windows or Linux (see above).
 needs macOS 26 or later, and the Xcode command line tools to build it. `gh` is optional and only used to read your repos.
 
 The native Mac app 2.0 is SwiftUI and needs macOS 26 or later. On macOS 13 to 15 stay on the 1.1.0 app,
-or use the dashboard in the browser (it installs as a web app). The web dashboard is unchanged in 2.0.
+or use the dashboard in the browser (it installs as a web app). The web dashboard was redrawn in 2.0 to match the Mac app (system fonts, sidebar, tables with a detail panel, a physics graph for memory, five-step text size in Settings).
 
 ## Security
 
@@ -626,7 +631,7 @@ warning each time). The full list is in the docstring of `plancia/compartimenti.
 git config core.hooksPath .githooks
 ```
 
-Turns on the hook that runs `python3 tools/prova.py` before every push: 4183
+Turns on the hook that runs `python3 tools/prova.py` before every push: 4252
 checks in a few minutes, against a throwaway archive that never touches
 yours. They cover the schema, the board, the proposals, the search index, the
 recap, the MCP surface and its token budget, every read route of the HTTP API,

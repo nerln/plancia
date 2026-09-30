@@ -35,8 +35,8 @@ def _prova_moto_incorporato(prova):
     # potrebbe comparire per coincidenza in un'altra parte della pagina.
     prova("l'export incorpora le regole di moto.css (per intero, non solo un pezzo)",
           moto_vero.strip() in pagina, "")
-    prova("l'export incorpora @keyframes vortice-entra (moto.css)",
-          "@keyframes vortice-entra" in pagina, "")
+    prova("l'export incorpora @keyframes entra-su (moto.css)",
+          "@keyframes entra-su" in pagina, "")
     prova('nessun href="/moto.css" nell\'html esportato (mai un link esterno)',
           'href="/moto.css"' not in pagina and "href='/moto.css'" not in pagina, "")
     prova("nessun <link> esterno di nessun tipo nell'export (stesso criterio dei font)",

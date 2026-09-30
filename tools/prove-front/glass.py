@@ -236,7 +236,9 @@ def _prova_swift(prova, radice):
     # regole di design (LOTTO-MAC2, Regole di design)
     fuori = []
     for k, v in nativi.items():
-        if re.search(r"Color\(\s*(red|hue|white|\.sRGB)|NSColor\(\s*(red|calibrated|srgb|white)|#[0-9a-fA-F]{6}\b", v):
+        # la tavolozza dello stile Legno (Tema/Tavolozza.swift) e' l'unico posto dove i colori
+        # possono essere fissi: sono il mogano e l'ottone, non hanno un colore semantico
+        if k != "Tema/Tavolozza.swift" and re.search(r"Color\(\s*(red|hue|white|\.sRGB)|NSColor\(\s*(red|calibrated|srgb|white)|#[0-9a-fA-F]{6}\b", v):
             fuori.append(k + ": colore fisso")
         if re.search(r"\.font\(\s*\.system\(\s*size:", v):
             fuori.append(k + ": font a dimensione fissa")
