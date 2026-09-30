@@ -49,7 +49,13 @@ Limiti da dire chiari (non sono difetti da correggere qui):
   percorso: la regola "la ricerca include un percorso vietato" non scatta mai
   per lui, perche' non ha una cartella da cui una ricerca possa partire.
 - I token di shell con un glob (`cat cartella/*`) si espandono sul disco
-  (fino a 200 voci per token) prima del confronto.
+  (fino a 200 voci per token) prima del confronto. L'espansione e' propria
+  (`_glob_disco`), non `glob.glob`: la traduzione in regex di `fnmatch` fa un
+  `re.error` di un token come `t[i-200:i+200]` (lo slicing di uno script Python
+  nel comando) o `a[[-1]`, e sarebbe un errore interno. Un intervallo invertito o
+  una `[` senza `]` sono caratteri letterali, come in bash. Lo stesso vale per i
+  divieti con un glob (`_glob_combacia`): il testo di un comando o di un manifesto
+  non puo' costruire una regex non valida.
 - Il confronto dei percorsi e' senza distinzione di maiuscole (APFS non le
   distingue): su un volume che le distingue puo' negare di piu', mai di meno.
 - Gli strumenti che elencano o cercano senza un bersaglio esplicito
@@ -280,7 +286,7 @@ Il guardiano si accende in `solo-registro`, si legge il registro (`plancia guard
 --registro`) e si decide dopo: `bloccante` e' una scelta, non il default.
 
 Leggero apposta: gira su OGNI strumento di OGNI sessione. Solo `json`, `os`,
-`re` e `time` all'avvio; `shlex`, `fnmatch`, `sqlite3` solo quando servono.
+`re` e `time` all'avvio; `shlex`, `glob`, `sqlite3` solo quando servono.
 Non importa `plancia.config`: quel modulo, all'import, costruisce decine di
 oggetti `pathlib` e importa `secrets` (che tira dentro `hmac` e `hashlib`), un
 costo che un hook globale non deve pagare a ogni strumento. La posizione della
@@ -444,6 +450,93 @@ def _dentro(p: str, radice: str) -> bool:
 
 def _ha_glob(s: str) -> bool:
     return any(c in s for c in "*?[")
+
+
+_CACHE_RX_GLOB = {}
+
+
+def _classe_glob(m: str, i: int, barre: bool):
+    """La classe fra parentesi quadre che comincia in `m[i]` (subito dopo la `[`),
+    come `(espressione_regolare, indice_dopo_la_])`, o `(None, i)` se NON e' una classe
+    e la `[` va presa come un carattere qualsiasi: nessuna `]` che la chiude
+    (`file[1`), o un intervallo invertito (`[i-2]`, `[z-a]`, `[[-1]`), come fa il glob di
+    bash con quello che non capisce. Ogni carattere finisce nella regex con
+    `re.escape`: il testo del comando non puo' costruire una regex non valida."""
+    n = len(m)
+    j = i
+    nega = j < n and m[j] in "!^"
+    if nega:
+        j += 1
+    inizio = j
+    if j < n and m[j] == "]":       # una `]` subito dopo la `[` (o la `[!`) e' un carattere
+        j += 1
+    while j < n and m[j] != "]":
+        j += 1
+    if j >= n:
+        return None, i
+    corpo = m[inizio:j]
+    pezzi = []
+    k = 0
+    while k < len(corpo):
+        lo = corpo[k]
+        if k + 2 < len(corpo) and corpo[k + 1] == "-":
+            hi = corpo[k + 2]
+            if lo > hi:
+                return None, i
+            pezzi.append(re.escape(lo) + "-" + re.escape(hi))
+            k += 3
+        else:
+            pezzi.append(re.escape(lo))
+            k += 1
+    return "[" + ("^" if nega else "") + ("" if barre else "/" if nega else "") \
+        + "".join(pezzi) + "]", j + 1
+
+
+def _rx_glob(modello: str, barre: bool):
+    """La regex compilata (da usare con `fullmatch`) di un modello glob. Con `barre` il `*`
+    e il `?` attraversano le barre (come `fnmatch`, per i divieti con un percorso); senza,
+    valgono dentro un solo componente (come il glob di shell). Costruita a mano, non con
+    `fnmatch.translate` (e `glob.glob`, che ci passa): la sua traduzione di `[i-2]` o di
+    `[[-1]` e' una regex non valida (`re.error: bad character range`), e il testo di un
+    comando (`t[i-2:i+2]` dentro uno script, `arr[[-1]`) non deve poter rompere il guardiano.
+    Un modello che non si traduce non torna mai un errore: vale come testo letterale."""
+    chiave = (modello, barre)
+    rx = _CACHE_RX_GLOB.get(chiave)
+    if rx is not None:
+        return rx
+    out = []
+    i, n = 0, len(modello)
+    while i < n:
+        c = modello[i]
+        i += 1
+        if c == "*":
+            while i < n and modello[i] == "*":
+                i += 1
+            out.append(".*" if barre else "[^/]*")
+        elif c == "?":
+            out.append("." if barre else "[^/]")
+        elif c == "[":
+            classe, dopo = _classe_glob(modello, i, barre)
+            if classe is None:
+                out.append(re.escape("["))
+            else:
+                out.append(classe)
+                i = dopo
+        else:
+            out.append(re.escape(c))
+    try:
+        rx = re.compile("".join(out), re.S)
+    except (re.error, RecursionError, OverflowError):
+        rx = re.compile(re.escape(modello), re.S)
+    if len(_CACHE_RX_GLOB) > 512:
+        _CACHE_RX_GLOB.clear()
+    _CACHE_RX_GLOB[chiave] = rx
+    return rx
+
+
+def _glob_combacia(nome: str, modello: str, barre: bool = True) -> bool:
+    """`nome` combacia con il modello glob (intero, come `fnmatch.fnmatchcase`)."""
+    return _rx_glob(modello, barre).fullmatch(nome) is not None
 
 
 # --------------------------------------------------------------------------
@@ -1142,17 +1235,16 @@ def _combacia_glob(modello: str, p: str) -> bool:
 
     Con una barra e' un modello di percorso: vale per `p` e per ogni suo
     antenato (negare una cartella nega tutto quello che sta sotto). Il `*`
-    attraversa le barre (`fnmatch`): piu' largo, quindi piu' prudente. Senza
+    attraversa le barre (come `fnmatch`): piu' largo, quindi piu' prudente. Senza
     barra e' un modello di NOME: vale se combacia un componente qualsiasi."""
-    import fnmatch
     m, q = modello.lower(), p.lower()
     if "/" in m:
         parti = q.split("/")
         for i in range(2, len(parti) + 1):
-            if fnmatch.fnmatchcase("/".join(parti[:i]) or "/", m):
+            if _glob_combacia("/".join(parti[:i]) or "/", m):
                 return True
         return False
-    return any(fnmatch.fnmatchcase(c, m) for c in q.split("/") if c)
+    return any(_glob_combacia(c, m) for c in q.split("/") if c)
 
 
 # --------------------------------------------------------------------------
@@ -2898,7 +2990,11 @@ def _plausibile(c: str) -> bool:
     si tiene (si risolve sulla cartella del comando, che esiste)."""
     e = os.path.expanduser(c) if c.startswith("~") else c
     if not e.startswith("/"):
-        return True
+        # un relativo si tiene (si risolve sulla cartella del comando), tranne una parola con
+        # spazi o un `=` che non comincia con `./` o `../`: `generic/platform=iOS Simulator`
+        # (l'argomento di `xcodebuild -destination`) non e' un file, e dopo un `cd` che non si
+        # sa dove porta faceva negare un comando onesto
+        return e.startswith(("./", "../")) or not re.search(r"[\s=]", e)
     q = re.sub(r"/{2,}", "/", e).rstrip("/")
     while q and q != "/":
         if os.path.lexists(q):
@@ -2995,10 +3091,23 @@ def _trova_percorsi_in_testo(testo: str) -> list:
             out.append(f)
     for m in _RX_ASSOLUTO.finditer(_RX_URL.sub(" ", testo)):
         c = m.group(1)
+        if _solo_radice(c):
+            continue
         out.append(c)
-        if c.rstrip(".,:") != c:
-            out.append(c.rstrip(".,:"))
+        c2 = c.rstrip(".,:")
+        if c2 != c and not _solo_radice(c2):
+            out.append(c2)
     return out
+
+
+def _solo_radice(c: str) -> bool:
+    """`c` (un candidato percorso trovato in un testo di codice) vale la radice `/`, o
+    non e' altro che barre e punti: `//` e `///` sono i commenti di Swift, JS, C (e
+    `///` la documentazione di Swift), `/.` e `/..` il resto di un'espressione. Nessuno e'
+    la radice. Se restassero, la radice conterrebbe OGNI file protetto, e uno script di
+    Python che modifica un sorgente Swift (`.replace(...)` piu' un commento `//`) sarebbe
+    "una scrittura di settings.json" (348 falsi positivi in un giorno, 29/09/2026)."""
+    return os.path.normpath(c).strip("/") == ""
 
 
 _RX_RELATIVO_STR = re.compile(r"""['"]([^'"\s/~$][^'"\s]*/[^'"\s]*)['"]""")
@@ -3070,14 +3179,52 @@ def _espandi_glob(c: str, cwd) -> list:
     combacia niente: il token letterale si controlla comunque."""
     if not _ha_glob(c):
         return []
-    import glob
     modello = os.path.expanduser(c)
     if not os.path.isabs(modello):
         modello = os.path.join(cwd or os.getcwd(), modello)
     try:
-        return sorted(glob.glob(modello))[:MAX_ESPANSIONE_GLOB]
-    except (OSError, ValueError):
+        return sorted(_glob_disco(modello))[:MAX_ESPANSIONE_GLOB]
+    except (OSError, ValueError, re.error, RecursionError, OverflowError):
         return []
+
+
+def _glob_disco(modello: str) -> list:
+    """Le voci del disco che un glob ASSOLUTO espande, come `glob.glob`: `*`, `?` e le
+    classi valgono dentro un componente, i nomi nascosti solo se il componente comincia
+    con un punto, un componente senza glob deve esistere (anche un link rotto). Non usa
+    `glob.glob`, che passa da `fnmatch.translate`: un token come `t[i-2:i+2]` (lo slicing
+    di uno script Python nel comando) o `a[[-1]` ne uscirebbe come `re.error`, cioe' come
+    un errore interno del guardiano. Qui un intervallo invertito o una `[` senza `]` sono
+    caratteri letterali (`_classe_glob`). Una barra finale tiene solo le cartelle."""
+    comp = [z for z in modello.split("/") if z]
+    solo_dir = modello.endswith("/")
+    percorsi = ["/"]
+    for z in comp:
+        nuovi = []
+        if not _ha_glob(z):
+            for base in percorsi:
+                p = (base.rstrip("/") + "/" + z)
+                if os.path.lexists(p):
+                    nuovi.append(p)
+        else:
+            rx = _rx_glob(z, False)
+            nascosti = z.startswith(".")
+            for base in percorsi:
+                try:
+                    nomi = os.listdir(base)
+                except OSError:
+                    continue
+                for nome in nomi:
+                    if nome.startswith(".") and not nascosti:
+                        continue
+                    if rx.fullmatch(nome):
+                        nuovi.append(base.rstrip("/") + "/" + nome)
+        percorsi = nuovi
+        if not percorsi:
+            return []
+    if solo_dir:
+        return [p + "/" for p in percorsi if os.path.isdir(p)]
+    return percorsi
 
 
 def _percorsi_da_comando(cmd: str, cwd, nomi_semplici=False, env=None, avvisi=None):
@@ -3643,6 +3790,7 @@ _RX_CODICE_SCRIVE = re.compile(
     r"|rmdir|removedirs)"
     r"|unlink|rmtree|shutil|truncate|save_config|appendFile|File\.open|File\.delete"
     r"|File\.rename|FileUtils|\bmv\b|\bcopyfile|\bcopy2?\("
+    r"|\.replace\(\s*(?:[^(),]|\([^()]*\))+\)"
     r"|rmSync|renameSync|rmdirSync|copyFileSync|createWriteStream|\bchmod|\bchown|\brename\b"
     r"|\.move\("
     r"|open\s*\((?:[^()]|\((?:[^()]|\((?:[^()]|\([^()]*\))*\))*\))*?,\s*['\"](?:[wax]|r\+)[bt+]*['\"]"
@@ -3658,9 +3806,13 @@ _RX_UNISCI = re.compile(r"""['"]\s*\+\s*['"]""")
 _RX_STRINGA = re.compile(r"""'((?:[^'\\]|\\.)*)'|"((?:[^"\\]|\\.)*)\"""")
 # Operazioni di codice che colpiscono una CARTELLA (i permessi, lo spostamento, la
 # rimozione): con il nome della cartella dei dati di Plancia nel testo bastano.
+# `replace` nudo NO: `s.replace(vecchio, nuovo)` e' il metodo delle stringhe (un giro di
+# modifica di un sorgente ne ha decine), non lo spostamento di una cartella. Restano
+# `os.replace` e il `Path.replace(destinazione)` con UN argomento semplice (le stringhe
+# ne vogliono almeno due, con la virgola).
 _RX_DIR_OPS = re.compile(
-    r"chmod|chown|rmtree|rmdir|removedirs|rename|replace|symlink|\.move\(|shutil|"
-    r"rmSync|renameSync|rmdirSync", re.I)
+    r"chmod|chown|rmtree|rmdir|removedirs|rename|os\.replace|\.replace\(\s*(?:[^(),]|\([^()]*\))+\)|"
+    r"symlink|\.move\(|shutil|rmSync|renameSync|rmdirSync", re.I)
 _RX_SED_SUL_POSTO = re.compile(r"^(?:-[A-Za-z]*i|--in-place)")
 # Il pacchetto di Plancia importato da un interprete, e cio' che lo usa per
 # cambiare la config: `main([...])` della CLI, `save_config`, `sys.argv`.
@@ -4491,9 +4643,14 @@ def _bersagli_scrittura(cmd: str, cwd, env=None, prof: int = 0):
                     n_ = _norm(c, cwd)
                     if n_:
                         yield ("file", n_, None)
-                        yield ("stato", n_, None)
-                        if dir_ops:
-                            yield ("contiene", n_, None)
+                        if n_.count("/") > 1 or n_ == "/":
+                            # una cartella di primo livello nominata in un TESTO di codice
+                            # (`'/home/'` in una regex, `'/var/'` in un elenco) non e'
+                            # una cartella su cui il codice opera: conterrebbe ogni file
+                            # protetto. Da shell (`rm -r /home`) si valuta a parte.
+                            yield ("stato", n_, None)
+                            if dir_ops:
+                                yield ("contiene", n_, None)
             if prof < 2 and _RX_ESEGUE.search(t):
                 for c in _comandi_nel_codice(t):
                     yield from _bersagli_scrittura(c, cwd, env, prof + 1)

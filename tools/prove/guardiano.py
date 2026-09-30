@@ -48,6 +48,14 @@ dei dati), i settings che neutralizzano il guardiano (`_prove_settings_5`) e i m
 (`_prove_minori_5`: ANSI-C, `cd` con graffe, il tetto dei percorsi, BaseException,
 hang, PYTHONPATH).
 
+L'ottavo giro aggiunge (`_prove_errori_interni_8`, `_prove_settings_8`, `_prove_falsi_8`): gli
+errori interni `bad character range` che il registro vero ha mostrato 44 volte in un giorno
+(un token con `[...]` dentro un comando, per esempio lo slicing `t[i-200:i+200]` di uno script
+Python, finiva in `glob.glob` e quindi in `re.compile` senza validazione), i 348 "il comando
+scrive settings.json" (i commenti `//` e `///` di uno script che modifica un sorgente Swift
+o JS erano scambiati per la radice `/`, che contiene ogni file protetto), e due falsi positivi
+minori. Per settings.json prove nei due versi: le letture passano, le scritture restano negate.
+
 Su Windows il guardiano non c'e': `bin/plancia-guardiano` esce subito senza negare niente
 e lo dice una volta per sessione (vedi `windows-hook.py`), e tutte le prove di questo file,
 che ragionano su percorsi e comandi POSIX, si segnano "saltato: non supportato su Windows"
@@ -4399,6 +4407,345 @@ def _prove_git_letture_7(prova, a: Ambiente):
     a.togli_config()
 
 
+def _codice_in_python(a: Ambiente, codice: str):
+    """Esegue `codice` con il Python delle prove (3.9 di sistema quando c'e') dentro un
+    sottoprocesso con l'ambiente finto, con il pacchetto importabile, e torna l'uscita
+    (JSON stampato dal codice) o None se non gira. Serve alle prove che chiamano una funzione
+    del modulo con una versione di Python che non e' quella del collaudo."""
+    e = dict(a.env())
+    e["PYTHONPATH"] = str(RADICE)
+    p = subprocess.run([PYTHON, "-c", codice], env=e, cwd=str(RADICE),
+                       capture_output=True, timeout=120)
+    if p.returncode != 0:
+        return None
+    try:
+        return json.loads(p.stdout.decode("utf-8", "replace"))
+    except ValueError:
+        return None
+
+
+def _prove_errori_interni_8(prova, a: Ambiente):
+    """Ottavo giro, punto 1: un token con parentesi quadre dentro un comando non e' mai un
+    errore interno. Il registro vero ha 44 righe `errore interno del guardiano (error: bad
+    character range [-1 at position 8)`, tutte su Bash: `_espandi_glob` passava il token di
+    shell a `glob.glob`, che lo traduce in una regex con `fnmatch.translate`, e uno slicing
+    (`t[i-200:i+200]` dentro il testo di uno script, `ms[-1]`) o un intervallo invertito
+    (`[z-a]`, `[o-f]`) non e' una regex valida. Ora l'espansione e' propria e un intervallo
+    invertito o una `[` senza `]` sono caratteri letterali, come fa bash. I comandi sono quelli
+    veri ricostruiti con nomi finti."""
+    a.togli_config()
+    pulita = _alfa_pulita(a)
+    cfg = json.loads(_testo(a.dati / "config.json"))
+    (a.progetto / "copia[z-a].txt").write_text("x\n", "utf-8")
+    (a.progetto / "nota1.txt").write_text("x\n", "utf-8")
+    (a.progetto / "nota2.txt").write_text("x\n", "utf-8")
+    (pulita / "copia[z-a].txt").write_text("x\n", "utf-8")
+    comandi = [
+        # lo slicing dentro un heredoc di python: `t[i-200:i+200]` ha un intervallo i-2
+        "python3 - <<'EOF'\nt = open('nota.txt').read()\ni = t.find('parola')\n"
+        "print(t[i-200:i+200])\nEOF",
+        "python3 - <<'EOF'\nimport re\nt = open('nota.txt').read()\n"
+        "ms = [m.start() for m in re.finditer(r'Voce 5\\. ', t)]\n"
+        "print(t[ms[-1]:ms[-1]+2500])\nEOF",
+        "python3 - <<'EOF'\nt = open('nota.txt').read()\nj = t.find('altra')\nprint(t[j-700:j+200])\nEOF",
+        "python3 - <<'EOF'\nfor k in range(3):\n    s = 'abc'\n    print(s[k-1], s[k-2:k])\nEOF",
+        "python3 -c \"print(s[ms[-1]:ms[-1]+10])\"",
+        "python3 -c \"d = {}; print(d['a'][h-1])\"",
+        # i token di shell con classi non valide o non chiuse
+        "ls src/copia[z-a].txt", "cat ./a[[-1]", "ls src/n[5-0].txt", "cat src/x[o-f]y",
+        "ls copia[z-a].txt", "cat a[[-1]", "echo x[o-f]", "ls nota[5-0].txt", "ls nota[1",
+        "wc -l arr[X-N1a]", "ls [--/]*", "echo ${arr[-1]} ${arr[i-1]}", "ls nota[!",
+        "ls nota[]", "ls nota[^",
+        "grep -E '[o-f]' nota.txt", "tr '[a-Z]' x < nota.txt", "sed 's/[i-2]//' nota.txt",
+        "awk '{print a[i-1], b[n-A]}' nota.txt",
+        # e le classi valide continuano a funzionare
+        "ls nota[12].txt", "ls nota[!3].txt", "ls nota[1-2].txt", "cat nota?.txt",
+    ]
+    for modo in ("solo-registro", "bloccante"):
+        cfg2 = dict(cfg, guardiano=modo)
+        a.togli_config()
+        a.scrivi_config(cfg2)
+        for cmd in comandi:
+            r = a.chiama(a.pl("Bash", {"command": cmd}, sid=S_COMUNE, aperta_in=a.progetto))
+            interni = [x for x in a.registro() if x.get("esito") == "errore-interno"]
+            prova(f"err8: predefinito ({modo}), `{cmd[:52].replace(chr(10), ' ')}`: ammesso, "
+                  "nessun errore interno", r.ammesso and not interni, repr(r) + str(interni[-1:]))
+            a.togli_config()
+            a.scrivi_config(cfg2)
+    a.togli_config()
+    a.scrivi_config(dict(cfg, guardiano="bloccante"))
+    for cmd in comandi:
+        r = a.chiama(a.pl("Bash", {"command": cmd}, sid=S_ALFA_LIBERA, aperta_in=pulita))
+        interni = [x for x in a.registro() if x.get("esito") == "errore-interno"]
+        prova(f"err8: alfa (bloccante), `{cmd[:52].replace(chr(10), ' ')}`: nessun errore interno",
+              not interni and "errore interno" not in r.out, repr(r) + str(interni[-1:]))
+        a.togli_config()
+        a.scrivi_config(dict(cfg, guardiano="bloccante"))
+
+    # l'espansione dei glob: un intervallo invertito o una `[` aperta sono letterali; le classi
+    # valide, la negazione e i nomi nascosti come nel glob di shell. Con il Python delle prove.
+    prog = a.progetto
+    (prog / ".nascosto").write_text("x\n", "utf-8")
+    (prog / ".nasc2").write_text("x\n", "utf-8")
+    codice = (
+        "import json, os, sys\n"
+        "from plancia import compartimenti as C\n"
+        "d = %r\n"
+        "def esp(m):\n"
+        "    return sorted(os.path.basename(x) for x in C._espandi_glob(os.path.join(d, m), None))\n"
+        "out = {}\n"
+        "out['invertito'] = esp('copia[z-a].txt')\n"
+        "out['classe'] = esp('nota[12].txt')\n"
+        "out['nega'] = esp('nota[!1].txt')\n"
+        "out['intervallo'] = esp('nota[1-2].txt')\n"
+        "out['aperta'] = esp('nota[1')\n"
+        "out['punto'] = [x for x in esp('*') if x.startswith('.')]\n"
+        "out['hidden'] = esp('.nasc*')\n"
+        "out['slicing'] = esp('t[i-200:i+200]')\n"
+        "out['cwd'] = [os.path.basename(x) for x in C._espandi_glob('nota[12].txt', d)]\n"
+        "bad = 0\n"
+        "import random\n"
+        "random.seed(8)\n"
+        "alf = list('ab-_.[]!^*?/\\\\:1 2i') + ['[i-2]', '[z-a]', '[[-1]', '[]-a]', '[--/]', '&&', '~~']\n"
+        "for _ in range(600):\n"
+        "    t = ''.join(random.choice(alf) for _ in range(random.randint(1, 14)))\n"
+        "    try:\n"
+        "        C._espandi_glob(os.path.join(d, t), None); C._espandi_glob(t, d)\n"
+        "        C._combacia_glob(t, '/tmp/a b'); C._combacia_glob('/tmp/' + t, '/tmp/a/b')\n"
+        "        C._glob_combacia('x[1]', t)\n"
+        "    except Exception:\n"
+        "        bad += 1\n"
+        "out['eccezioni'] = bad\n"
+        "out['divieto'] = [C._combacia_glob('/c/PR-*', '/c/PR-7.md'), C._combacia_glob('*.segreto', '/c/a.segreto'),\n"
+        "                  C._combacia_glob('/c/[z-a]x', '/c/[z-a]x/f'), C._combacia_glob('/c/PR-*', '/c/altro')]\n"
+        "print(json.dumps(out))\n" % str(prog))
+    ris = _codice_in_python(a, codice) or {}
+    prova("err8: `copia[z-a].txt` (intervallo invertito) e' letterale e trova il file con quel nome",
+          ris.get("invertito") == ["copia[z-a].txt"], str(ris.get("invertito")))
+    prova("err8: `nota[12].txt` trova nota1.txt e nota2.txt (una classe valida)",
+          ris.get("classe") == ["nota1.txt", "nota2.txt"], str(ris.get("classe")))
+    prova("err8: `nota[!1].txt` trova solo nota2.txt (negazione)", ris.get("nega") == ["nota2.txt"],
+          str(ris.get("nega")))
+    prova("err8: `nota[1-2].txt` (intervallo valido) trova nota1.txt e nota2.txt",
+          ris.get("intervallo") == ["nota1.txt", "nota2.txt"], str(ris.get("intervallo")))
+    prova("err8: `nota[1` (senza chiusura) non trova niente e non solleva", ris.get("aperta") == [],
+          str(ris.get("aperta")))
+    prova("err8: `*` non torna i nomi nascosti, `.nasc*` si", ris.get("punto") == []
+          and ris.get("hidden") == [".nasc2", ".nascosto"], str((ris.get("punto"), ris.get("hidden"))))
+    prova("err8: lo slicing `t[i-200:i+200]` come token non solleva e non trova niente",
+          ris.get("slicing") == [], str(ris.get("slicing")))
+    prova("err8: con la cwd un modello relativo si espande (`nota[12].txt`)",
+          ris.get("cwd") == ["nota1.txt", "nota2.txt"], str(ris.get("cwd")))
+    prova("err8: 600 modelli casuali con parentesi, intervalli e barre: nessuna eccezione, "
+          "con il Python delle prove", ris.get("eccezioni") == 0, str(ris.get("eccezioni")))
+    prova("err8: `_combacia_glob` (i divieti): PR-*, *.segreto combaciano, un intervallo invertito "
+          "non solleva", ris.get("divieto") == [True, True, True, False], str(ris.get("divieto")))
+
+    # un divieto del manifesto con un intervallo invertito non deve rompere ogni chiamata
+    a.togli_config()
+    a.scrivi_manifesto(a.righe_manifesto() + [f"{a.comune}/[z-a]*", f"{a.comune}/riserva[9-0]"])
+    a.scrivi_config(a.config("bloccante"))
+    for cmd in (f"cat {a.comune}/nota.txt", f"ls {a.progetto}", "echo ciao"):
+        r = a.chiama(a.pl("Bash", {"command": cmd}, sid=S_COMUNE, aperta_in=a.progetto))
+        prova(f"err8: manifesto con un divieto `[z-a]*`, `{cmd[:40]}`: ammesso senza errore interno",
+              r.ammesso and not [x for x in a.registro() if x.get("esito") == "errore-interno"],
+              repr(r))
+    r = a.chiama(a.pl("Bash", {"command": f"cat {a.condiviso}/repo/README"}, sid=S_COMUNE,
+                      aperta_in=a.progetto))
+    prova("err8: ...e un divieto vero dello stesso manifesto (`<condiviso>/repo`) nega ancora",
+          r.negato, repr(r))
+    a.scrivi_manifesto(a.righe_manifesto())
+    a.togli_config()
+
+
+def _prove_settings_8(prova, a: Ambiente):
+    """Ottavo giro, punto 2: 348 righe del registro vero dicono "il comando scrive
+    settings.json" e NESSUNA era una scrittura di settings.json, ne' una lettura scambiata per
+    scrittura: erano script Python (un heredoc) che modificano un sorgente Swift o JS e
+    contengono un commento `//` o `///`. `_trova_percorsi_in_testo` ne ricavava il candidato
+    percorso `//`, che `_norm` riduce alla radice `/`; il ramo del codice che scrive e ha una
+    parola come `replace` (`s.replace(vecchio, nuovo)` e' il metodo delle stringhe) mette la
+    radice fra le cartelle di cui si sposta il contenuto, e la radice contiene ogni file
+    protetto. Qui: quei comandi passano, e per settings.json le letture passano e le scritture
+    vere restano negate (nei due versi)."""
+    a.togli_config()
+    a.scrivi_config(a.config("bloccante"))
+    utente = a.claude / "settings.json"
+    utente.write_text(_settings(), "utf-8")
+    loc = a.home / ".claude" / "settings.json"
+    loc.parent.mkdir(parents=True, exist_ok=True)
+    loc.write_text(_settings(), "utf-8")
+    tmp = str(a.progetto / "tmp8.json")
+    (a.progetto / "tmp8.json").write_text("{}", "utf-8")
+    (a.progetto / "copia").mkdir(exist_ok=True)
+    U, C_, P_ = str(utente), str(a.claude), str(a.progetto)
+
+    def pred(cmd):
+        return a.chiama(a.pl("Bash", {"command": cmd}, sid=S_COMUNE, aperta_in=a.progetto))
+
+    def registro_nega_settings():
+        return [x for x in a.registro() if "settings.json" in x.get("motivo", "")]
+
+    # 1) i falsi positivi veri: heredoc di python con commenti // e ///
+    top = "/" + os.path.realpath(C_).split("/")[1]      # la cartella di primo livello sopra i settings finti
+    sorgenti = [
+        "python3 - <<'EOF'\np = 'App.swift'\ns = open(p, encoding='utf8').read()\n"
+        "s = s.replace('let a = 1', 'let a = 2')\n// un commento\n/// documenta la funzione\n"
+        "open(p, 'w', encoding='utf8').write(s)\nEOF",
+        "cd " + P_ + " && python3 - <<'EOF'\nimport re\np = 'ios/App/Vista.swift'\n"
+        "s = open(p).read()\nold = '''    /// Il titolo\n    var titolo = \"a\"\n    // resta cosi'\n'''\n"
+        "new = '''    /// Il titolo nuovo\n    var titolo = \"b\"\n'''\nassert old in s\ns = s.replace(old, new)\n"
+        "open(p, 'w').write(s)\nEOF",
+        "python3 - <<'EOF'\nt = open('x.js').read()\nt = t.replace('a', 'b')  # /* */ // \n"
+        "t = t.replace('c', 'd')\nprint(t.count('//'), t.count('///'))\nopen('x.js', 'w').write(t)\nEOF",
+        "python3 - <<'EOF'\nimport os\ntesto = open('a.c').read().replace('x', 'y')\n"
+        "# /. e /.. non sono la radice\nprint('/.', '/..', '/./')\nos.replace('a.c.tmp', 'a.c')\nEOF",
+        # una cartella di primo livello nominata in un TESTO di codice non e' una cartella su cui
+        # il codice opera
+        "python3 - <<'EOF'\nimport re, os\nt = open('a.txt').read()\nt = re.sub(r'[\"\\']" + top + "/', 'x', t)\n"
+        "open('a.txt', 'w').write(t)\nos.replace('a.tmp', 'a.txt')\nEOF",
+    ]
+    for cmd in sorgenti:
+        n0 = len(a.registro())
+        r = pred(cmd)
+        prova(f"sett8: `{cmd[:58].replace(chr(10), ' ')}`: ammesso (non scrive settings.json)",
+              r.ammesso and not registro_nega_settings() and len(a.registro()) == n0, repr(r))
+        a.togli_config()
+        a.scrivi_config(a.config("bloccante"))
+    # ...ma il codice che scrive DAVVERO settings.json o svuota la sua cartella resta negato
+    veri = [
+        f"python3 - <<'EOF'\ns = open('a.swift').read()\ns = s.replace('a', 'b')\n// un commento\n"
+        f"open('{U}', 'w').write(s)\nEOF",
+        f"python3 - <<'EOF'\nimport shutil\n// un commento\nshutil.rmtree('{C_}')\nEOF",
+        f"python3 - <<'EOF'\nimport os\nos.replace('{tmp}', '{U}')\nEOF",
+        f"python3 - <<'EOF'\nfrom pathlib import Path\nPath('{tmp}').replace('{U}')\nEOF",
+        f"python3 - <<'EOF'\nimport shutil\nshutil.move('{U}', '{tmp}')\nEOF",
+    ]
+    for cmd in veri:
+        r = pred(cmd)
+        prova(f"sett8: `{cmd[-60:].replace(chr(10), ' ')}`: negato (scrive o sposta i settings)",
+              r.negato, repr(r))
+
+    # 2) i due versi per settings.json: letture ammesse, scritture negate
+    letture = [
+        "cat {U}", "cat {U} | jq .hooks", "jq . {U}", "jq -r '.hooks.PreToolUse[0].matcher' {U}",
+        "jq '.hooks' {U} | head -5", "grep -c PreToolUse {U}", "grep -n plancia-guardiano {U}",
+        "diff {U} {T}", "diff <(jq -S . {U}) <(jq -S . {T})", "test -f {U} && echo si",
+        "[ -f {U} ] && echo si", "[[ -s {U} ]] && echo si", "stat {U}", "ls -la {U}",
+        "wc -l {U}", "head -20 {U}", "tail -5 {U}", "sed -n 1,5p {U}",
+        "awk '/hooks/ {{print}}' {U}", "shasum {U}", "file {U}",
+        "cp {U} {T}", "cp {U} {P}/copia/", "cp -p {U} {P}/copia/s.bak", "rsync {U} {P}/x.json",
+        "python3 -c \"import json; print(json.load(open('{U}'))['hooks'])\"",
+        "python3 - <<'EOF'\nimport json\nd = json.load(open('{U}'))\nprint(d.get('theme'))\nEOF",
+        "python3 - <<'EOF'\nimport json, os\np = os.path.expanduser('~/.claude/settings.json')\n"
+        "d = json.load(open(p))\nfor k in d: print(k)\nEOF",
+        "node -e \"console.log(JSON.parse(require('fs').readFileSync('{U}','utf8')).theme)\"",
+        "cd {C} && cat settings.json", "cd {C} && jq . settings.json",
+        "cd {C} && grep hooks settings.json", "cd {C} && test -f settings.json && echo si",
+        "cat {C}/settings*.json", "jq . {U} > {P}/out.json", "cat {U} | tee {P}/out.json",
+        "cat {U} | sed s/a/b/ > {P}/out.json", "echo {U}", "echo settings.json",
+        "git diff --no-index {U} {T}", "zip {P}/b.zip {U}",
+    ]
+    for c in letture:
+        cmd = c.format(U=U, T=tmp, P=P_, C=C_)
+        r = pred(cmd)
+        prova(f"sett8: lettura `{cmd[:58].replace(chr(10), ' ')}`: ammessa", r.ammesso, repr(r))
+    scritture = [
+        "echo '{{}}' > {U}", "echo '{{}}' >> {U}", "echo '{{}}' >| {U}", "cat {T} > {U}",
+        "jq . {T} > {U}", "jq 'del(.hooks)' {U} > {T} && mv {T} {U}",
+        "jq 'del(.hooks)' {U} | sponge {U}", "echo '{{}}' | tee {U}", "echo '{{}}' | tee -a {U}",
+        "tee {U} < {T}", "sed -i '' s/a/b/ {U}", "sed -i.bak s/a/b/ {U}", "perl -pi -e 's/a/b/' {U}",
+        "cp {T} {U}", "cp -f {T} {U}", "mv {T} {U}", "install {T} {U}", "rsync {T} {U}",
+        "cp {T} {C}/settings.json", "ln -sf {T} {U}", "dd if={T} of={U}", "truncate -s0 {U}",
+        "rm {U}", "rm -f {U}", "rm -rf {C}", "mv {U} {T}", "touch {U}", "chmod 000 {U}",
+        "python3 -c \"open('{U}', 'w').write('{{}}')\"",
+        "python3 -c \"import json; json.dump({{}}, open('{U}', 'w'))\"",
+        "python3 - <<'EOF'\nimport json\nd = json.load(open('{U}'))\nd.pop('hooks')\n"
+        "json.dump(d, open('{U}', 'w'))\nEOF",
+        "python3 - <<'EOF'\nfrom pathlib import Path\nPath('{U}').write_text('{{}}')\nEOF",
+        "python3 - <<'EOF'\nimport os\nos.remove('{U}')\nEOF",
+        "node -e \"require('fs').writeFileSync('{U}','{{}}')\"",
+        "cd {C} && echo '{{}}' > settings.json", "cd {C} && sed -i '' s/a/b/ settings.json",
+        "cd {C} && cp {T} settings.json", "cd {C} && rm settings.json",
+        "rm {C}/settings*.json", "cat {T} | tee {C}/settings.json",
+        "curl -o {U} http://example.org/x",
+    ]
+    for c in scritture:
+        cmd = c.format(U=U, T=tmp, P=P_, C=C_)
+        r = pred(cmd)
+        prova(f"sett8: scrittura `{cmd[:58].replace(chr(10), ' ')}`: negata, dice che sono i settings",
+              r.negato and "settings" in r.motivo, repr(r))
+
+    # 3) la funzione che decide: cosa e' la radice in un testo di codice
+    ris = _codice_in_python(a, (
+        "import json\nfrom plancia import compartimenti as C\n"
+        "print(json.dumps({'radici': [C._solo_radice(x) for x in ('//', '///', '/.', '/..', '/./', '//.')],\n"
+        "                  'percorsi': [C._solo_radice(x) for x in ('/tmp', '/a/b', '~/x', '/home/x/.claude')],\n"
+        "                  'testo': C._trova_percorsi_in_testo('a // b\\n/// c\\nx = \"/tmp/f\" // fine'),\n"
+        "                  'testo2': C._trova_percorsi_in_testo('/. /.. /./')}))\n")) or {}
+    prova("sett8: `//`, `///`, `/.`, `/..`, `/./` sono la radice, non un percorso",
+          ris.get("radici") == [True] * 6, str(ris.get("radici")))
+    prova("sett8: `/tmp`, `/a/b`, `~/x`, un percorso sotto .claude non sono la radice",
+          ris.get("percorsi") == [False] * 4, str(ris.get("percorsi")))
+    prova("sett8: in un testo di codice i commenti `//` e `///` non danno candidati; `/tmp/f` si",
+          ris.get("testo") == ["/tmp/f"], str(ris.get("testo")))
+    prova("sett8: `/.`, `/..`, `/./` non sono candidati", ris.get("testo2") == [], str(ris.get("testo2")))
+    a.togli_config()
+
+
+def _prove_falsi_8(prova, a: Ambiente):
+    """Ottavo giro, punto 3: i falsi positivi che costano poco, tra quelli del registro
+    vero che la versione del settimo giro negava ancora.
+
+    - `replace` nudo non e' un'operazione su una cartella: `s.replace(a, b)` e' il metodo delle
+      stringhe, e in uno script che modifica una nota e nomina `~/.plancia` faceva scrivere
+      "config.json e' un file del guardiano". `os.replace(x, y)` e `Path.replace(y)` restano.
+    - un argomento di un programma che non tocca file e sembra un percorso relativo ma ha spazi
+      o `=` (`-destination "generic/platform=iOS Simulator"` di xcodebuild) non e' un percorso:
+      dopo un `cd` che non si sa dove porta faceva negare il comando."""
+    a.togli_config()
+    a.scrivi_config(a.config("bloccante"))
+
+    def pred(cmd):
+        return a.chiama(a.pl("Bash", {"command": cmd}, sid=S_COMUNE, aperta_in=a.progetto))
+
+    onesti = [
+        "python3 - <<'EOF'\ns = open('nota.md').read()\ns = s.replace('vecchio', 'nuovo ~/.plancia')\n"
+        "open('nota.md', 'w').write(s)\nEOF",
+        "python3 - <<'EOF'\np = 'guida.md'\ns = open(p).read()\n"
+        "s = s.replace('cartella', 'cartella dei dati (PLANCIA_HOME)')\nopen(p, 'w').write(s)\nEOF",
+        "python3 - <<'EOF'\np = 'note.md'\ns = open(p).read()\n"
+        "s = s.replace('a', 'b').replace('vedi', 'vedi ~/.plancia/')\n"
+        "open(p, 'w').write(s)\nEOF",
+        "cd $(mktemp -d) && xcodebuild -project A.xcodeproj -destination \"generic/platform=iOS Simulator\" build",
+        "cd \"$1/native\" && xcodebuild -destination 'generic/platform=iOS Simulator' build",
+        "cd - && foo --opt \"a b/c\" --piattaforma \"x=y/z w\"",
+    ]
+    for cmd in onesti:
+        r = pred(cmd)
+        prova(f"falsi8: `{cmd[:60].replace(chr(10), ' ')}`: ammesso", r.ammesso, repr(r))
+    veri = [
+        "python3 - <<'EOF'\nimport os\nos.replace('x.tmp', os.path.expanduser('~/.plancia/config.json'))\nEOF",
+        "python3 - <<'EOF'\nfrom pathlib import Path\nPath('x.tmp').replace(Path.home() / '.plancia' / 'config.json')\nEOF",
+        "python3 - <<'EOF'\nimport shutil, os\nshutil.move('x.tmp', os.path.expanduser('~/.plancia/config.json'))\nEOF",
+        "python3 - <<'EOF'\nimport os\nos.rename('x.tmp', os.environ['PLANCIA_HOME'] + '/config.json')\nEOF",
+    ]
+    for cmd in veri:
+        r = pred(cmd)
+        prova(f"falsi8: `{cmd[-58:].replace(chr(10), ' ')}`: negato (sposta la config)", r.negato, repr(r))
+    # la regola "cambia cartella" e' viva: un percorso relativo vero dopo un cd ignoto nega
+    r = pred("cd - && cp x sub/dir/f")
+    prova("falsi8: `cd - && cp x sub/dir/f` (un percorso relativo vero) resta negato",
+          r.negato, repr(r))
+    r = pred("cd - && foo sub/dir/f")
+    prova("falsi8: `cd - && foo sub/dir/f` (un relativo senza spazi ne' `=`) resta negato",
+          r.negato and "non si sa determinare" in r.motivo, repr(r))
+    r = pred("cd $(mktemp -d) && cat sub/dir/f")
+    prova("falsi8: `cd $(mktemp -d) && cat sub/dir/f` (cat opera sui file) resta negato",
+          r.negato and "non si sa determinare" in r.motivo, repr(r))
+    a.togli_config()
+
+
 def _prove_limiti_6(prova):
     """Sesto giro, punto 7: i limiti dichiarati, nel docstring del modulo e nel README
     (inglese e italiano): l'elenco onesto di cio' che il guardiano non vede e la frase
@@ -4551,6 +4898,9 @@ def esegui(prova):
         _prove_allarme_6(prova, a)
         _prove_cd_scritture_7(prova, a)
         _prove_git_letture_7(prova, a)
+        _prove_errori_interni_8(prova, a)
+        _prove_settings_8(prova, a)
+        _prove_falsi_8(prova, a)
         _prove_limiti_6(prova)
     finally:
         a.chiudi()
