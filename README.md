@@ -262,33 +262,43 @@ group by anything but a flat list.
 
 ## Jarvis
 
-Hold nothing, press nothing. `⌥Space` anywhere, or `plancia://jarvis`, opens a
-panel that listens continuously and works out you have finished speaking from the
-silence, not from a key you keep held down.
+`⌥Space` anywhere opens a glass panel and turns the microphone on. A waveform follows
+your voice while it listens, the answer scrolls in as it arrives, and it starts
+speaking with the first sentence, not when the whole answer is done.
 
-What it hears goes two ways. Phrases it can recognise with certainty (open a
-view, note a task, close one, re-read the sources, read me the recap) run
-locally in a tenth of a second. Everything else goes to Claude Code in headless
-mode with the `plancia_*` tools open, so it can actually add the task, update the
-project or search the archive, not just answer about it.
+Jarvis reads, and proposes. The model behind the panel is read-only: the tools that
+write are denied by name, not just left off a list. Phrases like "note a task", "I
+did that", "archive Atlas", "do it" or "resume task 4" never run on their own. Each
+one becomes a card that says exactly what would happen (which agent, in which
+folder, whether it may edit files, which session it picks up) and nothing happens
+until you press Confirm on the card. Saying "yes" out loud does not confirm. Esc or
+Cancel throw the card away, and so does closing the panel. The only things that
+happen without a card are opening a view and changing how fast it speaks.
 
-There is a text field at the bottom of the panel: it covers the case where the
-microphone is unavailable, and lets you correct a misheard sentence by typing
-instead of repeating it.
+The microphone opens only when you ask, with the shortcut or the microphone button,
+and you can see it: an orange dot and "Microphone on" in the panel, next to the
+system's own indicator. Recognition runs on the Mac. If dictation for your language
+is not installed for on-device use, it says so and you type; audio never goes to a
+server. It closes by itself after each sentence and reopens only if you turn on
+"Continuous conversation" in the panel menu. Esc or Stop ends everything at once.
 
-The microphone stays open while it answers, so you can cut it off by simply
-speaking again. Echo cancellation on the input node is what makes that possible:
-without it, it hears its own voice and interrupts itself. Say "cancel" to stop a
-running dispatch, "stop" to close the panel. When a dispatched run finishes it
-tells you out loud, even if you have moved on to something else.
+The voice is a neural one when there is one: Pocket or Voicebox running locally,
+sentence by sentence, so the second sentence is being made while the first plays.
+Without one it uses the enhanced or premium voices installed on the Mac and says so
+at the bottom of the panel. It never uses the basic robotic voice: with none
+installed it stays text-only and tells you where to download one.
+
+The text field at the bottom covers the case where the microphone is unavailable.
 
 ```bash
-plancia jarvis "remind me to write the migration note"   # same thing, typed
+plancia jarvis "remind me to write the migration note"   # typed: you wrote it, it runs
 ```
+
+The dashboard's own Jarvis (Windows and Linux) works as before.
 
 Claude Code has had [voice input since March 2026](https://claudefa.st/blog/guide/mechanics/voice-mode):
 you hold the spacebar and dictate. It is input only, and by design there is no
-hands-free mode. This is the other half: it speaks back, and it acts.
+hands-free mode. This is the other half: it speaks back, and it can act once you confirm.
 
 ## All tasks
 
@@ -579,7 +589,7 @@ warning each time). The full list is in the docstring of `plancia/compartimenti.
 git config core.hooksPath .githooks
 ```
 
-Turns on the hook that runs `python3 tools/prova.py` before every push: 4142
+Turns on the hook that runs `python3 tools/prova.py` before every push: 4212
 checks in a few minutes, against a throwaway archive that never touches
 yours. They cover the schema, the board, the proposals, the search index, the
 recap, the MCP surface and its token budget, every read route of the HTTP API,
