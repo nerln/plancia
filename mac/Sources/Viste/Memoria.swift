@@ -4,10 +4,11 @@
 //     problemi (doppie, senza legami, link rotti, quasi vuote, da scrivere);
 //   - a destra l'Inspector col fatto per intero, la cartella da cui viene e i legami
 //     cliccabili;
-//   - il grafo non e' la vista principale: e' il modo "Vicinato" (segmentato nella barra
-//     degli strumenti), che mette il fatto scelto al centro e i suoi legami su due
-//     livelli, al massimo una quindicina di nodi, con un layout radiale calcolato in un
-//     colpo solo (niente simulazione di forze);
+//   - il grafo non e' la vista principale: sono due modi (segmentati nella barra degli
+//     strumenti). "Vicinato" mette il fatto scelto al centro e i suoi legami su due livelli,
+//     al massimo una quindicina di nodi, con un layout radiale calcolato in un colpo solo.
+//     "Mappa" e' tutta la memoria con una fisica vera (MemoriaMappa.swift, MemoriaFisica.swift,
+//     MemoriaMotore.swift): nodi da trascinare, zoom a passi, livelli 1, 2 e Tutto;
 //   - "Prova la memoria" e' un pannello a comparsa nella barra degli strumenti.
 //
 // I dati vengono dallo Store (schede e mappa). Il corpo di un fatto si chiede al server
@@ -19,7 +20,7 @@ import AppKit
 
 // MARK: - tipi di fatto
 
-private enum TipoMemoria: String, CaseIterable {
+enum TipoMemoria: String, CaseIterable {
     case user, feedback, reference, project, altro
 
     init(_ testo: String?) {
@@ -59,7 +60,7 @@ private enum TipoMemoria: String, CaseIterable {
 
 // MARK: - un fatto
 
-private struct FattoMemoria: Identifiable, Hashable {
+struct FattoMemoria: Identifiable, Hashable {
     let nome: String
     let tipo: TipoMemoria
     let descrizione: String
@@ -70,6 +71,9 @@ private struct FattoMemoria: Identifiable, Hashable {
     let cartelle: [String]
     let percorso: String?
     let richiamabile: Bool?
+    /// Dove il server ha messo il nodo nella sua mappa (0...1), per partire da una forma gia' buona.
+    let x: Double?
+    let y: Double?
 
     var id: String { nome }
 
@@ -84,10 +88,12 @@ private struct FattoMemoria: Identifiable, Hashable {
         cartelle = nodo?.dove ?? nodo?.cartelle ?? []
         percorso = nodo?.path ?? scheda?.path
         richiamabile = nodo?.richiamabile
+        x = nodo?.x
+        y = nodo?.y
     }
 }
 
-private enum FiltroMemoria: String, CaseIterable, Identifiable {
+enum FiltroMemoria: String, CaseIterable, Identifiable {
     case tutte, dueCartelle, senzaLegami, linkRotti, quasiVuote, daScrivere
     var id: String { rawValue }
 
@@ -115,16 +121,20 @@ private enum FiltroMemoria: String, CaseIterable, Identifiable {
 }
 
 private enum ModoMemoria: String, CaseIterable, Identifiable {
-    case elenco, vicinato
+    case elenco, vicinato, mappa
     var id: String { rawValue }
     @MainActor var titolo: String {
-        self == .elenco ? tr("Elenco", "List") : tr("Vicinato", "Neighbours")
+        switch self {
+        case .elenco: return tr("Elenco", "List")
+        case .vicinato: return tr("Vicinato", "Neighbours")
+        case .mappa: return tr("Mappa", "Map")
+        }
     }
 }
 
 // MARK: - i dati, calcolati una volta per ogni disegno
 
-private struct DatiMemoria {
+struct DatiMemoria {
     let fatti: [FattoMemoria]
     let perNome: [String: FattoMemoria]
     /// Legami in entrambe le direzioni, ordinati.
@@ -213,7 +223,7 @@ private struct DatiMemoria {
     }
 }
 
-private func accorcia(_ s: String, _ massimo: Int = 26) -> String {
+func accorcia(_ s: String, _ massimo: Int = 26) -> String {
     guard s.count > massimo else { return s }
     let testa = (massimo - 1) / 2 + 1
     let coda = massimo - 1 - testa
@@ -229,18 +239,24 @@ struct VistaMemoria: View {
     @State private var filtro: FiltroMemoria = .tutte
     @State private var provaAperta = false
 
-    private var modo: ModoMemoria { ModoMemoria(rawValue: modoGuardato) ?? .elenco }
+    /// Nelle istantanee con --memoria-scena la mappa si apre da sola, senza scrivere le preferenze.
+    private var modo: ModoMemoria {
+        if ScenaMappa.nome != nil { return .mappa }
+        return ModoMemoria(rawValue: modoGuardato) ?? .elenco
+    }
 
     var body: some View {
         @Bindable var a = archivio
         let dati = DatiMemoria(schede: archivio.schede, mappa: archivio.mappa)
         let modoBinding = Binding<ModoMemoria>(
-            get: { modo }, set: { modoGuardato = $0.rawValue })
+            get: { modo }, set: { if ScenaMappa.nome == nil { modoGuardato = $0.rawValue } })
         let scelto = archivio.memoriaScelta.flatMap { dati.perNome[$0] }
 
         Group {
             if dati.fatti.isEmpty {
                 vuoto
+            } else if modo == .mappa {
+                VistaMappa(dati: dati, scelto: scelto?.nome)
             } else if modo == .vicinato {
                 if let centro = scelto {
                     PannelloVicinato(centro: centro, dati: dati)
@@ -266,7 +282,8 @@ struct VistaMemoria: View {
                     ForEach(ModoMemoria.allCases) { Text($0.titolo).tag($0) }
                 }
                 .pickerStyle(.segmented)
-                .help(tr("Elenco o vicinato del fatto scelto", "List, or the neighbourhood of the chosen fact"))
+                .help(tr("Elenco, vicinato del fatto scelto, o mappa di tutta la memoria",
+                         "List, neighbourhood of the chosen fact, or map of all memory"))
             }
             ToolbarItem(placement: .primaryAction) {
                 Button { provaAperta.toggle() } label: {
