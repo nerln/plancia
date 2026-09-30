@@ -421,11 +421,7 @@ enum DisegnoMappa {
         }
         candidati.sort { $0.1 > $1.1 }
 
-        // sotto la legenda e i controlli flottanti non si scrive
-        var occupati: [CGRect] = [
-            CGRect(x: 0, y: size.height - 150, width: 240, height: 150),
-            CGRect(x: size.width - 400, y: size.height - 84, width: 400, height: 84),
-        ]
+        var occupati: [CGRect] = []
         var messe = 0
         let visibile = CGRect(origin: .zero, size: size)
         for (i, pr) in candidati {
@@ -479,8 +475,9 @@ private final class StatoGesto {
 
 // MARK: - rotella, trackpad e tastiera dentro la vista
 
-/// Una NSView trasparente che ascolta la rotella e i tasti ⌘+ ⌘- ⌘0 solo quando il puntatore
-/// e' sopra la mappa: fuori di li' i comandi tornano al menu (la dimensione del testo).
+/// Una NSView trasparente che ascolta la rotella e i tasti + - 0 (senza ⌘) solo quando il
+/// puntatore e' sopra la mappa e non si sta scrivendo in un campo. ⌘+ ⌘- ⌘0 non si toccano mai:
+/// sono della dimensione del testo, ovunque sia il puntatore, come dicono le voci del menu Vista.
 struct AscoltoInput: NSViewRepresentable {
     var rotella: (_ punto: CGPoint, _ dx: CGFloat, _ dy: CGFloat, _ precisa: Bool, _ zoom: Bool) -> Void
     var tasto: (_ zoom: Int) -> Void     // +1 avanti, -1 indietro, 0 inquadra
@@ -504,17 +501,6 @@ struct AscoltoInput: NSViewRepresentable {
         var tasto: ((Int) -> Void)?
         private var monitor: Any?
 
-        /// Le mappe vive: chi gestisce ⌘+ ⌘- ⌘0 altrove (la dimensione del testo) chiede
-        /// qui se il puntatore e' sopra una mappa, e in quel caso lascia i tasti a lei.
-        private static let vive = NSHashTable<VistaAscolto>.weakObjects()
-        static func puntatoreSopra(_ finestra: NSWindow?) -> Bool {
-            guard let w = finestra else { return false }
-            for v in vive.allObjects where v.window === w {
-                if v.bounds.contains(v.convert(w.mouseLocationOutsideOfEventStream, from: nil)) { return true }
-            }
-            return false
-        }
-
         override var isFlipped: Bool { true }
         override func hitTest(_ punto: NSPoint) -> NSView? { nil }
 
@@ -522,7 +508,6 @@ struct AscoltoInput: NSViewRepresentable {
             super.viewDidMoveToWindow()
             rimuovi()
             guard window != nil else { return }
-            Self.vive.add(self)
             monitor = NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel, .keyDown]) { [weak self] e in
                 guard let self = self, let w = self.window, e.window === w else { return e }
                 if e.type == .scrollWheel {
@@ -532,12 +517,14 @@ struct AscoltoInput: NSViewRepresentable {
                     self.rotella?(p, e.scrollingDeltaX, e.scrollingDeltaY, e.hasPreciseScrollingDeltas, comando)
                     return nil
                 }
-                // tasti: solo con ⌘ e col puntatore sulla mappa
+                // tasti: senza ⌘, ⌥ e ⌃ (quelli sono dei comandi di menu), col puntatore sulla
+                // mappa e mentre non si scrive in un campo di testo
                 let flag = e.modifierFlags.intersection(.deviceIndependentFlagsMask)
-                guard flag.contains(.command), !flag.contains(.option), !flag.contains(.control) else { return e }
+                guard flag.intersection([.command, .option, .control]).isEmpty else { return e }
+                if w.firstResponder is NSText { return e }
                 let p = self.convert(w.mouseLocationOutsideOfEventStream, from: nil)
                 guard self.bounds.contains(p) else { return e }
-                switch e.charactersIgnoringModifiers ?? "" {
+                switch e.characters ?? "" {
                 case "+", "=": self.tasto?(1)
                 case "-", "_": self.tasto?(-1)
                 case "0": self.tasto?(0)
@@ -550,7 +537,6 @@ struct AscoltoInput: NSViewRepresentable {
         func rimuovi() {
             if let m = monitor { NSEvent.removeMonitor(m) }
             monitor = nil
-            Self.vive.remove(self)
         }
 
         deinit { if let m = monitor { NSEvent.removeMonitor(m) } }
@@ -586,14 +572,21 @@ struct VistaMappa: View {
         let firma = InfoGrafo.firma(dati)
         let chiave = Chiave(firma: firma, livello: livello, scelto: scelto,
                             pronto: modello.pronto, ridotto: riduciMovimento)
-        Group {
-            if let info = modello.info, let ponte = modello.ponte {
-                superficie(info: info, ponte: ponte)
-            } else {
-                ProgressView().controlSize(.small)
+        VStack(spacing: 0) {
+            Group {
+                if let info = modello.info, let ponte = modello.ponte {
+                    superficie(info: info, ponte: ponte)
+                } else {
+                    ProgressView().controlSize(.small)
+                }
+            }
+            // la mappa e' solo lo spazio sopra la barra: i nodi non ci finiscono mai sotto
+            .onGeometryChange(for: CGSize.self, of: { $0.size }) { modello.impostaDimensioni($0) }
+            if let info = modello.info {
+                Divider()
+                barra(info)
             }
         }
-        .onGeometryChange(for: CGSize.self, of: { $0.size }) { modello.impostaDimensioni($0) }
         .task(id: chiave) { allinea(firma: firma) }
     }
 
@@ -664,8 +657,6 @@ struct VistaMappa: View {
         }, tasto: { verso in
             if verso == 0 { modello.inquadra() } else { modello.zoomPasso(verso > 0 ? 1.4 : 1 / 1.4) }
         }))
-        .overlay(alignment: .bottomLeading) { legenda(info) }
-        .overlay(alignment: .bottomTrailing) { controlli }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(tr("Mappa della memoria, \(info.nomi.count) fatti",
                                "Memory map, \(info.nomi.count) facts"))
@@ -745,9 +736,27 @@ struct VistaMappa: View {
 
     // MARK: pezzi sopra il disegno
 
+    /// La barra sotto la mappa: a sinistra cosa vogliono dire i colori, a destra il livello e lo
+    /// zoom. Se la larghezza non basta i due gruppi vanno uno sopra l'altro.
+    private func barra(_ info: InfoGrafo) -> some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 16) {
+                legenda(info)
+                Spacer(minLength: 12)
+                controlli
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                legenda(info)
+                controlli
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+    }
+
     private func legenda(_ info: InfoGrafo) -> some View {
         let presenti = TipoMemoria.allCases.filter { t in info.tipi.contains(t) }
-        return VStack(alignment: .leading, spacing: 4) {
+        return HStack(spacing: 12) {
             ForEach(presenti, id: \.self) { t in
                 Label {
                     Text(t.titolo)
@@ -762,12 +771,11 @@ struct VistaMappa: View {
                 .font(.caption)
                 .foregroundStyle(.tertiary)
         }
-        .padding()
+        .fixedSize()
         .allowsHitTesting(false)
     }
 
-    // Controlli flottanti sopra il disegno: solo controlli di sistema (segmentato e pulsanti
-    // in stile vetro), nessun materiale fatto a mano.
+    // Il livello e lo zoom: controlli di sistema, nella barra sotto la mappa.
     private var controlli: some View {
         HStack(spacing: 10) {
             Picker(tr("Livello", "Level"), selection: livelloBinding) {
@@ -782,18 +790,18 @@ struct VistaMappa: View {
             Button { modello.zoomPasso(1 / 1.4) } label: {
                 Label(tr("Riduci", "Zoom out"), systemImage: "minus.magnifyingglass")
             }
-            .help(tr("Riduci (⌘-)", "Zoom out (⌘-)"))
+            .help(tr("Riduci (-)", "Zoom out (-)"))
             Button { modello.zoomPasso(1.4) } label: {
                 Label(tr("Ingrandisci", "Zoom in"), systemImage: "plus.magnifyingglass")
             }
-            .help(tr("Ingrandisci (⌘+)", "Zoom in (⌘+)"))
+            .help(tr("Ingrandisci (+)", "Zoom in (+)"))
             Button { modello.inquadra() } label: {
-                Label(tr("Inquadra tutto", "Fit all"), systemImage: "arrow.up.left.and.down.right.magnifyingglass")
+                Label(tr("Inquadra tutto", "Fit all"), systemImage: "viewfinder")
             }
-            .help(tr("Inquadra tutto (⌘0)", "Fit all (⌘0)"))
+            .help(tr("Inquadra tutto (0)", "Fit all (0)"))
         }
         .labelStyle(.iconOnly)
-        .buttonStyle(.glass)
-        .padding()
+        .buttonStyle(.bordered)
+        .fixedSize()
     }
 }

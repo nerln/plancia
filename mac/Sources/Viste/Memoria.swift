@@ -289,7 +289,7 @@ struct VistaMemoria: View {
                 Button { provaAperta.toggle() } label: {
                     Label(tr("Prova la memoria", "Try memory"), systemImage: "text.magnifyingglass")
                 }
-                .labelStyle(.titleAndIcon)
+                .labelStyle(.iconOnly)
                 .help(tr("Scrivi una frase e guarda cosa ti direbbe la memoria",
                          "Write a sentence and see what memory would tell you"))
                 .popover(isPresented: $provaAperta, arrowEdge: .bottom) { ProvaRichiamo() }
@@ -520,7 +520,7 @@ private struct DettaglioMemoria: View {
                 if let p = fatto.progetto, !p.isEmpty {
                     LabeledContent(tr("Progetto", "Project")) {
                         if let k = fatto.progettoChiave, !k.isEmpty {
-                            Button(p) { archivio.vai(.progetti, progetto: k) }.buttonStyle(.link)
+                            Button(p) { archivio.vai(.progetti, progetto: k) }.collegamento()
                         } else {
                             Text(p)
                         }
@@ -555,7 +555,7 @@ private struct DettaglioMemoria: View {
                                 .foregroundStyle(dati.perNome[nome]?.tipo.colore ?? .gray)
                         }
                     }
-                    .buttonStyle(.link)
+                    .collegamento()
                 }
                 ForEach(rotti, id: \.self) { nome in
                     Label {

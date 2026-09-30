@@ -194,7 +194,7 @@ struct VistaOggi: View {
                     Button(tr("Mostra altri \(totale - mostrate)", "Show \(totale - mostrate) more")) {
                         mostraTutti = true
                     }
-                    .buttonStyle(.link)
+                    .collegamento()
                 }
             } header: {
                 VStack(alignment: .leading, spacing: 12) {

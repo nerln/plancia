@@ -34,6 +34,11 @@ enum Preferenze {
         get { UserDefaults.standard.bool(forKey: "voceBaseAmmessa") }
         set { UserDefaults.standard.set(newValue, forKey: "voceBaseAmmessa") }
     }
+    /// Se Voicebox e' spento quando apri il pannello, Jarvis lo avvia (nascosto). Acceso di serie.
+    static var avviaVoicebox: Bool {
+        get { (UserDefaults.standard.object(forKey: "jarvisAvviaVoicebox") as? Bool) ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: "jarvisAvviaVoicebox") }
+    }
     static var voceScelta: String? {
         get { UserDefaults.standard.string(forKey: "voceJarvis") }
         set { UserDefaults.standard.set(newValue, forKey: "voceJarvis") }
@@ -44,6 +49,8 @@ enum Preferenze {
 @Observable
 final class JarvisModello {
     enum Fase { case inattivo, ascolta, pensa, risponde, conferma, errore }
+    /// Voicebox, la voce neurale: nessun problema, in avvio (l'ha aperto Jarvis), o non e' partito.
+    enum StatoVoicebox { case nessuno, inAvvio, nonPartito }
 
     struct Pezzo: Identifiable, Equatable {
         let id: Int
@@ -68,6 +75,10 @@ final class JarvisModello {
     var visibile = false
     var voceDescrizione = ""
     var voceAvviso: String?
+    var voicebox: StatoVoicebox = .nessuno
+    /// Il server non vede nessuna voce neurale locale.
+    var voceSenzaNeurale = false
+    var voiceboxInstallato = false
     /// Cambia quando cambia una preferenza, per far rileggere il menu.
     var versionePreferenze = 0
 
@@ -80,6 +91,8 @@ final class JarvisModello {
     @ObservationIgnored private var contaPezzi = 0
     @ObservationIgnored private var haParlato = false
     @ObservationIgnored private var neuraleNoto: String?
+    @ObservationIgnored private var avvioVoicebox: Task<Void, Never>?
+    private static var voiceboxTentato = false
     /// Quante volte e' arrivato Esc: serve alla prova per dire che arriva una volta sola.
     @ObservationIgnored var escRicevuti = 0
     private static var neuraleScaldato = false
@@ -131,6 +144,74 @@ final class JarvisModello {
     private func rileggiVoce() {
         voceDescrizione = voce.descrizione
         voceAvviso = voce.avviso
+        // Voicebox spento e' la causa piu' comune di una voce che manca: lo si dice in chiaro
+        // (con il pulsante per avviarlo) invece di "non risponde".
+        let it = lingua == "it"
+        switch voicebox {
+        case .inAvvio:
+            voceAvviso = it ? "Avvio Voicebox: la voce neurale è pronta tra pochi secondi."
+                            : "Starting Voicebox: the neural voice is ready in a few seconds."
+        case .nonPartito:
+            voceAvviso = it ? "Voicebox non ha risposto. Aprilo a mano, poi riprova."
+                            : "Voicebox did not answer. Open it yourself, then try again."
+        case .nessuno:
+            if voceSenzaNeurale, voiceboxInstallato, !JarvisProva.attivo {
+                if Voicebox.inEsecuzione {
+                    voceAvviso = it ? "Voicebox è aperto ma non risponde ancora."
+                                    : "Voicebox is open but not answering yet."
+                } else {
+                    voceAvviso = it ? "Voicebox è spento: senza, la voce neurale non parte."
+                                    : "Voicebox is off: without it the neural voice can't speak."
+                }
+            }
+        }
+    }
+
+    /// Voicebox si puo' offrire: spento, installato, e non lo si sta gia' avviando.
+    var offriVoicebox: Bool { voceSenzaNeurale && voiceboxInstallato && voicebox != .inAvvio }
+
+    /// Apre Voicebox nascosto e aspetta che il server lo veda. `daUtente`: il pulsante, che vale
+    /// sempre; senza, e' l'avvio automatico all'apertura del pannello, una volta per esecuzione e
+    /// solo se la preferenza e' accesa.
+    func avviaVoicebox(daUtente: Bool) {
+        guard voicebox != .inAvvio, Voicebox.puoAvviare else { return }
+        if !daUtente {
+            guard Preferenze.avviaVoicebox, !JarvisModello.voiceboxTentato else { return }
+            JarvisModello.voiceboxTentato = true
+        }
+        voicebox = .inAvvio
+        rileggiVoce()
+        avvioVoicebox = Task { [weak self] in
+            guard let self = self else { return }
+            var trovata: String?
+            if await Voicebox.avvia() {
+                // il server ricorda per mezzo minuto che Voicebox non rispondeva: si guarda ogni 3 s
+                // per quasi un minuto e mezzo
+                for _ in 0..<Voicebox.tentativi {
+                    try? await Task.sleep(nanoseconds: UInt64(Voicebox.intervallo * 1_000_000_000))
+                    if Task.isCancelled { return }
+                    if let n = await ReteJarvis.voceNeurale()?.neurale { trovata = n; break }
+                }
+            }
+            self.voicebox = trovata == nil ? .nonPartito : .nessuno
+            self.neuraleNoto = trovata
+            self.voceSenzaNeurale = trovata == nil
+            if trovata != nil {
+                self.voce.dimenticaRitardo()
+                if !self.parla { self.voce.prepara(lingua: self.lingua, neurale: trovata) }
+                self.scaldaNeurale()
+            }
+            self.rileggiVoce()
+        }
+    }
+
+    /// La prima frase con una voce neurale paga il caricamento del modello: la si paga adesso,
+    /// una volta per esecuzione, con una frase che poi resta in cache.
+    private func scaldaNeurale() {
+        guard !JarvisProva.attivo, !JarvisModello.neuraleScaldato else { return }
+        JarvisModello.neuraleScaldato = true
+        let l = lingua
+        Task { _ = await ReteJarvis.sintetizza(l == "it" ? "Va bene." : "All right.", lingua: l, attesa: 90) }
     }
 
     // MARK: apertura e chiusura
@@ -150,16 +231,16 @@ final class JarvisModello {
             guard let self = self else { return }
             let info = await ReteJarvis.pronto(lingua: self.lingua)
             if JarvisProva.attivo, info == nil { return }
-            self.neuraleNoto = info?.neurale
-            // La prima frase con una voce neurale paga il caricamento del modello: la si paga
-            // adesso, una volta per esecuzione, con una frase che poi resta in cache.
-            if info?.neurale != nil, !JarvisProva.attivo, !JarvisModello.neuraleScaldato {
-                JarvisModello.neuraleScaldato = true
-                let l = self.lingua
-                Task { _ = await ReteJarvis.sintetizza(l == "it" ? "Va bene." : "All right.", lingua: l, attesa: 90) }
+            // durante un avvio di Voicebox il sondaggio dell'avvio ha la sua idea: non la si calpesta
+            if self.voicebox != .inAvvio {
+                self.neuraleNoto = info?.neurale
+                self.voceSenzaNeurale = info != nil && info?.neurale == nil
+                self.voiceboxInstallato = Voicebox.installato
+                if info?.neurale != nil { self.voicebox = .nessuno; self.scaldaNeurale() }
+                if !self.parla { self.voce.prepara(lingua: self.lingua, neurale: info?.neurale) }
             }
-            if !self.parla { self.voce.prepara(lingua: self.lingua, neurale: info?.neurale) }
             self.rileggiVoce()
+            if info != nil, info?.neurale == nil { self.avviaVoicebox(daUtente: false) }
             if info == nil, self.pezzi.isEmpty {
                 self.avvisa(ErroreJarvis.nonRaggiungibile.localizedDescription, grave: true)
             }

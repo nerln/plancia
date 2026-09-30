@@ -381,7 +381,7 @@ private struct SchedaProgetto: View {
                                          : tr("Mostra altre \(tutte.count - Self.quanti)", "Show \(tutte.count - Self.quanti) more")) {
                         tutteSessioni.toggle()
                     }
-                    .buttonStyle(.link)
+                    .collegamento()
                 }
             }
         }
@@ -422,7 +422,7 @@ private struct SchedaProgetto: View {
                                        : tr("Mostra altri \(tutti.count - Self.quanti)", "Show \(tutti.count - Self.quanti) more")) {
                         tuttiCommit.toggle()
                     }
-                    .buttonStyle(.link)
+                    .collegamento()
                 }
             }
         }

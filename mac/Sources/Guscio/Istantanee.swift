@@ -62,7 +62,7 @@ enum Istantanee {
             if let w = DelegatoApp.corrente?.finestraPrincipale(), w.isVisible { finestra = w; break }
             try? await Task.sleep(nanoseconds: 100_000_000)
         }
-        guard let w = finestra else { esci(1, "la finestra non e' comparsa") }
+        guard let w = finestra else { esci(1, "la finestra non è comparsa") }
         let larghezza = valore("--larghezza").flatMap { Double($0) } ?? 1280
         let altezza = valore("--altezza").flatMap { Double($0) } ?? 820
         w.setContentSize(NSSize(width: larghezza, height: altezza))
@@ -162,7 +162,7 @@ enum Istantanee {
             while let x = c { if let t2 = x as? NSTableView { return t2.row(at: t2.convert(NSPoint(x: r.midX, y: r.midY), from: nil)) }; c = x.superview }
             return nil
         }
-        FileHandle.standardOutput.write(Data("clic: riga 3 al centro (\(Int(x)), \(Int(y))) pt dall'alto, alto=\(Int(alto)), il clic li' cade sulla riga \(riga.map { String($0 + 1) } ?? "nessuna")\n".utf8))
+        FileHandle.standardOutput.write(Data("clic: riga 3 al centro (\(Int(x)), \(Int(y))) pt dall'alto, alto=\(Int(alto)), il clic lì cade sulla riga \(riga.map { String($0 + 1) } ?? "nessuna")\n".utf8))
         await scatta("prova-clic")
     }
 

@@ -109,6 +109,10 @@ final class VoceJarvis: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDele
         return "\(v.name) (\(q))"
     }
 
+    /// Una voce neurale appena comparsa (Voicebox avviato): il ricordo del "non ha risposto in
+    /// tempo" non vale piu', si riprova subito.
+    func dimenticaRitardo() { neuraleLentoFinoA = .distantPast }
+
     /// Da chiamare quando il pannello si apre: decide che voce avra' e lo scrive.
     func prepara(lingua: String, neurale: String?) {
         self.lingua = lingua
@@ -133,7 +137,7 @@ final class VoceJarvis: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDele
             modo = .muta
             descrizione = it ? "Solo testo: nessuna voce avanzata installata"
                              : "Text only: no enhanced voice installed"
-            avviso = it ? "Scarica una voce avanzata o premium in Impostazioni di sistema, Accessibilita', Contenuto letto."
+            avviso = it ? "Scarica una voce avanzata o premium in Impostazioni di sistema, Accessibilità, Contenuto letto."
                         : "Download an enhanced or premium voice in System Settings, Accessibility, Spoken Content."
         }
         onCambio?()
@@ -285,7 +289,7 @@ final class VoceJarvis: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDele
         } else {
             modo = .muta
             descrizione = it ? "Solo testo: nessuna voce avanzata installata" : "Text only: no enhanced voice installed"
-            avviso = it ? "La voce neurale non ha risposto e non c'e' una voce avanzata di sistema."
+            avviso = it ? "La voce neurale non ha risposto e non c'è una voce avanzata di sistema."
                         : "The neural voice did not answer and there is no enhanced system voice."
         }
         onCambio?()

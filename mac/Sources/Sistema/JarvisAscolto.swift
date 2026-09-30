@@ -96,8 +96,8 @@ final class AscoltoContinuo {
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     rispondi(micro && voce,
-                             micro ? (it ? "La dettatura non e' autorizzata." : "Speech recognition is not allowed.")
-                                   : (it ? "Il microfono non e' autorizzato." : "The microphone is not allowed."))
+                             micro ? (it ? "La dettatura non è autorizzata." : "Speech recognition is not allowed.")
+                                   : (it ? "Il microfono non è autorizzato." : "The microphone is not allowed."))
                 }
             }
         }
@@ -137,14 +137,14 @@ final class AscoltoContinuo {
     private func apri(lingua: String, vocabolario: [String]) {
         let it = lingua == "it"
         guard let rec = SFSpeechRecognizer(locale: AscoltoContinuo.locale(lingua)), rec.isAvailable else {
-            return onChiuso?(it ? "Il riconoscimento vocale non e' disponibile in questa lingua."
+            return onChiuso?(it ? "Il riconoscimento vocale non è disponibile in questa lingua."
                                 : "Speech recognition is not available in this language.") ?? ()
         }
         // Niente server: se il Mac non sa riconoscere questa lingua da solo, si scrive.
         guard rec.supportsOnDeviceRecognition else {
             Log.write("jarvis: riconoscimento sul Mac non disponibile per \(lingua)")
             return onChiuso?(it
-                ? "Il riconoscimento sul Mac non e' disponibile per l'italiano: scarica la dettatura nelle impostazioni di Tastiera, oppure scrivi. Non mando l'audio ai server."
+                ? "Il riconoscimento sul Mac non è disponibile per l'italiano: scarica la dettatura nelle impostazioni di Tastiera, oppure scrivi. Non mando l'audio ai server."
                 : "On-device recognition is not available for this language: download dictation in Keyboard settings, or type. I do not send audio to any server.") ?? ()
         }
         let req = SFSpeechAudioBufferRecognitionRequest()

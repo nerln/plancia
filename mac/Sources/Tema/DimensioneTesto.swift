@@ -66,8 +66,6 @@ enum TastiTesto {
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { e in
             let mod = e.modifierFlags.intersection([.command, .shift, .option, .control])
             guard mod == .command, e.charactersIgnoringModifiers == "=" else { return e }
-            // col puntatore sulla mappa della memoria i tasti sono dello zoom della mappa
-            if MappaMemoriaTasti.puntatoreSopra(e.window) { return e }
             let d = UserDefaults.standard
             let corrente = d.object(forKey: DimensioneTesto.chiave) as? Int ?? DimensioneTesto.predefinito
             d.set(DimensioneTesto.limita(corrente + 1), forKey: DimensioneTesto.chiave)
@@ -86,6 +84,3 @@ extension EnvironmentValues {
         set { self[ChiaveFattoreTesto.self] = newValue }
     }
 }
-
-/// Il ponte fra il tema e la mappa della memoria, per non far litigare gli zoom.
-typealias MappaMemoriaTasti = AscoltoInput.VistaAscolto

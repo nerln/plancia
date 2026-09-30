@@ -93,6 +93,8 @@ struct VistaTask: View {
     var body: some View {
         @Bindable var a = archivio
         let elenco = righe
+        // calcolata una volta per giro: righe costa un giro di tutti i task
+        let sceltaRiga = riga(scelta: archivio.taskScelto, in: elenco)
         Group {
             if elenco.isEmpty {
                 vuoto
@@ -103,24 +105,24 @@ struct VistaTask: View {
                     TableColumn(tr("Titolo", "Title"), value: \.titolo) { r in
                         Text(r.titolo).lineLimit(1)
                     }
-                    .width(min: 200, ideal: 420)
+                    .width(min: 120, ideal: 420)
                     TableColumn(tr("Progetto", "Project"), value: \.progetto) { r in
                         Text(r.progetto).foregroundStyle(.secondary).lineLimit(1)
                     }
                     .width(min: 90, ideal: 120)
                     TableColumn(tr("Scadenza", "Due"), value: \.scadenzaOrd) { r in scadenza(r) }
-                        .width(min: 70, ideal: 90)
+                        .width(min: 78, ideal: 90)
                     TableColumn(tr("Fonte", "Source"), value: \.fonte) { r in
                         Text(r.fonteNome).foregroundStyle(.secondary)
                     }
-                    .width(min: 60, ideal: 80)
+                    .width(min: 76, ideal: 80)
                 }
                 // le righe a strisce sotto l'ultima sembrano un fantasma: niente
                 .alternatingRowBackgrounds(.disabled)
             }
         }
-        .inspector(isPresented: mostraDettaglio) {
-            if let r = rigaScelta {
+        .inspector(isPresented: mostraDettaglio(sceltaRiga != nil)) {
+            if let r = sceltaRiga {
                 DettaglioTask(riga: r)
                     .inspectorColumnWidth(min: 260, ideal: 320, max: 460)
             }
@@ -154,13 +156,13 @@ struct VistaTask: View {
 
     // MARK: pezzi
 
-    private var rigaScelta: RigaTask? {
-        guard let id = archivio.taskScelto else { return nil }
-        return righe.first { $0.id == id }
+    private func riga(scelta id: String?, in elenco: [RigaTask]) -> RigaTask? {
+        guard let id = id else { return nil }
+        return elenco.first { $0.id == id }
     }
 
-    private var mostraDettaglio: Binding<Bool> {
-        Binding(get: { rigaScelta != nil },
+    private func mostraDettaglio(_ presente: Bool) -> Binding<Bool> {
+        Binding(get: { presente },
                 set: { if !$0 { archivio.taskScelto = nil } })
     }
 

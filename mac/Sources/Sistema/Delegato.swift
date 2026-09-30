@@ -39,7 +39,7 @@ final class DelegatoApp: NSObject, NSApplicationDelegate {
     // MARK: avvio
 
     func applicationWillFinishLaunching(_ n: Notification) {
-        guard !Istantanee.attive, !Misura.attiva else { return }
+        guard !Istantanee.attive, !Misura.attiva, !MisuraMappa.attiva else { return }
         // Va agganciato prima che l'app finisca di avviarsi, altrimenti il primo
         // plancia:// si perde.
         NSAppleEventManager.shared().setEventHandler(
@@ -52,6 +52,11 @@ final class DelegatoApp: NSObject, NSApplicationDelegate {
         if Istantanee.attive {
             // Niente server, niente barra dei menu, niente voce: solo la finestra.
             Istantanee.avvia()
+            return
+        }
+        if MisuraMappa.attiva {
+            // Solo il banco dei fotogrammi della mappa (vedi Sistema/MisuraMappa.swift)
+            MisuraMappa.avvia()
             return
         }
         if Misura.attiva {

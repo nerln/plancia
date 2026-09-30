@@ -159,6 +159,13 @@ struct VistaArchivio: View {
         return filtrate.sorted(using: ordineRegistro)
     }
 
+    /// Solo le istantanee con --registro guardano il primo evento; nell'uso normale il registro
+    /// (fino a mille e cinquecento righe da ordinare) non si calcola a ogni giro della vista.
+    private var primoDelRegistroPerLeIstantanee: String? {
+        guard Istantanee.attive, CommandLine.arguments.contains("--registro") else { return nil }
+        return righeRegistro.first?.id
+    }
+
     private var tipiEvento: [String] {
         let dichiarati = archivio.registro?.stato?.tipi ?? []
         let visti = Set((archivio.registro?.eventi ?? []).compactMap { $0.tipo })
@@ -176,7 +183,7 @@ struct VistaArchivio: View {
         .onAppear {
             if Istantanee.attive, CommandLine.arguments.contains("--registro") { modo = .registro }
         }
-        .onChange(of: righeRegistro.first?.id, initial: true) { _, primo in
+        .onChange(of: primoDelRegistroPerLeIstantanee, initial: true) { _, primo in
             if Istantanee.attive, CommandLine.arguments.contains("--registro"),
                eventoScelto == nil, let p = primo { eventoScelto = p }
         }
@@ -220,23 +227,23 @@ struct VistaArchivio: View {
                     TableColumn(tr("Quando", "When"), value: \.quando) { r in
                         Text(FormatoArch.quando(r.quando)).foregroundStyle(.secondary).lineLimit(1)
                     }
-                    .width(min: 120, ideal: 140)
+                    .width(min: 110, ideal: 140)
                     TableColumn(tr("Titolo", "Title"), value: \.titolo) { r in
                         Text(r.titolo).lineLimit(1)
                     }
-                    .width(min: 200, ideal: 420)
+                    .width(min: 100, ideal: 420)
                     TableColumn(tr("Progetto", "Project"), value: \.progetto) { r in
                         Text(r.progetto).foregroundStyle(.secondary).lineLimit(1)
                     }
-                    .width(min: 90, ideal: 120)
+                    .width(min: 80, ideal: 120)
                     TableColumn(tr("Agente", "Agent"), value: \.agente) { r in
                         Text(FormatoArch.agente(r.agente)).foregroundStyle(.secondary)
                     }
-                    .width(min: 60, ideal: 70)
+                    .width(min: 70, ideal: 70)
                     TableColumn(tr("Durata", "Length"), value: \.durata) { r in
                         Text(FormatoArch.durata(r.durata)).foregroundStyle(.secondary)
                     }
-                    .width(min: 60, ideal: 70)
+                    .width(min: 70, ideal: 70)
                     TableColumn(tr("Messaggi", "Messages"), value: \.messaggi) { r in
                         Text(r.messaggi.formatted()).foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .trailing)
@@ -291,23 +298,23 @@ struct VistaArchivio: View {
                     TableColumn(tr("Quando", "When"), value: \.quando) { r in
                         Text(FormatoArch.quando(r.quando)).foregroundStyle(.secondary).lineLimit(1)
                     }
-                    .width(min: 120, ideal: 140)
+                    .width(min: 110, ideal: 140)
                     TableColumn(tr("Tipo", "Type"), value: \.tipo) { r in
                         Text(r.tipo).foregroundStyle(.secondary).lineLimit(1)
                     }
-                    .width(min: 130, ideal: 200)
+                    .width(min: 100, ideal: 200)
                     TableColumn(tr("Titolo", "Title"), value: \.titolo) { r in
                         Text(r.titolo).lineLimit(1)
                     }
-                    .width(min: 200, ideal: 380)
+                    .width(min: 110, ideal: 380)
                     TableColumn(tr("Progetto", "Project"), value: \.progetto) { r in
                         Text(r.progetto).foregroundStyle(.secondary).lineLimit(1)
                     }
-                    .width(min: 90, ideal: 120)
+                    .width(min: 80, ideal: 120)
                     TableColumn(tr("Origine", "Origin"), value: \.origine) { r in
                         Text(r.origine).foregroundStyle(.secondary).lineLimit(1)
                     }
-                    .width(min: 70, ideal: 90)
+                    .width(min: 76, ideal: 90)
                 }
                 .alternatingRowBackgrounds(.disabled)
             }

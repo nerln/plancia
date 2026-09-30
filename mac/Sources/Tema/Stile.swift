@@ -148,3 +148,33 @@ struct FondoFinestra: NSViewRepresentable {
 extension View {
     func stileVista() -> some View { modifier(StileVista()) }
 }
+
+// MARK: - collegamenti
+
+/// Un collegamento nel testo (Mostra altri, Apri progetto...). Con lo stile Legno prende il
+/// colore ottone dell'app e non il blu di sistema, che sul legno e sulla carta calda stona;
+/// con Sistema e' il collegamento di sempre.
+private struct StileCollegamentoLegno: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundStyle(.tint)
+            .opacity(configuration.isPressed ? 0.65 : 1)
+            .contentShape(Rectangle())
+    }
+}
+
+private struct Collegamento: ViewModifier {
+    @AppStorage(StileApp.chiave) private var stile = StileApp.sistema.rawValue
+
+    @ViewBuilder func body(content: Content) -> some View {
+        if stile == StileApp.legno.rawValue {
+            content.buttonStyle(StileCollegamentoLegno())
+        } else {
+            content.buttonStyle(.link)
+        }
+    }
+}
+
+extension View {
+    func collegamento() -> some View { modifier(Collegamento()) }
+}

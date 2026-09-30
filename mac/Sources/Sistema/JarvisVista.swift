@@ -182,17 +182,20 @@ struct JarvisVista: View {
             Button { m.toggleMicrofono() } label: {
                 Image(systemName: m.microfonoAcceso ? "waveform" : "mic.fill")
                     .symbolEffect(.variableColor.iterative, isActive: m.microfonoAcceso)
+                    .fontWeight(.semibold)
                     .frame(width: 22, height: 22)
             }
             .buttonStyle(.borderedProminent)
             .buttonBorderShape(.circle)
-            .tint(m.microfonoAcceso || m.microfonoInApertura ? .orange : .accentColor)
+            // microfono acceso: rosso pieno con l'icona bianca piena (l'arancione di prima
+            // diventava un giallo pallido, quasi senza contrasto con l'icona chiara)
+            .tint(m.microfonoAcceso || m.microfonoInApertura ? .red : .accentColor)
             .controlSize(.large)
             .accessibilityLabel(m.microfonoAcceso
                                 ? (m.lingua == "it" ? "Spegni il microfono e invia" : "Turn the microphone off and send")
                                 : (m.lingua == "it" ? "Accendi il microfono" : "Turn the microphone on"))
             .help(m.microfonoAcceso
-                  ? (m.lingua == "it" ? "Il microfono e' acceso: premi per inviare quello che hai detto" : "The microphone is on: press to send what you said")
+                  ? (m.lingua == "it" ? "Il microfono è acceso: premi per inviare quello che hai detto" : "The microphone is on: press to send what you said")
                   : (m.lingua == "it" ? "Accendi il microfono (⌥Spazio)" : "Turn the microphone on (⌥Space)"))
         }
     }
@@ -209,6 +212,13 @@ struct JarvisVista: View {
                 }
             }
             Spacer(minLength: 4)
+            if m.voicebox == .inAvvio {
+                ProgressView().controlSize(.small)
+            } else if m.offriVoicebox {
+                Button(m.lingua == "it" ? "Avvia Voicebox" : "Start Voicebox") { m.avviaVoicebox(daUtente: true) }
+                    .buttonStyle(.borderless)
+                    .accessibilityLabel(m.lingua == "it" ? "Avvia Voicebox" : "Start Voicebox")
+            }
             MenuImpostazioniJarvis(m: m)
         }
         .font(.caption)
@@ -420,6 +430,9 @@ struct MenuImpostazioniJarvis: View {
             Toggle(it ? "Conversazione continua" : "Continuous conversation",
                    isOn: Binding(get: { Preferenze.conversazione },
                                  set: { Preferenze.conversazione = $0; m.preferenzeCambiate() }))
+            Toggle(it ? "Avvia Voicebox da solo" : "Start Voicebox automatically",
+                   isOn: Binding(get: { Preferenze.avviaVoicebox },
+                                 set: { Preferenze.avviaVoicebox = $0; m.preferenzeCambiate() }))
             Toggle(it ? "Consenti anche la voce di base" : "Also allow the basic voice",
                    isOn: Binding(get: { Preferenze.voceBase },
                                  set: { Preferenze.voceBase = $0; m.preferenzeCambiate() }))

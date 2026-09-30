@@ -5,6 +5,7 @@
 //
 //   PLANCIA_HOME=<casa di prova> Plancia.app/Contents/MacOS/Plancia --misura [--misura-out <file>]
 //       [--misura-solo sezione|ricarica|scrittura|ricerca|sottofondo] [--misura-ripeti N]
+//       [--misura-sezioni task,social] [--misura-giri N]   (solo queste sezioni, N giri: per `sample`)
 //   (--misura-ripeti ripete la ricerca N volte: serve a campionarla con `sample`)
 //
 // Apre la finestra vera, visita le sezioni con la stessa strada dell'utente (le viste
@@ -148,7 +149,7 @@ enum Misura {
             if let w = DelegatoApp.corrente?.finestraPrincipale(), w.isVisible { finestra = w; break }
             try? await Task.sleep(nanoseconds: 100_000_000)
         }
-        guard let w = finestra else { FileHandle.standardError.write(Data("la finestra non e' comparsa\n".utf8)); exit(1) }
+        guard let w = finestra else { FileHandle.standardError.write(Data("la finestra non è comparsa\n".utf8)); exit(1) }
         w.setContentSize(NSSize(width: 1280, height: 820))
         w.setFrameTopLeftPoint(NSPoint(x: 60, y: (NSScreen.main?.visibleFrame.maxY ?? 900) - 40))
         w.orderFrontRegardless()
@@ -164,8 +165,14 @@ enum Misura {
         func vuole(_ scenario: String) -> Bool { solo == nil || solo == scenario }
 
         // 1. cambio di sezione: tre giri, il primo a freddo (nessun dato in memoria)
-        let ordine: [Sezione] = [.task, .progetti, .social, .memoria, .archivio, .oggi]
-        for giro in (vuole("sezione") ? Array(1...3) : []) {
+        var ordine: [Sezione] = [.task, .progetti, .social, .memoria, .archivio, .oggi]
+        // --misura-sezioni task,social: solo queste, nell'ordine dato (per campionarne una con `sample`)
+        if let elenco = valore("--misura-sezioni") {
+            let scelte = elenco.split(separator: ",").compactMap { Sezione.da(nome: String($0)) }
+            if !scelte.isEmpty { ordine = scelte }
+        }
+        let giri = max(1, Int(valore("--misura-giri") ?? "3") ?? 3)
+        for giro in (vuole("sezione") ? Array(1...giri) : []) {
             for s in ordine {
                 _ = await passo("sezione", "\(s.rawValue) giro \(giro)") { a.vai(s) }
             }

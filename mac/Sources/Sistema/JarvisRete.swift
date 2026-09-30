@@ -111,7 +111,7 @@ enum ErroreJarvis: Error, LocalizedError {
                 ? "Manca il token di Plancia. Apri la finestra di Plancia una volta, poi riprova."
                 : "Plancia's token is missing. Open the Plancia window once, then try again."
         case .nonRaggiungibile:
-            return Lingua.risolvi() == "it" ? "Plancia non risponde. Il server locale e' spento?"
+            return Lingua.risolvi() == "it" ? "Plancia non risponde. Il server locale è spento?"
                                             : "Plancia is not answering. Is the local server off?"
         case .http(let c, let s):
             return s.isEmpty ? "HTTP \(c)" : s
@@ -240,6 +240,15 @@ enum ReteJarvis {
               (r as? HTTPURLResponse)?.statusCode == 200 else { return nil }
         let j = json(dati)
         let n = j["neurale"] as? String
+        return InfoVoceServer(neurale: (n?.isEmpty ?? true) ? nil : n)
+    }
+
+    /// Quale voce neurale il server vede adesso, senza scaldare il modello. nil se non risponde.
+    static func voceNeurale() async -> InfoVoceServer? {
+        guard !Casa.token.isEmpty else { return nil }
+        guard let (dati, r) = try? await scambia(richiesta("/api/jarvis/voce", [:], timeout: 5)),
+              (r as? HTTPURLResponse)?.statusCode == 200 else { return nil }
+        let n = json(dati)["neurale"] as? String
         return InfoVoceServer(neurale: (n?.isEmpty ?? true) ? nil : n)
     }
 

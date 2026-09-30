@@ -389,7 +389,7 @@ struct VistaRisultati: View {
                                     Text(tr("Mostra altri \(g.righe.count - limite(g.tipo))",
                                             "Show \(g.righe.count - limite(g.tipo)) more"))
                                 }
-                                .buttonStyle(.link)
+                                .collegamento()
                             }
                         } header: {
                             intestazione(g)

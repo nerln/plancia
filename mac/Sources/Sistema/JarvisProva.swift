@@ -22,7 +22,7 @@ enum JarvisProva {
 
     enum Scena: String, CaseIterable {
         case inattivo, ascolto, penso, risposta, scheda, schedaAgente, schedaSessione
-        case senzaVoce, serverSpento, lunga
+        case senzaVoce, serverSpento, lunga, voiceboxSpento, voiceboxAvvio
     }
 }
 
@@ -36,6 +36,7 @@ extension JarvisModello {
             confermaInCorso = false; livello.valore = 0
             voceDescrizione = it ? "Voce neurale: Voicebox" : "Neural voice: Voicebox"
             voceAvviso = nil
+            voicebox = .nessuno; voceSenzaNeurale = false; voiceboxInstallato = false
         }
         func testo(_ t: String, eta: TimeInterval = 5) {
             pezzi = [Pezzo(id: 1, testo: t, arrivo: Date().addingTimeInterval(-eta))]
@@ -55,7 +56,7 @@ extension JarvisModello {
             parla = true
             livello.valore = 0.55
             trascritto = it ? "cosa devo fare oggi su Atlas" : "what do I have to do today on Atlas"
-            testo(it ? "Su Atlas hai due task aperti. Il primo e' togliere i biglietti duplicati prima di calcolare i punteggi, il secondo e' confrontare i tre modelli sulla stessa partizione."
+            testo(it ? "Su Atlas hai due task aperti. Il primo è togliere i biglietti duplicati prima di calcolare i punteggi, il secondo è confrontare i tre modelli sulla stessa partizione."
                      : "On Atlas you have two open tasks. The first is dropping duplicate tickets before scoring, the second is comparing the three models on the same split.")
         case .lunga:
             parla = true
@@ -77,25 +78,40 @@ extension JarvisModello {
                                       titolo: it ? "Mandare un agente" : "Send an agent",
                                       righe: [.init(chiave: it ? "Cosa" : "What", valore: "Drop duplicate tickets before scoring"),
                                               .init(chiave: it ? "Agente" : "Agent", valore: "claude"),
-                                              .init(chiave: it ? "Modo" : "Mode", valore: it ? "puo' modificare file" : "may change files"),
+                                              .init(chiave: it ? "Modo" : "Mode", valore: it ? "può modificare file" : "may change files"),
                                               .init(chiave: it ? "Cartella" : "Folder", valore: "~/dev/atlas"),
                                               .init(chiave: it ? "Sessione" : "Session", valore: it ? "riparte dalla sessione che ha salvato il task" : "picks up the session that saved the task")],
                                       rischio: "lancia_scrive",
-                                      avviso: it ? "Parte un agente che puo' modificare i file della cartella." : "An agent starts and may change the files in the folder.")
+                                      avviso: it ? "Parte un agente che può modificare i file della cartella." : "An agent starts and may change the files in the folder.")
         case .schedaSessione:
             trascritto = it ? "riprendi il task 4" : "resume task 4"
             testo(it ? "Ho preparato la scheda: guarda cosa succede e conferma col pulsante." : "I prepared the card: check what happens and confirm with the button.")
             proposta = PropostaJarvis(id: "prova3", azione: "riprendi_task",
                                       titolo: it ? "Riprendere un task" : "Resume a task",
                                       righe: [.init(chiave: "Task", valore: "Score all three models on the same split"),
-                                              .init(chiave: it ? "Sessione" : "Session", valore: it ? "la sessione e' chiusa: riparte da quella" : "the session is closed: it resumes that one")],
+                                              .init(chiave: it ? "Sessione" : "Session", valore: it ? "la sessione è chiusa: riparte da quella" : "the session is closed: it resumes that one")],
                                       rischio: "lancia", avviso: it ? "Parte un agente sul tuo computer." : "An agent starts on your computer.")
         case .senzaVoce:
             trascritto = it ? "che ore sono a Roma" : "what time is it in Rome"
-            testo(it ? "Non lo so dai dati di Plancia, ma posso dirti cosa c'e' in agenda." : "I can not tell from the Plancia data, but I can tell you what is on the agenda.")
+            testo(it ? "Non lo so dai dati di Plancia, ma posso dirti cosa c'è in agenda." : "I can not tell from the Plancia data, but I can tell you what is on the agenda.")
             voceDescrizione = it ? "Solo testo: nessuna voce avanzata installata" : "Text only: no enhanced voice installed"
-            voceAvviso = it ? "Scarica una voce avanzata o premium in Impostazioni di sistema, Accessibilita', Contenuto letto."
+            voceAvviso = it ? "Scarica una voce avanzata o premium in Impostazioni di sistema, Accessibilità, Contenuto letto."
                             : "Download an enhanced or premium voice in System Settings, Accessibility, Spoken Content."
+        case .voiceboxSpento, .voiceboxAvvio:
+            trascritto = it ? "cosa devo fare oggi su Atlas" : "what do I have to do today on Atlas"
+            testo(it ? "Su Atlas hai due task aperti: togliere i biglietti duplicati e confrontare i tre modelli."
+                     : "On Atlas you have two open tasks: dropping duplicate tickets and comparing the three models.")
+            voceDescrizione = it ? "Solo testo: nessuna voce avanzata installata" : "Text only: no enhanced voice installed"
+            voceSenzaNeurale = true
+            voiceboxInstallato = true
+            if s == .voiceboxAvvio {
+                voicebox = .inAvvio
+                voceAvviso = it ? "Avvio Voicebox: la voce neurale è pronta tra pochi secondi."
+                                : "Starting Voicebox: the neural voice is ready in a few seconds."
+            } else {
+                voceAvviso = it ? "Voicebox è spento: senza, la voce neurale non parte."
+                                : "Voicebox is off: without it the neural voice can't speak."
+            }
         case .serverSpento:
             avvisa(ErroreJarvis.nonRaggiungibile.localizedDescription, grave: true)
             voceDescrizione = it ? "Voce di sistema: Zoe (premium)" : "System voice: Zoe (premium)"
