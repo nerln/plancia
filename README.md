@@ -347,7 +347,8 @@ so instead of failing silently. The default is read-only; `--scrive` lets
 the agent write, and that is a choice you make every time. `plancia manda
 "rerun the ablation" --agente codex --progetto atlas` is the older alias for
 the same thing without a task id: it still works but prints a deprecation
-warning on stderr and is going away in a future release. Inside Claude Code
+warning on stderr and is going away in a future release. The run lives inside
+that command, so it waits for the agent to finish before it exits. Inside Claude Code
 and Codex, the same resume lives behind the `plancia` tool with
 `azione="riprendi"` and the task's `id`.
 
@@ -472,13 +473,18 @@ parent's key) a row can carry:
   alone.
 - `inglobato_in`: the project this one was folded into. It means parent = that
   project, state `archiviato`, and a line "Inglobato in atlas: <reason>" added
-  to the end of the project's summary.
+  to the end of the project's summary. If that project cannot be a parent (it
+  is automatic, or is itself a child) the parent is left alone but the state and
+  the line are still written, and `--applica` says so.
 - `motivo`: the reason, one sentence. It is required on every row that has a
   `stato` or an `inglobato_in`; `--applica` refuses a row without one and
   `--mostra` marks it `[DA CORREGGERE]`.
 
 `--mostra` prints all of it as one table (key, parent, rule, state, reason).
-A row is all or nothing: if the parent is refused, the state does not change.
+A row is all or nothing: if the parent is refused, the state does not change
+(an `inglobato_in` is the one exception, see above). A file that does not parse
+is one line of error, not a traceback, and `--applica` exits with 1 when it
+refused a row.
 A manual project is only touched by a row that names it with a parent, a state
 or an `inglobato_in`; a project that is not in the file is never touched. The
 format is documented in full at the top of `plancia/riordina.py`.
@@ -631,7 +637,7 @@ warning each time). The full list is in the docstring of `plancia/compartimenti.
 git config core.hooksPath .githooks
 ```
 
-Turns on the hook that runs `python3 tools/prova.py` before every push: 4252
+Turns on the hook that runs `python3 tools/prova.py` before every push: 4341
 checks in a few minutes, against a throwaway archive that never touches
 yours. They cover the schema, the board, the proposals, the search index, the
 recap, the MCP surface and its token budget, every read route of the HTTP API,

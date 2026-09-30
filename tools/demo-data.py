@@ -17,6 +17,7 @@ import random
 import shutil
 import sys
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 # Sicura (29/09/2026): questo script CANCELLA le tabelle dell'archivio che trova e
 # riscrive config.json. Senza PLANCIA_HOME, o con PLANCIA_HOME sulla cartella dati
@@ -340,6 +341,17 @@ def scrivi_turni(conn):
     print(f"turni indicizzati: {esito['turni']}")
 
 
+def cartella_demo(cwd):
+    """Una cartella VERA, sotto `PLANCIA_HOME/lavoro`, al posto di `~/dev/<nome>`:
+    una sessione chiusa la cui cartella non esiste piu' e' "persa" (la
+    trascrizione si cerca per cartella), e lo stato "chiusa" del task Riprendi
+    va mostrato con una che c'e'. Nessun percorso della macchina di chi la crea
+    finisce nel repo: sta nell'archivio dimostrativo, che si butta."""
+    cartella = store.config.DATA_DIR / "lavoro" / Path(cwd).name
+    cartella.mkdir(parents=True, exist_ok=True)
+    return str(cartella)
+
+
 def cartella_claude_config():
     """`PLANCIA_HOME/claude-config`: il CLAUDE_CONFIG_DIR finto sotto cui
     scrivere la trascrizione di `scrivi_trascrizione_chiusa`, mai il vero
@@ -504,6 +516,10 @@ def main():
     # scadenze scaglionate (quelle sono in TASK, sopra).
     for titolo, key, sid, agent, cwd, host in TASK_RIPRESA:
         ts = quando(1)
+        if not host:
+            # una sessione "chiusa" si riprende solo se la sua cartella c'e' ancora
+            # (riprendi._stato_da): ne serve una vera, dentro l'archivio dimostrativo
+            cwd = cartella_demo(cwd)
         conn.execute(
             "INSERT INTO tasks(title, body, status, priority, project_id, source, "
             "session_id, agent, cwd, host, created_at, updated_at) "
@@ -513,7 +529,7 @@ def main():
 
     # La trascrizione finta per lo stato "chiusa": vedi scrivi_trascrizione_chiusa.
     chiusa = next(t for t in TASK_RIPRESA if t[2] == "demo-closed-01")
-    scrivi_trascrizione_chiusa(chiusa[4], chiusa[2])
+    scrivi_trascrizione_chiusa(cartella_demo(chiusa[4]), chiusa[2])
 
     for testo, stato, key, fonte in POST:
         ts = quando(random.randint(0, 8))

@@ -364,20 +364,24 @@ def cmd_manda(args):
         # non parte niente; persa: nuova, detto qui sotto). Senza questo,
         # "manda" e "riprendi --background" sullo stesso task avrebbero
         # comportamenti diversi, e non sarebbe piu' un vero alias.
+        # Il lancio vive in un thread di QUESTO processo (vedi il docstring di
+        # cantiere.py): se il comando esce senza aspettarlo, il thread muore, il
+        # lancio resta "in coda" per sempre e il task resta "in corso" senza che
+        # niente lavori. Quindi qui si aspetta sempre, con o senza --attendi (che
+        # resta accettato, e non fa piu' differenza): come `riprendi --background`.
+        print("Il lavoro gira dentro questo comando: resto in attesa che finisca.",
+              file=sys.stderr)
         r = riprendi.lancia(conn, " ".join(args.titolo), progetto=progetto,
                             istruzioni=args.istruzioni or "", agente=args.agente,
-                            modo=args.modo, task_id=args.task, attendi=args.attendi,
+                            modo=args.modo, task_id=args.task, attendi=True,
                             compartimento=v.tag, lett=v.lettura)
         if not r.get("lanciato"):
             return _stampa_non_lanciato(r)
         print(f"lancio #{r['run']} · {r['agente']} · {r['modo']} · {r['cwd']}")
         if args.task:
             print("  " + r["piano"]["avviso"])
-        if args.attendi:
-            d = cantiere.dettaglio(conn, r["run"])
-            print(f"\n[{d['stato']}] {d['esito'][:600]}")
-        else:
-            print("gira in sottofondo: `plancia lanci` per vedere com'è andata")
+        d = cantiere.dettaglio(conn, r["run"])
+        print(f"\n[{d['stato']}] {(d['esito'] or '')[:600]}")
     finally:
         v.chiudi()
 
@@ -435,7 +439,8 @@ def cmd_riprendi(args):
         if not args.apri:
             # cosa farebbe "--background" per questo task, detto prima
             p = riprendi.piano(v.lettura, s.get("agent"), s.get("session_id"),
-                               s.get("cwd"), task.get("host") or "", args.copia)
+                               s.get("cwd"), task.get("host") or "", args.copia,
+                               task.get("project_key"))
             print("  in background: " + p["avviso"])
         if args.dove:
             print(f"  cwd: {s.get('cwd') or '(nessuna)'}")
@@ -550,6 +555,9 @@ def cmd_riordina(args):
                 # diventa 0 e uno script che controlla l'uscita non si accorge
                 # che il comando non ha fatto niente.
                 return 1
+            except riordina.FileNonValido as exc:
+                print(f"file non valido: {exc}")
+                return 1
             print(riordina.tabella(righe) if righe else "nessuna riga")
         elif args.applica:
             try:
@@ -558,12 +566,22 @@ def cmd_riordina(args):
             except FileNotFoundError:
                 print(f"file non trovato: {args.applica}")
                 return 1
+            except riordina.FileNonValido as exc:
+                print(f"file non valido: {exc}")
+                return 1
             print(f"applicate: {esito['applicate']}  rifiutate: {esito['rifiutate']}")
             if esito["stati"] or esito["inglobati"] or esito["invariate"]:
                 print(f"  stati cambiati: {esito['stati']}  inglobati: {esito['inglobati']}  "
                       f"invariate: {esito['invariate']}")
+            for r in esito["inglobati_senza_padre"]:
+                print(f"  inglobato senza padre {r['chiave']} -> {r['destinazione']}: "
+                      f"{r['motivo']} (stato e nota scritti)")
             for r in esito["dettagli_rifiutate"]:
                 print(f"  rifiutata {r['chiave']} -> {r['padre']}: {r['motivo']}")
+            if esito["rifiutate"]:
+                # uno script che guarda l'uscita deve accorgersi che qualcosa
+                # non e' stato applicato
+                return 1
         elif args.annulla:
             # Accetta sia il nome del batch (mappa4) sia il percorso del file
             # (mappa4.json, o l'intero percorso di --dove): lo stem è quello
@@ -1186,7 +1204,8 @@ def build_parser():
     s.add_argument("--agente", choices=["claude", "codex"], default="claude")
     s.add_argument("--modo", choices=["proposta", "esegui"], default="proposta")
     s.add_argument("--task", type=int, help="id del task di Plancia da chiudere")
-    s.add_argument("--attendi", action="store_true")
+    s.add_argument("--attendi", action="store_true",
+                   help="accettato per compatibilita': il comando aspetta sempre la fine del lavoro")
     s.set_defaults(func=cmd_manda)
 
     s = sub.add_parser("riprendi", help="riprende un task nei suoi tre stati "

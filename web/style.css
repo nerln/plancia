@@ -526,7 +526,11 @@ table.tabella { width: 100%; border-collapse: collapse; font-size: var(--t-md); 
     overflow-x: auto; overflow-y: hidden; }
   .rail nav { flex-direction: row; width: 100%; justify-content: space-around; }
   .rail nav a { flex-direction: column; gap: 2px; padding: 5px 8px; font-size: var(--t-xs); position: relative; }
-  .rail nav a em { position: absolute; top: 0; right: 0; font-size: var(--t-xs); }
+  /* il conteggio e' un distintivo sull'angolo dell'icona (non sopra il suo centro) */
+  .rail nav a em { position: absolute; top: -1px; left: calc(50% + 5px); right: auto; min-width: 16px;
+    padding: 0 4px; border-radius: 8px; background: var(--accent); color: #fff; font-size: var(--t-xs);
+    line-height: 16px; text-align: center; }
+  .rail nav a.on em { color: #fff; background: var(--accent); }
   .topbar { flex-wrap: wrap; padding: 8px 14px; gap: 8px; }
   .topbar-actions { flex: 1 1 100%; margin-left: 0; }
   .ricerca { flex: 1 1 auto; width: auto; order: -1; }
@@ -561,3 +565,12 @@ table.tabella { width: 100%; border-collapse: collapse; font-size: var(--t-md); 
 .scheda-pagina .grid .panel { margin-left: 0; margin-right: 0; }
 .scheda-pagina .tabella { margin-top: 4px; }
 .scheda-pagina .grid { align-items: start; }
+
+/* Il piano di "In background" nel cassetto di un task: cosa succedera' PRIMA di
+   premere (riprende la sessione originale, una copia, una nuova, niente) e, se
+   la sessione e' aperta, il messaggio da incollare li'. */
+.riprendi-piano { padding: 8px 10px; border-radius: var(--r-row); background: var(--hover);
+  color: var(--text-2); font-size: var(--t-sm); line-height: 1.45; }
+.riprendi-piano:empty { display: none; }
+.riprendi-piano pre { margin: 6px 0 0; padding: 6px 8px; border-radius: 6px; background: var(--bg);
+  color: var(--text); white-space: pre-wrap; user-select: all; font-size: var(--t-xs); }

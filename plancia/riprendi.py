@@ -239,18 +239,51 @@ def stato(conn, task) -> dict:
     """I tre stati, calcolati per un task (righa di `tasks`, dict-like).
 
     Torna sempre `{"stato", "motivo", "agent", "session_id", "cwd", "host"}`.
-    `conn` non serve oggi (i dati bastano dal task stesso), ma resta nella
-    firma perché ogni altra funzione di lettura di Plancia la prende, e un
-    domani "viva" potrebbe voler controllare anche `sessions` nel db.
+    `conn` serve a leggere la riga di `sessions` (la cartella e l'agente, se il
+    task non li porta) e a riconoscere un rollout Codex toccato da un lancio di
+    Plancia già finito: vedi `_stato_da`, da cui passa anche `piano()`, così i
+    due dicono sempre la stessa cosa.
     """
     return _stato_da(_campo(task, "agent", "claude"), _campo(task, "session_id", None),
-                     _campo(task, "cwd", ""), _campo(task, "host", ""))
+                     _campo(task, "cwd", ""), _campo(task, "host", ""), conn)
 
 
-def _stato_da(agent, session_id, cwd="", host_task="") -> dict:
+def _stato_da(agent, session_id, cwd="", host_task="", conn=None) -> dict:
     """Il nucleo di `stato()`, sui quattro dati che servono davvero: chi
     lavora, l'id, la cartella, la macchina. Serve anche a chi ha solo un id di
-    sessione (un lancio, una riga della lavagna) e non un task."""
+    sessione (un lancio, una riga della lavagna) e non un task.
+
+    E' l'UNICA fonte dello stato: `stato()` (il pulsante, il terminale, la
+    CLI, l'MCP) e `piano()` (il lavoro senza testa) passano tutti da qui, cosi'
+    non possono piu' contraddirsi. Con `conn` legge la riga di `sessions` (la
+    cartella e l'agente, se il task non li porta) e sa distinguere una sessione
+    Codex "toccata da poco" perche' l'ha appena chiusa un lancio di Plancia
+    (chiusa) da una davvero aperta altrove (viva). Una sessione chiusa la cui
+    cartella non c'e' piu' (o non si sa) e' "persa": senza la sua cartella
+    `--resume` non ritrova la trascrizione, e riprenderla porterebbe a lanciare
+    l'agente in un posto qualunque.
+    """
+    riga = _riga_sessione(conn, session_id)
+    if riga is not None:
+        cwd = cwd or (riga["cwd"] or "")
+        if riga["agent"] in ("claude", "codex"):
+            agent = riga["agent"]
+    s = _stato_grezzo(agent, session_id, cwd, host_task)
+    if s["stato"] == "viva" and agent == "codex" and _rollout_e_nostro(conn, session_id):
+        # il rollout e' stato toccato da poco, ma dal lancio di Plancia che e'
+        # appena finito su questa stessa sessione: nessuno la tiene aperta
+        s = dict(s, stato="chiusa",
+                 motivo="il rollout è stato toccato da un lancio di Plancia appena finito")
+    if s["stato"] == "chiusa" and (not cwd or not os.path.isdir(cwd)):
+        s = dict(s, stato="persa",
+                 motivo=("la cartella della sessione non c'è più" if cwd
+                         else "della sessione non si sa la cartella"))
+    return s
+
+
+def _stato_grezzo(agent, session_id, cwd="", host_task="") -> dict:
+    """Lo stato letto dai soli segnali della sessione (registro, trascrizione,
+    rollout), senza correzioni: vedi `_stato_da`."""
     host_ora = socket.gethostname()
 
     base = {"agent": agent, "session_id": session_id, "cwd": cwd,
@@ -409,8 +442,13 @@ def apri(task, conn=None) -> dict:
         if s["stato"] == "viva":
             return {"stato": "viva", "motivo": s["motivo"], "messaggio": messaggio(task)}
         argv = comando(task, s, conn)
-        cwd = _campo(task, "cwd")
-        if s["stato"] == "persa" or not cwd or not os.path.isdir(cwd):
+        # la cartella e' quella che dice lo stato (riletta anche dalla tabella
+        # delle sessioni): una sessione chiusa senza la sua cartella e' gia'
+        # "persa" (vedi `_stato_da`), quindi qui non si lancia mai `--resume` in
+        # un posto dove la trascrizione non si trova. Una sessione persa riparte
+        # dalla cartella del task se c'e' ancora, altrimenti da quella del progetto.
+        cwd = s.get("cwd") or ""
+        if not cwd or not os.path.isdir(cwd):
             cwd = cantiere.cartella_per(conn, _campo(task, "project_id", None))
     finally:
         if proprio:
@@ -487,8 +525,12 @@ _AVVISI = {
              "storia, e quella aperta non riceve niente.",
     "nuova": "Non c'è una sessione da riprendere ({motivo}): parte una sessione "
              "NUOVA, con il contesto scritto a mano.",
-    "niente": "La sessione ({sid}) è aperta ({motivo}): da qui non la tocco. "
+    "niente": "La sessione {sid} è aperta: da qui non la tocco. "
               "Incolla il messaggio direttamente lì.",
+    # Codex non ha un modo scriptabile di sapere se un thread e' aperto: "aperta"
+    # vuol dire solo "il rollout e' stato toccato da poco", e l'avviso lo dice.
+    "niente_codex": "La sessione {sid} sembra aperta ({motivo}): da qui non la tocco. "
+                    "Incolla il messaggio direttamente lì.",
 }
 
 
@@ -529,7 +571,7 @@ def _rollout_e_nostro(conn, session_id) -> bool:
     return toccato <= fine_ts + 5
 
 
-def piano(conn, agente, session_id, cwd="", host="", copia=False) -> dict:
+def piano(conn, agente, session_id, cwd="", host="", copia=False, progetto=None) -> dict:
     """Cosa succede a un lavoro senza testa che parte da questa sessione.
 
     Torna sempre `{"modo", "stato", "motivo", "agent", "origine", "sessione",
@@ -541,20 +583,15 @@ def piano(conn, agente, session_id, cwd="", host="", copia=False) -> dict:
     `cwd` e `agente` mancanti si leggono dalla riga di `sessions`: una riga
     della lavagna o un lancio portano solo l'id. `copia=True` chiede una copia
     invece di riprendere l'originale (utile soprattutto se è aperta).
+
+    `cwd` è la cartella in cui il lavoro PARTE davvero, non quella che il task
+    ricordava: per "riprendi" e "copia" è la cartella della sessione; per
+    "nuova" è la cartella del task se c'è ancora, altrimenti quella del
+    `progetto` (`cantiere.cartella_per`, cioè la stessa che `lancia()` userà).
+    Prima mostrava sempre la cartella del task, e l'agente partiva altrove.
     """
-    agente = agente or "claude"
-    cwd = cwd or ""
-    riga = _riga_sessione(conn, session_id)
-    if riga is not None:
-        cwd = cwd or (riga["cwd"] or "")
-        if riga["agent"] in ("claude", "codex"):
-            agente = riga["agent"]
-    s = _stato_da(agente, session_id, cwd, host)
-    if s["stato"] == "viva" and agente == "codex" and _rollout_e_nostro(conn, session_id):
-        # il rollout e' stato toccato da poco, ma dal lancio di Plancia che e'
-        # appena finito su questa stessa sessione: nessuno la tiene aperta
-        s = dict(s, stato="chiusa",
-                 motivo="il rollout è stato toccato da un lancio di Plancia appena finito")
+    s = _stato_da(agente or "claude", session_id, cwd or "", host, conn)
+    agente, cwd = s["agent"], s["cwd"] or ""
     sid = (session_id or "")[:8]
     stato_s = s["stato"]
 
@@ -573,11 +610,15 @@ def piano(conn, agente, session_id, cwd="", host="", copia=False) -> dict:
             modo = "nuova"
             motivo = "la cartella della sessione non c'è più" if cwd else \
                 "della sessione non si sa la cartella"
+    if modo == "nuova" and not (cwd and os.path.isdir(cwd)):
+        # niente cartella del task da cui ripartire: quella del progetto (o la HOME)
+        cwd = cantiere.cartella_per(conn, progetto) if conn is not None else ""
+    chiave = "niente_codex" if (modo == "niente" and agente == "codex") else modo
     return {"modo": modo, "stato": stato_s, "motivo": motivo, "agent": agente,
             "origine": session_id or None,
             "sessione": session_id if modo in ("riprendi", "copia") else None,
             "cwd": cwd,
-            "avviso": _AVVISI[modo].format(sid=sid, motivo=motivo)}
+            "avviso": _AVVISI[chiave].format(sid=sid, motivo=motivo)}
 
 
 def lancia(conn, titolo, dettaglio="", progetto=None, istruzioni="", agente="claude",
@@ -611,7 +652,10 @@ def lancia(conn, titolo, dettaglio="", progetto=None, istruzioni="", agente="cla
         cwd_origine = _campo(task, "cwd", "")
         host = _campo(task, "host", "")
     agente_origine = (_campo(task, "agent", "") or agente) if task else agente
-    p = piano(lett, agente_origine, origine, cwd_origine, host, copia)
+    p = piano(lett, agente_origine, origine, cwd_origine, host, copia, progetto)
+    if p["modo"] == "nuova" and cwd and os.path.isdir(cwd):
+        # una cartella data esplicitamente vince sul ripiego (quella del progetto)
+        p["cwd"] = cwd
 
     if anteprima:
         return {"lanciato": False, "anteprima": True, "piano": p}
@@ -625,7 +669,7 @@ def lancia(conn, titolo, dettaglio="", progetto=None, istruzioni="", agente="cla
     esito = cantiere.avvia(
         conn, titolo, dettaglio=dettaglio, progetto=progetto, istruzioni=istruzioni,
         agente=p["agent"] if riprende else agente, scrive=scrive,
-        cwd=p["cwd"] if riprende else cwd,
+        cwd=p["cwd"] or None,
         task_id=task_id if task_id is not None else (task["id"] if task else None),
         lingua=lingua, attendi=attendi, sessione=p["sessione"], modo=modo,
         compartimento=compartimento, copia=(p["modo"] == "copia"),
@@ -660,7 +704,8 @@ def rilancia_run(conn, run_id, scrive=None, lingua="it", anteprima=False,
         origine = _campo(task, "session_id", None)
         cwd_origine = _campo(task, "cwd", "") or cwd_origine
         host = _campo(task, "host", "")
-    p = piano(lett, r["agente"], origine, cwd_origine, host, copia)
+    p = piano(lett, r["agente"], origine, cwd_origine, host, copia,
+              _campo(task, "project_key", None) if task else None)
 
     if anteprima:
         return {"lanciato": False, "anteprima": True, "piano": p}
@@ -686,7 +731,7 @@ def rilancia_run(conn, run_id, scrive=None, lingua="it", anteprima=False,
     titolo = (r["prompt"] or "")[:200]
     esito = cantiere.avvia(
         conn, titolo, agente=p["agent"] if riprende else r["agente"], scrive=scrive_ora,
-        cwd=p["cwd"] if riprende else r["cwd"], task_id=r["task_id"], lingua=lingua,
+        cwd=p["cwd"] or r["cwd"], task_id=r["task_id"], lingua=lingua,
         attendi=attendi, sessione=p["sessione"], compartimento=compartimento,
         copia=(p["modo"] == "copia"), prompt_pronto=verbatim)
     esito["lanciato"] = True

@@ -452,8 +452,12 @@ def _prova_motivo_obbligatorio_e_rifiuti(prova):
     _progetto(conn2, "auto-padre", auto=1)
     _progetto(conn2, "figlio", auto=1)
     prima2 = _stato_completo(conn2)
+    # Un PADRE esplicito rifiutato resta tutto o niente. (Un inglobamento in un
+    # automatico non e' piu' un rifiuto: archivia e annota senza scrivere il
+    # padre, vedi tools/prove/riprendi-riparazione.py.)
     esito2 = riordina.applica(conn2, _scrivi_json(
-        [{"chiave": "figlio", "inglobato_in": "auto-padre", "motivo": "padre automatico"}],
+        [{"chiave": "figlio", "padre": "auto-padre", "stato": "archiviato",
+          "motivo": "padre automatico"}],
         nome="prova-tutto-o-niente"))
     prova("padre rifiutato da set_parent: anche lo stato resta com'era",
           esito2["rifiutate"] == 1 and _stato_completo(conn2) == prima2, str(esito2))

@@ -74,7 +74,7 @@ MODELLI = {
         r"^(?:fallo|falla|s[iì](?:,? fallo| grazie)?|procedi|vai|ok(?:,? procedi)?|d'accordo)\b(.*)$",
         r"^(?:do it|yes(?:,? do it)?|go ahead|proceed)\b(.*)$",
         r"^(?:hazlo|s[ií](?:,? hazlo)?|adelante)\b(.*)$",
-        r"^(?:la |il )?(prima|primo|seconda|secondo|terza|terzo)\b(.*)$",
+        r"^(?:la |il )?(prima|primo|seconda|secondo|terza|terzo|quarta|quarto)\b(.*)$",
     ],
     "eseguilo": [
         r"^(?:esegui(?:lo|la)?|fallo davvero|fallo per davvero|fallo e basta)\b(.*)$",
@@ -953,13 +953,17 @@ def _scheda(azione, args, lett, conn, lang):
             # dashboard, MCP e CLI: la scheda dice la verita' prima del Conferma
             piano_r = riprendi.piano(lett, task.get("agent") or agente_scelto,
                                      task.get("session_id"), task.get("cwd") or "",
-                                     task.get("host") or "")
+                                     task.get("host") or "", False, chiave)
             if piano_r["modo"] == "riprendi":
                 sessione_dice = t["sessione_task"]
                 agente_scelto = piano_r.get("agent") or agente_scelto
                 piano_cwd = piano_r.get("cwd") or None
             elif piano_r["modo"] == "niente":
                 sessione_dice = t["viva"]
+            elif piano_r["modo"] == "nuova":
+                # la cartella mostrata e' quella in cui l'agente parte davvero
+                # (quella del task se c'e' ancora, altrimenti del progetto)
+                piano_cwd = piano_r.get("cwd") or None
         scrive = bool(args.get("scrive"))
         cwd = _testo(args.get("cwd"), 400) or None
         if piano_cwd:

@@ -24,7 +24,10 @@ corregge a mano (o con un agente che ha studiato i progetti). Campi:
                   come padre = quella chiave + stato "archiviato" + una nota
                   in coda al sommario del progetto, "Inglobato in <chiave>:
                   <motivo>". Se c'è anche `padre` deve essere la stessa chiave;
-                  se c'è anche `stato` deve essere "archiviato".
+                  se c'è anche `stato` deve essere "archiviato". Se la
+                  destinazione non può fare da padre (è un progetto automatico,
+                  o è a sua volta figlio) il padre non si scrive, ma lo stato e
+                  la nota sì: l'esito la conta fra gli «inglobati senza padre».
     motivo        il perché, in una frase. OBBLIGATORIO in ogni riga che ha
                   `stato` o `inglobato_in` (una riga senza viene rifiutata da
                   `--applica` e segnata "da correggere" da `--mostra`); per le
@@ -48,15 +51,20 @@ Regole di `--applica`
   di padre, stato e sommario (`slot.riordina_progetto`).
 - Tutto o niente per riga: se il padre viene rifiutato (padre automatico, già
   figlio, progetto con figli...) lo stato di quella riga non cambia. Le righe
-  rifiutate non fermano le altre e tornano nell'esito con il motivo.
+  rifiutate non fermano le altre e tornano nell'esito con il motivo. Unica
+  eccezione, l'inglobamento (vedi `inglobato_in`): il padre è facoltativo.
 - Un progetto manuale (auto=0) si tocca solo se il file ha una riga che lo
   nomina con un `padre`, uno `stato` o un `inglobato_in`: una riga vuota su un
   manuale non lo sposta nemmeno con `--resto-in-cartelle-viste`. Un progetto
   che nel file non c'è non si tocca mai.
 - Una riga di solo `stato` non finisce sotto `cartelle-viste`: quel resto vale
   solo per le righe senza padre e senza stato.
-- Riapplicare lo stesso file non cambia niente (le righe tornano "invariate")
-  e non ripete la nota.
+- Riapplicare lo stesso file non cambia niente (le righe tornano "invariate",
+  anche quelle di solo padre) e non ripete la nota.
+- Un file che non si legge (JSON non valido, non è una lista) è un errore
+  detto in una riga (`FileNonValido`), non un traceback; una riga che non è un
+  oggetto è rifiutata con un motivo. Il comando esce con 1 se una riga è stata
+  rifiutata.
 
 Regole di `--annulla`
 ---------------------
@@ -298,9 +306,33 @@ def proponi(conn, dove=None):
     return percorso, righe
 
 
+class FileNonValido(ValueError):
+    """Il file di riordino non si legge: JSON scritto male, o non è una lista."""
+
+
 def carica(percorso):
-    """Rilegge il JSON di `proponi` (magari corretto a mano da Eugenio)."""
-    return json.loads(Path(percorso).expanduser().read_text(encoding="utf-8"))
+    """Rilegge il JSON di `proponi` (magari corretto a mano da Eugenio).
+
+    Un file che non c'è alza `FileNotFoundError` come sempre; uno che c'è ma
+    non è una lista di righe alza `FileNonValido` con il perché, in italiano.
+    """
+    percorso = Path(percorso).expanduser()
+    testo = percorso.read_text(encoding="utf-8")
+    try:
+        dati = json.loads(testo)
+    except ValueError as exc:
+        raise FileNonValido(f"{percorso.name} non è un JSON valido: {exc}") from exc
+    if not isinstance(dati, list):
+        raise FileNonValido(f"{percorso.name} dovrebbe essere una lista di righe, "
+                            f"è {type(dati).__name__}")
+    return dati
+
+
+def _t(valore):
+    """Un valore di riga come testo da stampare, qualunque cosa ci sia scritta."""
+    if valore is None:
+        return ""
+    return valore if isinstance(valore, str) else json.dumps(valore, ensure_ascii=False)
 
 
 STATI_AMMESSI = slot.STATI_RIORDINO
@@ -316,6 +348,8 @@ def azione_riga(riga):
     funzione serve a `applica` (per rifiutare) e a `tabella` (per segnare la
     riga "da correggere"), così le due non possono divergere.
     """
+    if not isinstance(riga, dict):
+        return None, "la riga non è un oggetto con «chiave»"
     chiave = riga.get("chiave")
     if not isinstance(chiave, str) or not chiave.strip():
         return None, "manca la chiave del progetto"
@@ -372,8 +406,8 @@ def applica(conn, percorso, resto_in_cartelle_viste=False):
     batch = percorso.stem
 
     if resto_in_cartelle_viste and any(
-            not r.get("padre") and not r.get("stato") and not r.get("inglobato_in")
-            for r in righe):
+            isinstance(r, dict) and not r.get("padre") and not r.get("stato")
+            and not r.get("inglobato_in") for r in righe):
         # Un bucket manuale come un altro: se non esiste ancora lo crea,
         # se esiste già _force=True non serve (auto/kind non sono nella
         # lista che upsert_project protegge da un ingest successivo).
@@ -385,17 +419,22 @@ def applica(conn, percorso, resto_in_cartelle_viste=False):
     inglobati = 0
     invariate = 0
     rifiutate = []
+    senza_padre = []
     for riga in righe:
-        chiave = riga.get("chiave")
         azione, errore = azione_riga(riga)
+        if isinstance(riga, dict):
+            chiave = riga.get("chiave")
+            padre_scritto = _t(riga.get("inglobato_in") or riga.get("padre"))
+        else:
+            chiave, padre_scritto = None, ""
         if errore:
-            rifiutate.append({"chiave": chiave, "motivo": errore,
-                              "padre": riga.get("inglobato_in") or riga.get("padre") or ""})
+            rifiutate.append({"chiave": chiave, "motivo": errore, "padre": padre_scritto})
             continue
         if azione:
             esito = slot.riordina_progetto(
                 conn, chiave, batch, padre_key=azione["padre"] or None,
-                stato=azione["stato"] or None, nota=azione["nota"] or None)
+                stato=azione["stato"] or None, nota=azione["nota"] or None,
+                padre_facoltativo=azione["inglobato"])
             if not esito["ok"]:
                 rifiutate.append({"chiave": chiave, "padre": azione["padre"],
                                   "motivo": esito["motivo"]})
@@ -407,6 +446,9 @@ def applica(conn, percorso, resto_in_cartelle_viste=False):
                     stati += 1
                 if azione["inglobato"]:
                     inglobati += 1
+                    if esito.get("padre_saltato"):
+                        senza_padre.append({"chiave": chiave, "destinazione": azione["padre"],
+                                            "motivo": esito["padre_saltato"]})
             continue
         padre = riga.get("padre") or ""
         if not padre:
@@ -416,14 +458,16 @@ def applica(conn, percorso, resto_in_cartelle_viste=False):
                 continue
             padre = CARTELLE_VISTE
         esito = slot.set_parent(conn, chiave, padre, batch)
-        if esito["ok"]:
+        if esito["ok"] and esito.get("cambiato") is False:
+            invariate += 1
+        elif esito["ok"]:
             applicate += 1
         else:
             rifiutate.append({"chiave": chiave, "padre": padre, "motivo": esito["motivo"]})
     conn.commit()
     return {"applicate": applicate, "rifiutate": len(rifiutate),
             "dettagli_rifiutate": rifiutate, "stati": stati, "inglobati": inglobati,
-            "invariate": invariate}
+            "invariate": invariate, "inglobati_senza_padre": senza_padre}
 
 
 def annulla(conn, batch):
@@ -455,6 +499,21 @@ def tabella(righe):
     mano da Eugenio senza quel campo non deve far fallire l'intera tabella
     con un KeyError: meglio una cella vuota.
     """
+    # Una riga scritta male (non un oggetto, un campo che non e' un testo) non
+    # deve far cadere la tabella: si normalizza a testo e si segna "da correggere"
+    # (`azione_riga` guarda la riga ORIGINALE, quindi il difetto resta detto).
+    originali = {}
+    normalizzate = []
+    for r in righe:
+        if isinstance(r, dict):
+            n = {k: (v if isinstance(v, str) else _t(v)) for k, v in r.items()
+                 if k in ("chiave", "padre", "inglobato_in", "stato", "regola", "motivo")}
+        else:
+            n = {"chiave": "(riga non valida)", "motivo": _t(r)}
+        originali[id(n)] = r
+        normalizzate.append(n)
+    righe = normalizzate
+
     def padre_di(r):
         return r.get("padre") or r.get("inglobato_in") or ""
 
@@ -479,7 +538,7 @@ def tabella(righe):
         if con_stato:
             testo += f"{(stato_di(r) or '-'):<10} "
         testo += r.get("motivo", "") or ""
-        _, errore = azione_riga(r)
+        _, errore = azione_riga(originali[id(r)])
         if errore:
             testo += f"  [DA CORREGGERE: {errore}]"
         return testo.rstrip()

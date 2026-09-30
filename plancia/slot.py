@@ -105,12 +105,18 @@ def set_parent(conn, figlio_key, padre_key, batch) -> dict:
 
     prima = figlio["parent_id"]
     dopo = padre["id"]
+    if prima == dopo:
+        # gia' com'era: niente scrittura e niente evento (un evento con
+        # prima == dopo sarebbe rumore nel registro, e riapplicare un file di
+        # riordino conterebbe come "applicata" una riga che non ha cambiato niente)
+        return {"ok": True, "cambiato": False, "figlio": figlio["key"],
+                "padre": padre["key"], "prima": prima, "dopo": dopo}
     conn.execute("UPDATE projects SET parent_id=?, updated_at=? WHERE id=?",
                  (dopo, store.now(), figlio["id"]))
     eventi.scrivi(f"padre:{batch}", f"{figlio['name']} sotto {padre['name']}", figlio["key"],
                   {"batch": batch, "figlio": figlio["key"], "prima": prima, "dopo": dopo})
     conn.commit()
-    return {"ok": True, "figlio": figlio["key"], "padre": padre["key"],
+    return {"ok": True, "cambiato": True, "figlio": figlio["key"], "padre": padre["key"],
             "prima": prima, "dopo": dopo}
 
 
@@ -132,7 +138,8 @@ def con_nota(sommario, nota) -> str:
     return f"{sommario}\n{nota}" if sommario else nota
 
 
-def riordina_progetto(conn, figlio_key, batch, padre_key=None, stato=None, nota=None) -> dict:
+def riordina_progetto(conn, figlio_key, batch, padre_key=None, stato=None, nota=None,
+                      padre_facoltativo=False) -> dict:
     """Cambia in un colpo solo padre, stato e nota (`summary`) di un progetto,
     con UN evento `padre:<batch>` che porta i valori di prima e di dopo di
     ognuno: `annulla(batch)` disfa così tutto insieme, campo per campo.
@@ -140,6 +147,13 @@ def riordina_progetto(conn, figlio_key, batch, padre_key=None, stato=None, nota=
     Tutto o niente: se il padre viene rifiutato, lo stato non cambia. Un
     valore uguale a quello che c'è già non conta come cambiamento; se nessun
     campo cambia non si scrive nessun evento (`cambiato: False`).
+
+    `padre_facoltativo=True` e' per un inglobamento: il progetto confluisce in
+    un altro, e la destinazione puo' essere un progetto automatico o un figlio,
+    che come padre non vanno bene (profondita' 1, padri solo manuali). In quel
+    caso il padre NON si scrive, ma lo stato e la nota si', e il risultato porta
+    `padre_saltato` col motivo: la nota "Inglobato in <destinazione>" dice
+    comunque dove e' finito. Una destinazione che non esiste resta un rifiuto.
     """
     if _batch_non_valido(batch):
         return {"ok": False,
@@ -153,14 +167,18 @@ def riordina_progetto(conn, figlio_key, batch, padre_key=None, stato=None, nota=
     parent_prima = figlio["parent_id"]
     parent_dopo = parent_prima
     padre = None
+    padre_saltato = None
     if padre_key:
         padre = _progetto_esatto(conn, padre_key)
         if not padre:
             return {"ok": False, "motivo": f"progetto inesistente: {padre_key}"}
         rifiuto = _rifiuto_padre(conn, figlio, padre)
-        if rifiuto:
+        if rifiuto and not padre_facoltativo:
             return {"ok": False, "motivo": rifiuto}
-        parent_dopo = padre["id"]
+        if rifiuto:
+            padre_saltato, padre = rifiuto, None
+        else:
+            parent_dopo = padre["id"]
     stato_prima = figlio["status"]
     stato_dopo = stato or stato_prima
     nota_prima = figlio["summary"] or ""
@@ -168,7 +186,7 @@ def riordina_progetto(conn, figlio_key, batch, padre_key=None, stato=None, nota=
 
     if (parent_dopo, stato_dopo, nota_dopo) == (parent_prima, stato_prima, nota_prima):
         return {"ok": True, "cambiato": False, "figlio": figlio["key"],
-                "padre": padre["key"] if padre else None}
+                "padre": padre["key"] if padre else None, "padre_saltato": padre_saltato}
 
     conn.execute(
         "UPDATE projects SET parent_id=?, status=?, summary=?, updated_at=? WHERE id=?",
@@ -187,7 +205,7 @@ def riordina_progetto(conn, figlio_key, batch, padre_key=None, stato=None, nota=
                    "nota_prima": nota_prima, "nota_dopo": nota_dopo})
     conn.commit()
     return {"ok": True, "cambiato": True, "figlio": figlio["key"],
-            "padre": padre["key"] if padre else None,
+            "padre": padre["key"] if padre else None, "padre_saltato": padre_saltato,
             "prima": parent_prima, "dopo": parent_dopo,
             "stato_prima": stato_prima, "stato_dopo": stato_dopo}
 

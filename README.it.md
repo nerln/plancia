@@ -451,6 +451,8 @@ lettura; `--scrive` lo lascia scrivere, ed è una scelta che fai ogni volta.
 `plancia manda "rilancia l'ablation" --agente codex --progetto atlas` è il
 vecchio alias per la stessa cosa senza un id di task: funziona ancora ma
 stampa un avviso di deprecazione su stderr e sparirà in un prossimo rilascio.
+Il lavoro vive dentro quel comando, che quindi aspetta la fine dell'agente prima
+di uscire.
 Dentro Claude Code e Codex la stessa ripresa sta dietro al tool `plancia` con
 `azione="riprendi"` e l'`id` del task.
 
@@ -577,14 +579,18 @@ chiave del padre) una riga può portare:
   non si tocca.
 - `inglobato_in`: il progetto dentro cui questo è confluito. Vale come padre =
   quel progetto, stato `archiviato`, e una riga "Inglobato in atlante:
-  <motivo>" in coda al sommario del progetto.
+  <motivo>" in coda al sommario del progetto. Se quel progetto non può fare da
+  padre (è automatico, o è a sua volta un figlio) il padre non si scrive, ma lo
+  stato e la riga sì, e `--applica` lo dice.
 - `motivo`: il perché, in una frase. È obbligatorio in ogni riga che ha uno
   `stato` o un `inglobato_in`; `--applica` rifiuta la riga che ne è priva e
   `--mostra` la segna `[DA CORREGGERE]`.
 
 `--mostra` fa vedere tutto in una tabella sola (chiave, padre, regola, stato,
 motivo). Una riga è tutto o niente: se il padre viene rifiutato, lo stato non
-cambia. Un progetto manuale si tocca solo con una riga che lo nomina con un
+cambia (l'`inglobato_in` è l'unica eccezione, vedi sopra). Un file che non si
+legge è una riga di errore, non un traceback, e `--applica` esce con 1 se ha
+rifiutato una riga. Un progetto manuale si tocca solo con una riga che lo nomina con un
 padre, uno stato o un `inglobato_in`; un progetto che nel file non c'è non si
 tocca mai. Il formato è documentato per intero in cima a
 `plancia/riordina.py`.
@@ -741,7 +747,7 @@ git config core.hooksPath .githooks
 ```
 
 Accende il gancio che fa girare `python3 tools/prova.py` prima di ogni push:
-4252 controlli in pochi minuti, su un archivio finto che non tocca
+4341 controlli in pochi minuti, su un archivio finto che non tocca
 il tuo.
 
 ## Licenza

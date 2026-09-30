@@ -467,8 +467,14 @@ def _esegui(run_id, agente, scrive, prompt, cwd, log, titolo, progetto, task_id,
 
 
 def _chiudi(conn, run_id, stato, esito, acc, titolo, progetto, task_id, scrive):
+    # `sessione=COALESCE(?, sessione)`: un lancio che RIPRENDE una sessione ne
+    # scrive l'id in `avvia()`, prima ancora di partire. Se lo stream non porta
+    # nessun session_id (il lancio fallisce subito, o Codex e' occupato) `acc`
+    # non ha niente da dire, e sovrascrivere con NULL faceva perdere la sessione
+    # proprio a chi ne aveva piu' bisogno: "Rilancia" ripartiva da una nuova.
     conn.execute(
-        "UPDATE runs SET stato=?, fine=?, esito=?, sessione=?, token=?, costo=? WHERE id=?",
+        "UPDATE runs SET stato=?, fine=?, esito=?, sessione=COALESCE(?, sessione), "
+        "token=?, costo=? WHERE id=?",
         (stato, store.now(), (esito or "")[:4000], acc.get("sessione"),
          acc.get("token") or 0, acc.get("costo") or 0, run_id))
     modo = "esegui" if scrive else "proposta"

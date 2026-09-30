@@ -667,7 +667,7 @@ def call_tool(name: str, args: dict) -> str:
             argv = _riprendi.comando(task, s, lettura)
             piano = _riprendi.piano(lettura, s.get("agent"), s.get("session_id"),
                                     s.get("cwd"), task.get("host") or "",
-                                    bool(args.get("copia")))
+                                    bool(args.get("copia")), task.get("project_key"))
             return _fmt({"stato": s.get("stato"), "motivo": s.get("motivo"),
                         "sessione": s.get("session_id"), "cwd": s.get("cwd"),
                         "piano": piano,

@@ -621,7 +621,8 @@ class Handler(BaseHTTPRequestHandler):
                 # per questo task (riprendere la sessione originale, una
                 # copia, una nuova, niente), da mostrare PRIMA di lanciarlo
                 piano = riprendi.piano(conn, s.get("agent"), s.get("session_id"),
-                                       s.get("cwd"), task.get("host") or "")
+                                       s.get("cwd"), task.get("host") or "", False,
+                                       task.get("project_key"))
                 # La data da mostrare in "sessione del <data>" (chiusa/codex):
                 # riprendi.stato() non la porta (non le serve per decidere lo
                 # stato), quindi si va a prenderla dalla sessione vera se
@@ -899,6 +900,7 @@ class Handler(BaseHTTPRequestHandler):
                     conn, int(m.group(1)), **con_progetto_valido(body)))
             if m and method == "DELETE":
                 conn.execute("DELETE FROM tasks WHERE id=?", (int(m.group(1)),))
+                lavagna.aggiorna_plancia(conn, int(m.group(1)))
                 conn.commit()
                 return self._json({"eliminato": int(m.group(1))})
             if path == "/api/posts" and method == "POST":

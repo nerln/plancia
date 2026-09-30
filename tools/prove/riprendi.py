@@ -148,7 +148,10 @@ def _prova_stato_claude(prova):
     with tempfile.TemporaryDirectory() as tmp:
         from plancia import richiamo
         claude_dir = Path(tmp) / "claude-config"
-        cwd_finta = "/Users/prova/dev/qualcosa"
+        # una cartella VERA: una sessione chiusa la cui cartella non c'e' piu' e'
+        # "persa" (riprendi._stato_da), quindi non basta un percorso inventato
+        cwd_finta = str(Path(tmp) / "dev" / "qualcosa")
+        Path(cwd_finta).mkdir(parents=True)
         cartella = claude_dir / "projects" / richiamo.cartella_sessione(cwd_finta)
         cartella.mkdir(parents=True)
         (cartella / "chiusa-456.jsonl").write_text('{"type":"summary"}\n', "utf-8")
@@ -213,7 +216,9 @@ def _prova_stato_codex(prova):
         cartella.mkdir(parents=True)
         rollout = cartella / f"rollout-2026-09-16T10-00-00-{rid}.jsonl"
         rollout.write_text('{"type":"session_meta","payload":{"cwd":"/tmp/x"}}\n', "utf-8")
-        t = _task(session_id=rid, agent="codex", host=socket.gethostname())
+        cwd_codex = Path(tmp) / "lavoro"      # la cartella deve esserci: vedi _stato_da
+        cwd_codex.mkdir()
+        t = _task(session_id=rid, agent="codex", host=socket.gethostname(), cwd=str(cwd_codex))
 
         with _cartelle_base(config, codex, codex_home=codex_home):
             s = riprendi.stato(conn, t)

@@ -144,7 +144,12 @@ def da_plancia(conn) -> list:
     righe = conn.execute(
         "SELECT id, title, body, status, project_id, created_at, updated_at, agent, "
         "session_id FROM tasks").fetchall()
-    return [{
+    return [_voce_plancia(r) for r in righe]
+
+
+def _voce_plancia(r) -> dict:
+    """La voce della lavagna per una riga di `tasks`."""
+    return {
         "fonte": "plancia",
         "chiave": str(r["id"]),
         "titolo": r["title"],
@@ -157,7 +162,7 @@ def da_plancia(conn) -> list:
         "task_id": r["id"],
         "creato_at": r["created_at"],
         "aggiornato_at": r["updated_at"],
-    } for r in righe]
+    }
 
 
 def _iso(ts) -> str:
@@ -176,6 +181,48 @@ def _da_ms(ms) -> str:
 # --------------------------------------------------------------------------
 # la lavagna
 # --------------------------------------------------------------------------
+
+def _scrivi_voce(conn, v):
+    """Scrive (o aggiorna) una voce della lavagna. Una sola scrittura per `sync`
+    e per `aggiorna_plancia`: la stessa riga di SQL, cosi' non divergono."""
+    conn.execute(
+        "INSERT INTO agenda(fonte, chiave, titolo, dettaglio, stato, stato_origine, "
+        "agente, sessione, project_id, task_id, creato_at, aggiornato_at, visto_at) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) "
+        "ON CONFLICT(fonte, chiave) DO UPDATE SET titolo=excluded.titolo, "
+        "dettaglio=excluded.dettaglio, stato=excluded.stato, "
+        "stato_origine=excluded.stato_origine, agente=excluded.agente, "
+        "sessione=excluded.sessione, "
+        "project_id=COALESCE(excluded.project_id, agenda.project_id), "
+        "task_id=COALESCE(excluded.task_id, agenda.task_id), "
+        "aggiornato_at=excluded.aggiornato_at, visto_at=excluded.visto_at",
+        (v["fonte"], v["chiave"], v["titolo"], v.get("dettaglio", ""), v["stato"],
+         v.get("stato_origine", ""), v.get("agente", ""), v.get("sessione", ""),
+         v.get("project_id"), v.get("task_id"), v.get("creato_at") or store.now(),
+         v.get("aggiornato_at") or store.now(), store.now()))
+
+
+def aggiorna_plancia(conn, task_id):
+    """Riflette SUBITO un task di Plancia nella lavagna: creato, cambiato o
+    cancellato. La lavagna (`agenda`) si riempie con `sync()`, che gira ogni
+    tanto; senza questo un task scritto dalla dashboard, dalla riga di comando
+    o da un agente non compariva in "Tutti i task" finche' non passava un sync.
+    Tocca solo la voce di quel task, mai le altre fonti. Non fa commit: lo fa
+    chi ha scritto il task."""
+    r = conn.execute(
+        "SELECT id, title, body, status, project_id, created_at, updated_at, agent, "
+        "session_id FROM tasks WHERE id=?", (task_id,)).fetchone()
+    if r is None:
+        conn.execute("DELETE FROM agenda WHERE fonte='plancia' AND chiave=?", (str(task_id),))
+        return
+    v = _voce_plancia(r)
+    if v.get("project_id") is None and v.get("sessione"):
+        s = conn.execute("SELECT project_id FROM sessions WHERE session_id=?",
+                         (v["sessione"],)).fetchone()
+        if s:
+            v["project_id"] = s["project_id"]
+    _scrivi_voce(conn, v)
+
 
 def sync(conn, progress=None, escl=None) -> int:
     """Rilegge le tre liste e le riscrive nella lavagna.
@@ -208,21 +255,7 @@ def sync(conn, progress=None, escl=None) -> int:
         if v.get("project_id") is None and v.get("sessione"):
             v["project_id"] = per_sessione.get(v["sessione"])
         viste.add((v["fonte"], v["chiave"]))
-        conn.execute(
-            "INSERT INTO agenda(fonte, chiave, titolo, dettaglio, stato, stato_origine, "
-            "agente, sessione, project_id, task_id, creato_at, aggiornato_at, visto_at) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) "
-            "ON CONFLICT(fonte, chiave) DO UPDATE SET titolo=excluded.titolo, "
-            "dettaglio=excluded.dettaglio, stato=excluded.stato, "
-            "stato_origine=excluded.stato_origine, agente=excluded.agente, "
-            "sessione=excluded.sessione, "
-            "project_id=COALESCE(excluded.project_id, agenda.project_id), "
-            "task_id=COALESCE(excluded.task_id, agenda.task_id), "
-            "aggiornato_at=excluded.aggiornato_at, visto_at=excluded.visto_at",
-            (v["fonte"], v["chiave"], v["titolo"], v.get("dettaglio", ""), v["stato"],
-             v.get("stato_origine", ""), v.get("agente", ""), v.get("sessione", ""),
-             v.get("project_id"), v.get("task_id"), v.get("creato_at") or store.now(),
-             v.get("aggiornato_at") or store.now(), store.now()))
+        _scrivi_voce(conn, v)
 
     presenti = conn.execute("SELECT fonte, chiave FROM agenda").fetchall()
     tolte = 0

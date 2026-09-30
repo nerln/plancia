@@ -143,6 +143,21 @@ const EN = {
   'riprendi_chiusa_codex': 'Resume in Codex, session from {data}',
   'riprendi_persa': 'Start from scratch: {motivo}',
   'riprendi_avviato': 'Started',
+  // Il piano di "In background", detto PRIMA di partire (plancia/riprendi.py,
+  // piano()): riprende la sessione originale, ne fa una copia, ne apre una
+  // nuova, oppure non tocca niente. Il testo lo compone pianoTesto() da modo e
+  // motivo (non dall'avviso italiano del server), cosi' segue la lingua scelta.
+  'piano_riprendi': 'Resumes the original session ({sid}) in its own folder: the work continues there, not in a new session.',
+  'piano_copia': 'Session {sid} is open elsewhere: a COPY with the same history starts, and the open one receives nothing.',
+  'piano_nuova': 'There is no session to resume ({motivo}): a NEW session starts, with the context written by hand.',
+  'piano_niente': 'Session {sid} is open: I will not touch it from here. Paste the message straight into it.',
+  'piano_niente_codex': 'Session {sid} looks open ({motivo}): I will not touch it from here. Paste the message straight into it.',
+  'piano_da_zero': 'A new session starts: there is no session to resume.',
+  'copia_sessione': 'work on a copy of the session (the open one is not touched)',
+  'continua_riprendi': 'in the original session', 'continua_copia': 'on a copy of the session',
+  'continua_nuova': 'in a NEW session',
+  'non partito': 'not started',
+  'copia il messaggio qui sotto': 'copy the message below by hand',
   'non sono riuscito a lanciarlo': 'could not launch it',
   'modo_proposta': 'read only', 'modo_esegui': 'can edit files',
   'sync disattivato per questa sessione (--no-sync)': 'sync disabled for this session (--no-sync)',
@@ -312,6 +327,17 @@ const IT_TESTI = {
   'riprendi_chiusa_codex': 'Riprendi in Codex, sessione del {data}',
   'riprendi_persa': 'Avvia da capo: {motivo}',
   'riprendi_avviato': 'Avviato',
+  'piano_riprendi': 'Riprende la sessione originale ({sid}) nella sua cartella: il lavoro continua lì, non in una sessione nuova.',
+  'piano_copia': 'La sessione {sid} è aperta altrove: parte una COPIA con la stessa storia, e quella aperta non riceve niente.',
+  'piano_nuova': 'Non c’è una sessione da riprendere ({motivo}): parte una sessione NUOVA, con il contesto scritto a mano.',
+  'piano_niente': 'La sessione {sid} è aperta: da qui non la tocco. Incolla il messaggio direttamente lì.',
+  'piano_niente_codex': 'La sessione {sid} sembra aperta ({motivo}): da qui non la tocco. Incolla il messaggio direttamente lì.',
+  'piano_da_zero': 'Parte una sessione nuova: non c’è una sessione da riprendere.',
+  'copia_sessione': 'lavora su una copia della sessione (quella aperta non si tocca)',
+  'continua_riprendi': 'nella sessione originale', 'continua_copia': 'su una copia della sessione',
+  'continua_nuova': 'in una sessione NUOVA',
+  'non partito': 'non partito',
+  'copia il messaggio qui sotto': 'copia a mano il messaggio qui sotto',
   'progetti_n': '{n} progetti',
   'modo_proposta': 'solo lettura', 'modo_esegui': 'può modificare i file',
   'progetti_1': '1 progetto',
@@ -362,6 +388,10 @@ const MOTIVI_PREFISSI = [
     "the transcript exists, but the rollout has been idle for over 10 minutes"],
   ["la trascrizione c'è, ma la sessione non risulta più aperta",
     "the transcript exists, but the session no longer looks open"],
+  ["la cartella della sessione non c'è più", "the session's folder no longer exists"],
+  ["della sessione non si sa la cartella", "the session's folder is unknown"],
+  ["il rollout è stato toccato da un lancio di Plancia appena finito",
+    "the rollout was touched by a Plancia run that just finished"],
   // L3-RIPRENDI-UI-4 (obbligatoria del critico): `apri()` (plancia/riprendi.py)
   // mette in `errore` un'altra frase italiana fissa, diversa da `motivo` ma
   // con lo stesso schema a prefisso: il toast la incollava intatta dopo un
@@ -421,7 +451,15 @@ const conN = (chiave, n) => T(chiave).replace('{n}', n);
 // pulsante Riprendi (LOTTO-L3-RIPRENDI-UI), che ne porta più di uno secondo
 // lo stato. `vals` è un oggetto {nomeSegnaposto: valore}.
 const fmt = (chiave, vals) => Object.entries(vals).reduce(
-  (s, [k, v]) => s.replace('{' + k + '}', v), T(chiave));
+  (s, [k, v]) => s.replace('{' + k + '}', () => v), T(chiave));
+/* Il piano di un lavoro in background (modo, stato, motivo, origine da
+   plancia/riprendi.py piano()) come frase nella lingua della pagina, da
+   incollare in innerHTML: i valori dinamici sono gia' scappati. */
+function pianoTesto(p) {
+  if (!p || !p.modo) return '';
+  const chiave = (p.modo === 'niente' && p.agent === 'codex') ? 'piano_niente_codex' : 'piano_' + p.modo;
+  return fmt(chiave, { sid: esc((p.origine || '').slice(0, 8)), motivo: esc(Tmot(p.motivo || '')) });
+}
 // "1 progetto"/"1 project" ha una forma singolare diversa dal template con
 // {n} (LOTTO-L3-RIPRENDI-UI punto 3 dei residui): il plurale resta conN.
 // LOTTO-L3-RITOCCO punto 3: prima la scelta it/en era scritta a mano qui
@@ -1129,6 +1167,9 @@ function disegnaRisultati() {
   const gruppi = GRUPPI_RIC.filter(([g]) => visibili.some((r) => r.gruppo === g));
   const attesa = ric.cerca > 0;
   view.dataset.layout = '';
+  // mentre si cerca il contenuto e' quello dei risultati: nessuna voce della
+  // barra laterale e' la pagina in cui si e' (prima restava evidenziata "Oggi")
+  $$('.rail nav a').forEach((a) => a.classList.remove('on'));
   view.innerHTML = `
   <div class="lettura larga risultati">
     <div class="seg ambiti" role="group" aria-label="${T('Ambito')}">${AMBITI.map(([k, l]) =>
@@ -1523,13 +1564,29 @@ async function apriRiprendi(dati = {}) {
         <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--muted)">
           <input type="checkbox" name="scrive"> ${T('può modificare i file del progetto')}
         </label>
+        <label id="riprendi-copia" hidden style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--muted)">
+          <input type="checkbox" name="copia"> ${T('copia_sessione')}
+        </label>
+        <div id="riprendi-piano" class="riprendi-piano" role="status">${
+          dati.task || dati.sessione ? '' : T('piano_da_zero')}</div>
         <button class="primary" type="button" data-act="riprendi-background">${T('in_background')}</button>
       </form>
     </section>
     ${dati.dettaglio ? `<section><h3>${T('dettaglio')}</h3>
       <div style="font-size:12.5px;color:var(--muted);white-space:pre-wrap">${esc(dati.dettaglio)}</div></section>` : ''}`;
   $('#drawer').hidden = false;
-  if (!dati.task) return;
+  if (!dati.task) {
+    // Una riga della lavagna con la sua sessione (Claude/Codex, nessun task di
+    // Plancia): il piano si chiede lo stesso, in anteprima, prima di partire.
+    if (dati.sessione) {
+      try {
+        const r = await api('/api/cantiere', { method: 'POST', body: {
+          titolo: dati.titolo || '-', sessione: dati.sessione, anteprima: true } });
+        mostraPiano(r.piano);
+      } catch (err) { /* il modulo resta, senza la frase */ }
+    }
+    return;
+  }
   // Ora la GET, con il cassetto già aperto: il segnaposto sopra si sostituisce
   // da solo quando arriva (o si toglie, nel catch, se il task non c'è più).
   try {
@@ -1537,6 +1594,7 @@ async function apriRiprendi(dati = {}) {
     const slot = $('#riprendi-stato-slot');
     if (slot) slot.innerHTML = bottoneRiprendi({ ...r.riprendi, id: dati.task, messaggio: r.messaggio },
       r.sessione_data);
+    mostraPiano(r.piano);
   } catch (err) {
     // Un task che GET /api/riprendi non trova (cancellato nel frattempo), o
     // l'interrogazione delle sessioni aperte fallita: il segnaposto lascia
@@ -1544,6 +1602,17 @@ async function apriRiprendi(dati = {}) {
     const slot = $('#riprendi-stato-slot');
     if (slot) slot.innerHTML = '';
   }
+}
+
+/* La frase del piano nel cassetto di "In background", e la casella "copia"
+   quando la sessione e' aperta altrove (l'unico caso in cui ha senso). */
+function mostraPiano(piano, messaggio) {
+  const slot = $('#riprendi-piano');
+  if (!slot || !piano) return;
+  slot.innerHTML = pianoTesto(piano) +
+    (messaggio ? `<pre class="mono">${esc(messaggio)}</pre>` : '');
+  const copia = $('#riprendi-copia');
+  if (copia) copia.hidden = piano.stato !== 'viva';
 }
 
 async function apriLancio(id) {
@@ -1785,7 +1854,7 @@ DETTAGLI.social = async (id) => {
     [T('Stato'), `<span class="tag ${statusClass[p.status] || ''}">${esc(T(p.status))}</span>`],
     [T('Piattaforma'), esc(p.platform)],
     [T('Progetto'), p.project ? esc(p.project) : '-'],
-    p.source_ref ? [T('fonte'), `<span class="mono">${esc(p.source_ref)}</span>`] : null,
+    p.source_ref ? [T('Fonte'), `<span class="mono">${esc(p.source_ref)}</span>`] : null,
     p.media ? [T('Immagine'), `<span class="mono">${esc(cartellaCorta(p.media))}</span>`] : null,
     p.scheduled_for ? [T('Programmato'), esc(dateIt(p.scheduled_for))] : null,
     p.published_at ? [T('Pubblicato'), esc(dateIt(p.published_at))] : null,
@@ -2139,14 +2208,18 @@ function montaGrafo(host, m, opz) {
     let scritte = 0;
     for (const { n, prio } of candidati) {
       const importante = prio >= 500;
+      // solo il nodo scelto o sotto il puntatore si scrive comunque: i suoi
+      // vicini (a decine, in un grafo fitto) cedono il posto se si sovrapporrebbero
+      const forte = prio >= 900;
       if (!importante && cam.k < 0.55 && n.grado < 3) continue;
       if (scritte > 80) break;
       const [sx, sy] = aSchermo(n.x, n.y);
       if (sx < -40 || sx > W + 40 || sy < -20 || sy > H + 20) continue;
       const nome = n.id.length > 26 ? n.id.slice(0, 25) + '…' : n.id;
-      const w = ctx.measureText(nome).width + 8, y = sy + n.r * cam.k + 15;
-      const box = [sx - w / 2, y - 12, sx + w / 2, y + 3];
-      if (!importante && presi.some((b) => box[0] < b[2] && box[2] > b[0] && box[1] < b[3] && box[3] > b[1])) continue;
+      // il riquadro e' piu' largo e alto della scritta: due nomi non si toccano
+      const w = ctx.measureText(nome).width + 14, y = sy + n.r * cam.k + 15;
+      const box = [sx - w / 2, y - 14, sx + w / 2, y + 6];
+      if (!forte && presi.some((b) => box[0] < b[2] && box[2] > b[0] && box[1] < b[3] && box[3] > b[1])) continue;
       presi.push(box); scritte++;
       ctx.globalAlpha = n.vis * fioco(n);
       ctx.lineWidth = 4; ctx.strokeStyle = colori.bg; ctx.lineJoin = 'round';
@@ -2716,35 +2789,39 @@ document.addEventListener('click', async (ev) => {
       } else if (name === 'riprendi-background') {
         // Il modulo "In background" del pulsante Riprendi (LOTTO-L3-RIPRENDI-UI
         // punto 2): con un task (il form porta data-task, un id vero) va sul
-        // suo endpoint, che fa il fork della sessione quando c'è; senza task
-        // (blank da "manda-nuovo", o una proposta di Claude/Codex senza riga
-        // propria in Plancia) resta /api/cantiere di sempre, solo senza più
-        // il menu proposta/esegui (un interruttore booleano al suo posto).
+        // suo endpoint; senza task (blank da "manda-nuovo", o una riga della
+        // lavagna con la sua sessione) resta /api/cantiere, con un interruttore
+        // booleano `scrive` al posto del vecchio menu proposta/esegui.
+        //
+        // Il lavoro riprende la sessione ORIGINALE quando e' chiusa (stesso id,
+        // sua cartella); su una sessione aperta altrove il server NON lancia
+        // niente (lanciato:false) e torna il messaggio da incollare li'; su una
+        // persa parte una sessione nuova. Il piano si legge nel cassetto prima
+        // di premere (mostraPiano) e la risposta dice cosa e' successo.
         const form = act.closest('form');
         const dati = Object.fromEntries(new FormData(form).entries());
         if (!form.dataset.task && !(dati.titolo || '').trim()) return;
-        const scrive = !!dati.scrive;
+        const scrive = !!dati.scrive, copia = !!dati.copia;
         const r = form.dataset.task
           ? await api('/api/riprendi/' + form.dataset.task, { method: 'POST', body: {
-              background: true, scrive, istruzioni: dati.istruzioni } })
-          // LOTTO-L3-RITOCCO punto 13: `scrive` (bool) invece di `modo`
-          // ("proposta"/"esegui") - /api/cantiere lo passa a
-          // cantiere.avvia() com'è, senza più tradurlo da una stringa.
-          // L3-RIPRENDI-UI-4 (obbligatoria del critico): la voce della
-          // lavagna (Claude/Codex, non un task Plancia con data-task) ha già
-          // una sua sessione (v.sessione, plancia/lavagna.py) - prima non
-          // passava mai da qui, e /api/cantiere partiva sempre da zero
-          // (task_id: null, nessuna sessione), anche quando "Riprendi"
-          // prometteva il contrario. form.dataset.sessione (impostato da
-          // apriRiprendi con quello che il bottone di riga porta) fa il
-          // fork quando c'è una sessione da riprendere, esattamente come il
-          // ramo con data-task qui sopra.
+              background: true, scrive, copia, istruzioni: dati.istruzioni } })
           : await api('/api/cantiere', { method: 'POST', body: {
               titolo: dati.titolo, istruzioni: dati.istruzioni, progetto: dati.progetto || null,
-              agente: dati.agente, scrive, task_id: null,
+              agente: dati.agente, scrive, copia, task_id: null,
               sessione: form.dataset.sessione || null } });
+        if (r.lanciato === false) {
+          // Non e' partito niente (sessione aperta altrove): il cassetto resta
+          // aperto con il piano e il messaggio da incollare, che si copia se si puo'.
+          mostraPiano(r.piano, r.messaggio);
+          let copiato = false;
+          if (r.messaggio) {
+            try { await navigator.clipboard.writeText(r.messaggio); copiato = true; } catch (e) { /* appunti negati */ }
+          }
+          toast(`${T('non partito')}: ${copiato ? T('copiato: incollalo nella sessione') : T('copia il messaggio qui sotto')}`, !copiato);
+          return;
+        }
         $('#drawer').hidden = true;
-        toast(`${T('avviato in background')} → ${r.agente} #${r.run}`);
+        toast(`${T('avviato in background')} → ${r.agente} #${r.run} · ${T('continua_' + (r.continua || 'nuova'))}`);
         location.hash = '#/lavagna';
         await route();
       } else if (name === 'lancio') {
@@ -2977,6 +3054,21 @@ $('#btn-imp').addEventListener('click', (ev) => {
   m.hidden = !m.hidden;
   $('#btn-imp').setAttribute('aria-expanded', String(!m.hidden));
   if (!m.hidden) statoMenuImp();
+});
+/* La casella "copia" del cassetto In background cambia cosa succede: il piano
+   si richiede in anteprima (niente parte) e la frase si aggiorna. */
+document.addEventListener('change', async (ev) => {
+  const box = ev.target.closest && ev.target.closest('.riprendi-background input[name=copia]');
+  if (!box) return;
+  const form = box.closest('form');
+  try {
+    const r = form.dataset.task
+      ? await api('/api/riprendi/' + form.dataset.task, { method: 'POST',
+          body: { anteprima: true, copia: box.checked } })
+      : await api('/api/cantiere', { method: 'POST', body: {
+          titolo: '-', sessione: form.dataset.sessione || null, anteprima: true, copia: box.checked } });
+    mostraPiano(r.piano);
+  } catch (err) { toast(err.message, true); }
 });
 document.addEventListener('click', (ev) => {
   if (!ev.target.closest('#menu-imp') && !ev.target.closest('#btn-imp')) chiudiMenuImp();
