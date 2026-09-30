@@ -6,6 +6,7 @@ import SwiftUI
 struct Comandi: Commands {
     @Environment(\.openWindow) private var openWindow
     private let archivio = Archivio.condiviso
+    @AppStorage(DimensioneTesto.chiave) private var passoTesto = DimensioneTesto.predefinito
 
     /// La finestra principale, se e' stata chiusa, si riapre da qui.
     private func registraApertura() {
@@ -37,6 +38,20 @@ struct Comandi: Commands {
             }
             Divider()
             Button(tr("Apri nel browser", "Open in browser")) { DelegatoApp.corrente?.apriNelBrowser() }
+            Divider()
+        }
+
+        // Dimensione del testo: ⌘+ ingrandisce, ⌘- riduce, ⌘0 torna alla dimensione reale.
+        // ⌘= (il tasto piu' senza Maiuscole sulle tastiere americane) lo prende TastiTesto.
+        CommandGroup(after: .toolbar) {
+            Button(tr("Ingrandisci il testo", "Make Text Bigger")) { passoTesto = DimensioneTesto.limita(passoTesto + 1) }
+                .keyboardShortcut("+", modifiers: .command)
+                .disabled(passoTesto >= DimensioneTesto.passi.count - 1)
+            Button(tr("Riduci il testo", "Make Text Smaller")) { passoTesto = DimensioneTesto.limita(passoTesto - 1) }
+                .keyboardShortcut("-", modifiers: .command)
+                .disabled(passoTesto <= 0)
+            Button(tr("Dimensione reale del testo", "Actual Text Size")) { passoTesto = DimensioneTesto.predefinito }
+                .keyboardShortcut("0", modifiers: .command)
             Divider()
         }
 

@@ -3,6 +3,10 @@
 //
 //   PLANCIA_HOME=<casa di prova> Plancia.app/Contents/MacOS/Plancia \
 //       --istantanee <cartella> [--aspetto chiaro|scuro] [--lingua it|en] [--parola <testo>]
+//       [--larghezza 1280] [--altezza 820]   (punti; il minimo della finestra vale sempre)
+//       [--stile sistema|legno] [--testo 0...6]   (il passo della dimensione del testo, 3 = reale)
+//       [--prova-tasti]  premi ⌘+ ⌘- ⌘0 ⌘= veri e stampa il passo dopo ognuno (senza --testo)
+//       [--prova-clic]  clic finti sulle righe di Task e Progetti: dice se colpiscono la riga giusta
 //
 // Apre la finestra a 1280x820, visita ogni sezione (con l'Inspector di un elemento scelto
 // dove c'e') e la Ricerca con una parola, aspetta che i dati siano caricati, salva un PNG
@@ -41,6 +45,8 @@ enum Istantanee {
             dominio["lingua"] = l
             Lingua.condivisa.codice = l
         }
+        if let st = valore("--stile"), StileApp(rawValue: st) != nil { dominio[StileApp.chiave] = st }
+        if let t = valore("--testo"), let n = Int(t) { dominio[DimensioneTesto.chiave] = DimensioneTesto.limita(n) }
         UserDefaults.standard.setVolatileDomain(dominio, forName: UserDefaults.argumentDomain)
         NSApp.appearance = NSAppearance(named: aspetto == "scuro" ? .darkAqua : .aqua)
 
@@ -57,9 +63,12 @@ enum Istantanee {
             try? await Task.sleep(nanoseconds: 100_000_000)
         }
         guard let w = finestra else { esci(1, "la finestra non e' comparsa") }
-        w.setContentSize(NSSize(width: 1280, height: 820))
+        let larghezza = valore("--larghezza").flatMap { Double($0) } ?? 1280
+        let altezza = valore("--altezza").flatMap { Double($0) } ?? 820
+        w.setContentSize(NSSize(width: larghezza, height: altezza))
         w.setFrameTopLeftPoint(NSPoint(x: 60, y: (NSScreen.main?.visibleFrame.maxY ?? 900) - 40))
         w.orderFrontRegardless()
+        w.makeKey()
         NSApp.activate(ignoringOtherApps: true)
         try? await Task.sleep(nanoseconds: 800_000_000)
 
@@ -103,6 +112,9 @@ enum Istantanee {
             }
         }
 
+        if CommandLine.arguments.contains("--prova-tasti") { await provaTasti(w) }
+        if CommandLine.arguments.contains("--prova-clic") { await provaClic(w, a, scatta) }
+
         // la ricerca con una parola
         a.vai(.oggi)
         a.ricercaAperta = true
@@ -117,5 +129,79 @@ enum Istantanee {
         FileHandle.standardOutput.write(Data((scritti.joined(separator: "\n") + "\n").utf8))
         FileHandle.standardOutput.write(Data("raggiungibile: \(a.raggiungibile)\n".utf8))
         exit(0)
+    }
+
+    private static func tabelle(_ v: NSView, _ out: inout [NSTableView]) {
+        if let t = v as? NSTableView { out.append(t) }
+        for f in v.subviews { tabelle(f, &out) }
+    }
+
+    /// Con la scala del testo diversa da 100% i clic devono colpire la riga che si vede.
+    /// AppKit decide il bersaglio di un clic con la geometria delle sue viste: se il
+    /// rettangolo di una riga, convertito nelle coordinate della finestra, cade dove la riga
+    /// e' disegnata (la si legge nell'immagine), il clic la colpisce. Qui si stampa il centro
+    /// della terza riga della tabella dei Task e la vista che risponde a un clic li'.
+    private static func provaClic(_ w: NSWindow, _ a: Archivio, _ scatta: (String) async -> Void) async {
+        a.vai(.task)
+        a.taskScelto = nil
+        await a.carica(.task)
+        try? await Task.sleep(nanoseconds: 1_200_000_000)
+        guard let cv = w.contentView else { return }
+        var elenco: [NSTableView] = []
+        tabelle(cv, &elenco)
+        guard let t = elenco.first(where: { $0.numberOfRows >= 3 }) else {
+            FileHandle.standardOutput.write(Data("clic: nessuna tabella\n".utf8))
+            return
+        }
+        let r = t.convert(t.rect(ofRow: 2), to: nil)
+        let alto = w.contentLayoutRect.height
+        let x = r.midX, y = w.frame.height - r.midY
+        let colpita = w.contentView?.hitTest(NSPoint(x: r.midX, y: r.midY))
+        let riga = colpita.flatMap { v -> Int? in
+            var c: NSView? = v
+            while let x = c { if let t2 = x as? NSTableView { return t2.row(at: t2.convert(NSPoint(x: r.midX, y: r.midY), from: nil)) }; c = x.superview }
+            return nil
+        }
+        FileHandle.standardOutput.write(Data("clic: riga 3 al centro (\(Int(x)), \(Int(y))) pt dall'alto, alto=\(Int(alto)), il clic li' cade sulla riga \(riga.map { String($0 + 1) } ?? "nessuna")\n".utf8))
+        await scatta("prova-clic")
+    }
+
+    /// ⌘+ ⌘- ⌘0 ⌘= come eventi di tastiera veri dati all'applicazione: passano dal menu
+    /// Vista e dal monitor di TastiTesto. Stampa il passo salvato dopo ogni tasto.
+    private static func provaTasti(_ w: NSWindow) async {
+        let d = UserDefaults.standard
+        d.removeObject(forKey: DimensioneTesto.chiave)
+        func passo() -> Int { d.object(forKey: DimensioneTesto.chiave) as? Int ?? DimensioneTesto.predefinito }
+        func premi(_ c: String, codice: UInt16) async -> Int {
+            if let e = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.command],
+                                        timestamp: ProcessInfo.processInfo.systemUptime,
+                                        windowNumber: w.windowNumber, context: nil, characters: c,
+                                        charactersIgnoringModifiers: c, isARepeat: false, keyCode: codice) {
+                NSApp.sendEvent(e)
+            }
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            return passo()
+        }
+        var righe: [String] = ["tasti: inizio \(passo())"]
+        func cerca(_ m: NSMenu?, _ chiavi: Set<String>, _ via: String) {
+            for i in m?.items ?? [] {
+                if chiavi.contains(i.keyEquivalent), i.keyEquivalentModifierMask.contains(.command) {
+                    righe.append("tasti: menu \(via) > \(i.title) [cmd+\(i.keyEquivalent)] attivo=\(i.isEnabled)")
+                }
+                cerca(i.submenu, chiavi, via + "/" + i.title)
+            }
+        }
+        cerca(NSApp.mainMenu, ["0", "+", "-", "="], "")
+        righe.append("tasti: cmd+ -> \(await premi("+", codice: 24))")
+        righe.append("tasti: cmd+ -> \(await premi("+", codice: 24))")
+        righe.append("tasti: cmd- -> \(await premi("-", codice: 27))")
+        righe.append("tasti: cmd0 -> \(await premi("0", codice: 29))")
+        righe.append("tasti: cmd= -> \(await premi("=", codice: 24))")
+        for _ in 0..<8 { _ = await premi("+", codice: 24) }
+        righe.append("tasti: molti cmd+ -> \(passo()) (massimo \(DimensioneTesto.passi.count - 1))")
+        for _ in 0..<12 { _ = await premi("-", codice: 27) }
+        righe.append("tasti: molti cmd- -> \(passo()) (minimo 0)")
+        d.removeObject(forKey: DimensioneTesto.chiave)
+        FileHandle.standardOutput.write(Data((righe.joined(separator: "\n") + "\n").utf8))
     }
 }
