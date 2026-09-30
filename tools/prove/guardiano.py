@@ -56,6 +56,16 @@ scrive settings.json" (i commenti `//` e `///` di uno script che modifica un sor
 o JS erano scambiati per la radice `/`, che contiene ogni file protetto), e due falsi positivi
 minori. Per settings.json prove nei due versi: le letture passano, le scritture restano negate.
 
+Il nono giro aggiunge (`_prove_operativi_9`, `_prove_glob_tempo_9`, `_prove_var_assegnate_9`,
+`_prove_nomi_relativi_9`): il filtro dell'ottavo giro toglieva anche le cartelle di primo livello
+che un codice cancella davvero (`shutil.rmtree`, `os.chmod`, `os.rename`, `Path.rename`,
+`fs.rmSync` sulla cartella che contiene i file protetti passavano), ora vale solo se il percorso
+non e' un operando di una scrittura; il backtracking catastrofico dei glob (8 stelle uguali su un
+nome di 60 lettere: decine di secondi), con una prova di tempo sul caso peggiore; le 77 negazioni
+false di `config.json` con `PLANCIA_HOME=<altra cartella>` nello stesso comando (e `HOME`,
+`CLAUDE_CONFIG_DIR`), risolte con l'assegnazione, mentre l'assegnazione ignota o dopo un `source`
+resta negata; i nomi relativi dei file del guardiano dentro il codice, dopo un `cd` che si sa.
+
 Su Windows il guardiano non c'e': `bin/plancia-guardiano` esce subito senza negare niente
 e lo dice una volta per sessione (vedi `windows-hook.py`), e tutte le prove di questo file,
 che ragionano su percorsi e comandi POSIX, si segnano "saltato: non supportato su Windows"
@@ -4746,6 +4756,358 @@ def _prove_falsi_8(prova, a: Ambiente):
     a.togli_config()
 
 
+def _corri_python_a_tempo(a: Ambiente, codice: str, tetto: int = 25):
+    """Come `_codice_in_python`, ma con un tetto di secondi: torna il JSON stampato dal
+    codice, o None se non gira o supera il tetto (un backtracking catastrofico e' un
+    controllo rosso, non una prova che non finisce mai)."""
+    e = dict(a.env())
+    e["PYTHONPATH"] = str(RADICE)
+    try:
+        p = subprocess.run([PYTHON, "-c", codice], env=e, cwd=str(RADICE),
+                           capture_output=True, timeout=tetto)
+    except subprocess.TimeoutExpired:
+        return None
+    if p.returncode != 0:
+        return None
+    try:
+        return json.loads(p.stdout.decode("utf-8", "replace"))
+    except ValueError:
+        return None
+
+
+def _prove_operativi_9(prova, a: Ambiente):
+    """Nono giro, punto 1 (regressione dell'ottavo): il filtro che toglie a un testo di codice
+    le cartelle di PRIMO livello (`'/home/'` in una regex non e' una cartella su cui il codice
+    opera) toglieva anche quelle che il codice cancella, sposta o rende illeggibili davvero:
+    `shutil.rmtree('/cartella')`, `os.chmod`, `shutil.move`, `os.rename`, `Path.rename`, `fs.rmSync`
+    sulla cartella di primo livello che contiene i file protetti erano negati e passavano.
+    Ora il filtro vale solo se il percorso NON e' un operando di una chiamata che scrive o
+    cancella (direttamente, come ricevente di un metodo, o legato a una variabile che poi lo e')."""
+    a.togli_config()
+    a.scrivi_config(a.config("bloccante"))
+    utente = a.claude / "settings.json"
+    utente.write_text(_settings(), "utf-8")
+    top = "/" + os.path.realpath(str(a.claude)).split("/")[1]   # la cartella di primo livello sopra i settings finti
+
+    def pred(cmd):
+        return a.chiama(a.pl("Bash", {"command": cmd.replace("@T@", top)}, sid=S_COMUNE,
+                             aperta_in=a.progetto))
+
+    negati = [
+        "python3 -c \"import shutil; shutil.rmtree('@T@')\"",
+        "python3 -c \"import shutil; shutil.rmtree('@T@/')\"",
+        "python3 -c \"import os; os.chmod('@T@', 0o000)\"",
+        "python3 -c \"import shutil; shutil.move('@T@', '/tmp/x')\"",
+        "python3 -c \"import os; os.rename('@T@', '/tmp/x')\"",
+        "python3 -c \"import os; os.replace('a.tmp', '@T@')\"",
+        "python3 -c \"from pathlib import Path; Path('@T@').rename('/tmp/x')\"",
+        "python3 -c \"from pathlib import Path; Path('@T@').resolve().rmdir()\"",
+        "python3 -c \"import shutil; shutil.copytree('src', '@T@')\"",
+        "node -e \"require('fs').rmSync('@T@', {recursive: true})\"",
+        "node -e \"const fs = require('fs'); const p = '@T@'; fs.rmSync(p, {recursive: true, force: true})\"",
+        "ruby -e \"require 'fileutils'; FileUtils.rm_rf('@T@')\"",
+        "node -e \"const rimraf = require('rimraf'); rimraf.sync('@T@')\"",
+        "node -e \"const fse = require('fs-extra'); fse.removeSync('@T@')\"",
+        "node -e \"const fs = require('fs'); const arr = ['@T@']; arr.forEach(p => fs.rmSync(p, {recursive: true}))\"",
+        # il percorso legato a una variabile che poi si cancella
+        "python3 -c \"import shutil; p = '@T@'; shutil.rmtree(p)\"",
+        "python3 - <<'EOF'\nimport shutil\nfor d in ['@T@', '/tmp/zz']:\n    shutil.rmtree(d)\nEOF",
+        "python3 - <<'EOF'\nimport shutil\nbersagli = [\n    '@T@',\n    '/tmp/zz',\n]\nfor b in bersagli:\n    shutil.rmtree(b)\nEOF",
+        "python3 - <<'EOF'\nfrom pathlib import Path\np = Path('@T@')\np.chmod(0)\nEOF",
+        "python3 - <<'EOF'\nimport shutil, os\nshutil.rmtree(os.path.join('@T@', 'x'))\nEOF",
+        # con i commenti `//` che l'ottavo giro ha tolto dai candidati: non cambia niente
+        "python3 - <<'EOF'\n// un commento\nimport shutil\nshutil.rmtree('@T@')\nEOF",
+    ]
+    for cmd in negati:
+        r = pred(cmd)
+        prova(f"operativi9: `{cmd.replace(chr(10), ' ').replace('@T@', '<primo livello>')[:70]}`: "
+              "negato (opera sulla cartella di primo livello che contiene i file protetti)",
+              r.negato, repr(r))
+    # e la stessa cosa da shell resta negata (non passa dal filtro)
+    for cmd in ("rm -rf @T@", "chmod -R 000 @T@", "mv @T@ /tmp/x"):
+        r = pred(cmd)
+        prova(f"operativi9: da shell `{cmd}`: negato", r.negato, repr(r))
+    # i testi che nominano la cartella senza operarci sopra passano, con una scrittura vicina
+    ammessi = [
+        "python3 - <<'EOF'\nimport re, os\nt = open('a.txt').read()\nt = re.sub(r'@T@/', 'x', t)\n"
+        "open('a.txt','w').write(t)\nos.rename('a.tmp','a.txt')\nEOF",
+        "python3 - <<'EOF'\nimport os\nt = open('a.txt').read().replace('@T@/', 'x')\n"
+        "open('b.txt','w').write(t)\nos.rename('a.tmp','a.txt')\nEOF",
+        "python3 - <<'EOF'\nimport os\nfor l in open('a.txt'):\n    if l.startswith('@T@/'):\n"
+        "        print(l)\nopen('b.txt','w').write('x')\nos.rename('a.tmp','a.txt')\nEOF",
+        "python3 - <<'EOF'\nimport os\nSKIP = ['@T@/', '/opt/']\nos.makedirs('out', exist_ok=True)\n"
+        "os.rename('a.tmp','a.txt')\nEOF",
+        "python3 - <<'EOF'\nimport shutil, os\nprint(os.listdir('@T@'))\nshutil.rmtree('build')\nEOF",
+        "python3 - <<'EOF'\nfrom pathlib import Path\nimport os\n"
+        "Path('n.md').write_text(Path('n.md').read_text().replace('@T@/', 'x'))\nos.rename('a','b')\nEOF",
+        "python3 - <<'EOF'\nimport os, shutil\nprint('@T@')\nx = '@T@' + '/altro'\nshutil.rmtree('build')\nEOF",
+        "python3 - <<'EOF'\nimport os\nif os.path.abspath('a').startswith('@T@'):\n    open('o.txt', 'w').write('si')\n"
+        "os.rename('a.tmp','a.txt')\nEOF",
+    ]
+    for cmd in ammessi:
+        r = pred(cmd)
+        prova(f"operativi9: `{cmd.replace(chr(10), ' ').replace('@T@', '<primo livello>')[:70]}`: "
+              "ammesso (nomina la cartella senza operarci)", r.ammesso, repr(r))
+
+    # la funzione che decide: nessuna eccezione, e in tempo, su qualunque testo
+    ris = _corri_python_a_tempo(a, (
+        "import json, random, time\nfrom plancia import compartimenti as C\n"
+        "random.seed(9)\n"
+        "alf = ['(', ')', '[', ']', '{', '}', \"'\", '\"', ',', '.', '=', ' ', '\\n', ';', '/x', 'for ', ' in ',\n"
+        "       'rmtree', 'replace', 'Path', 'os.', 'p', 'd', ':=', '+=', '==', '\\\\', 'sync', 'append']\n"
+        "bad = 0\n"
+        "for _ in range(3000):\n"
+        "    t = ''.join(random.choice(alf) for _ in range(random.randint(0, 60)))\n"
+        "    try:\n"
+        "        C._operando_di_scrittura(t, '/x'); C._operando_di_scrittura(t + '/x', '/x')\n"
+        "    except Exception:\n"
+        "        bad += 1\n"
+        "grande = ('x = f(\\'/x\\')\\n' * 20000)\n"
+        "t0 = time.time(); C._operando_di_scrittura(grande, '/x'); dt = time.time() - t0\n"
+        "print(json.dumps({'eccezioni': bad, 'tempo': dt}))\n"))
+    prova("operativi9: 3000 testi casuali di parentesi, virgolette e parole: nessuna eccezione",
+          bool(ris) and ris.get("eccezioni") == 0, str(ris))
+    prova("operativi9: un testo di 240 KB con 20000 comparse del percorso si valuta in meno di 3 s",
+          bool(ris) and ris.get("tempo", 99) < 3.0, str(ris))
+    a.togli_config()
+
+
+def _prove_glob_tempo_9(prova, a: Ambiente):
+    """Nono giro, punto 2 (regressione dell'ottavo): la traduzione dei glob non aveva il
+    raggruppamento atomico di `fnmatch.translate`, e un modello con molte stelle uguali
+    (`*a*a*a*a*a*a*a*a*b`) su un nome di sessanta `a` andava in backtracking catastrofico:
+    secondi, poi minuti. Il guardiano gira prima di OGNI strumento. Ora il tempo del caso
+    peggiore e' una frazione di secondo, con lo stesso risultato di `fnmatch`."""
+    a.togli_config()
+    a.scrivi_config(a.config("bloccante"))
+    lavoro = a.radice / "glob9"
+    lavoro.mkdir(exist_ok=True)
+    (lavoro / ("a" * 60)).write_text("x\n", "utf-8")
+    modello = "*a" * 8 + "*b"
+    codice = (
+        "import json, os, time\nfrom plancia import compartimenti as C\n"
+        "d = %r\nout = {}\n"
+        "def cron(f):\n    t0 = time.time(); r = f(); return [r, time.time() - t0]\n"
+        "out['espandi'] = cron(lambda: C._espandi_glob(os.path.join(d, %r), None))\n"
+        "out['combacia'] = cron(lambda: C._combacia_glob('/x/' + %r, '/x/' + 'a' * 70))\n"
+        "out['combacia_lungo'] = cron(lambda: C._combacia_glob('/x/' + %r, '/x/' + 'a' * 4000))\n"
+        "out['positivo'] = cron(lambda: C._espandi_glob(os.path.join(d, '*a' * 8 + '*'), None))\n"
+        "out['troppe_stelle'] = cron(lambda: C._combacia_glob('/x/' + '*a' * 40 + '*b', '/x/' + 'a' * 70))\n"
+        "out['troppo_lungo'] = cron(lambda: C._combacia_glob('/x/' + 'ab' * 400 + '*', '/x/ab'))\n"
+        "print(json.dumps(out))\n" % (str(lavoro), modello, modello, modello))
+    ris = _corri_python_a_tempo(a, codice) or {}
+    for chiave, cosa, atteso in (
+            ("espandi", "8 stelle uguali e una `b` su un nome di 60 `a`: nessun file", []),
+            ("combacia", "un divieto con 8 stelle uguali su un percorso di 70 `a`: non combacia", False),
+            ("combacia_lungo", "...e su un percorso di 4000 `a`: non combacia", False),
+            ("positivo", "8 stelle uguali che combaciano davvero: trova il file", [str(lavoro / ("a" * 60))]),
+            ("troppe_stelle", "un modello con 40 stelle (oltre il tetto) vale come testo: non combacia", False),
+            ("troppo_lungo", "un modello di 800 caratteri (oltre il tetto) vale come testo: non combacia", False)):
+        r = ris.get(chiave) or [None, 99]
+        prova(f"glob9: {cosa}", r[0] == atteso, str(r))
+        prova(f"glob9: ...in meno di mezzo secondo ({chiave})", r[1] < 0.5, str(r))
+    # lo stesso risultato di fnmatch (che qui e' quello di riferimento) su modelli casuali
+    ris = _corri_python_a_tempo(a, (
+        "import json, random, fnmatch\nfrom plancia import compartimenti as C\n"
+        "random.seed(9)\n"
+        "alf_m = list('ab*?') + ['[ab]', '[!a]', '[a-c]', '**', '*a', 'a*', '.']\n"
+        "alf_t = list('abc.')\n"
+        "diversi, totale = 0, 0\n"
+        "for _ in range(5000):\n"
+        "    m = ''.join(random.choice(alf_m) for _ in range(random.randint(0, 9)))\n"
+        "    t = ''.join(random.choice(alf_t) for _ in range(random.randint(0, 10)))\n"
+        "    totale += 1\n"
+        "    if C._glob_combacia(t, m) != fnmatch.fnmatchcase(t, m):\n"
+        "        diversi += 1\n"
+        "print(json.dumps({'diversi': diversi, 'totale': totale}))\n"), tetto=120) or {}
+    prova("glob9: 5000 modelli e nomi casuali danno lo stesso risultato di `fnmatch.fnmatchcase`",
+          ris.get("totale") == 5000 and ris.get("diversi") == 0, str(ris))
+
+    # dall'hook, per il predefinito: un glob nel comando su una cartella con un nome a tappeto, e
+    # un divieto del manifesto con molte stelle su un percorso lungo. Ammessi, e in fretta.
+    r = a.chiama(a.pl("Bash", {"command": f"ls {lavoro}/{modello}"}, sid=S_COMUNE, aperta_in=a.progetto))
+    prova("glob9: hook, `ls <cartella>/*a*a*a*a*a*a*a*a*b` (nome di 60 `a`): ammesso e senza "
+          "l'avviso di comando troppo complesso (l'allarme dell'hook e' a 2 s)",
+          r.ammesso, repr(r) + " %.2f s" % r.secondi)
+    a.scrivi_manifesto(a.righe_manifesto() + [f"{a.comune}/{modello}"])
+    a.scrivi_config(a.config("bloccante"))
+    lungo = a.comune / ("a" * 70)
+    r = a.chiama(a.pl("Bash", {"command": f"cat {lungo}"}, sid=S_COMUNE, aperta_in=a.progetto))
+    prova("glob9: hook, un divieto del manifesto con 8 stelle uguali e un percorso di 70 `a`: ammesso "
+          "e senza l'avviso di comando troppo complesso", r.ammesso, repr(r) + " %.2f s" % r.secondi)
+    r = a.chiama(a.pl("Bash", {"command": f"cat {a.condiviso}/repo/README"}, sid=S_COMUNE,
+                      aperta_in=a.progetto))
+    prova("glob9: ...e un divieto vero dello stesso manifesto nega ancora", r.negato, repr(r))
+    a.scrivi_manifesto(a.righe_manifesto())
+    a.togli_config()
+
+
+def _prove_var_assegnate_9(prova, a: Ambiente):
+    """Nono giro, punto 3: 77 falsi positivi su `config.json` nel registro vero, tutti nella sessione
+    che sviluppa Plancia, che prova il codice con `PLANCIA_HOME=/qualche/cartella python3 - <<EOF ...
+    open(os.environ['PLANCIA_HOME'] + '/config.json', 'w') ...`. Il bersaglio si poteva risolvere:
+    la variabile e' assegnata nello stesso comando a una cartella che non e' quella dei dati veri.
+    Ora un codice che costruisce il percorso da PLANCIA_HOME (o da HOME con `.plancia`, o da
+    CLAUDE_CONFIG_DIR con `settings.json`) punta li'. Se la variabile non e' assegnata dal comando,
+    o lo e' a un valore che non si sa (una sostituzione, un `source` prima o dopo), resta la regola
+    prudente: negato."""
+    a.togli_config()
+    a.scrivi_config(a.config("bloccante"))
+    (a.claude / "settings.json").write_text(_settings(), "utf-8")
+    dati, cl = str(a.dati), str(a.claude)
+    altra = "/tmp/cartella-di-prova-9"
+
+    def pred(cmd):
+        return a.chiama(a.pl("Bash", {"command": cmd.replace("@X@", altra).replace("@D@", dati)
+                                      .replace("@C@", cl)}, sid=S_COMUNE, aperta_in=a.progetto))
+
+    scrive_cfg = ("import os, json\njson.dump({}, open(os.environ['PLANCIA_HOME'] + '/config.json', 'w'))")
+    ammessi = [
+        f"PLANCIA_HOME=@X@ python3 - <<'EOF'\n{scrive_cfg}\nEOF",
+        f"PLANCIA_HOME=@X@ python3 - <<EOF\n{scrive_cfg}\nEOF",
+        f"PLANCIA_HOME=@X@ python3 -c \"{scrive_cfg}\"",
+        f"export PLANCIA_HOME=@X@; python3 -c \"{scrive_cfg}\"",
+        f"export PLANCIA_HOME=@X@ && python3 -c \"{scrive_cfg}\"",
+        f"PLANCIA_HOME=@X@\npython3 -c \"{scrive_cfg}\"",
+        f"env PLANCIA_HOME=@X@ python3 -c \"{scrive_cfg}\"",
+        f"PLANCIA_HOME=@X@; export PLANCIA_HOME; python3 -c \"{scrive_cfg}\"",
+        # una cartella nuova di `mktemp` non e' e non contiene nessun file del guardiano
+        f"PLANCIA_HOME=$(mktemp -d) python3 -c \"{scrive_cfg}\"",
+        f"export PLANCIA_HOME=\"$(mktemp -d /tmp/prova.XXXXXX)\"; python3 - <<'EOF'\n{scrive_cfg}\nEOF",
+        f"PLANCIA_HOME=`mktemp -d` python3 -c \"{scrive_cfg}\"",
+        f"cd /tmp && PLANCIA_HOME=@X@ python3 -c \"{scrive_cfg}\"",
+        # la cartella intera: permessi, rimozione, spostamento
+        "PLANCIA_HOME=@X@ python3 -c \"import os, shutil; shutil.rmtree(os.environ['PLANCIA_HOME'])\"",
+        "PLANCIA_HOME=@X@ python3 -c \"import os; os.chmod(os.environ['PLANCIA_HOME'], 0o700)\"",
+        # `CONFIG_FILE` del pacchetto, che legge PLANCIA_HOME da solo
+        "PLANCIA_HOME=@X@ python3 -c \"from plancia import config as c; c.CONFIG_FILE.write_text('{}')\"",
+        # la casa cambiata: `~/.plancia` e' un'altra cartella
+        "HOME=@X@ python3 -c \"import os, json; json.dump({}, open(os.path.expanduser('~/.plancia/config.json'), 'w'))\"",
+        "HOME=@X@ python3 -c \"import os, json; json.dump({}, open(os.environ['HOME'] + '/.plancia/config.json', 'w'))\"",
+        "HOME=@X@ python3 -c \"from pathlib import Path; (Path.home() / '.plancia' / 'config.json').write_text('{}')\"",
+        # i settings di un'altra cartella di configurazione
+        "CLAUDE_CONFIG_DIR=@X@ python3 -c \"import os, json; json.dump({}, open(os.environ['CLAUDE_CONFIG_DIR'] + '/settings.json', 'w'))\"",
+    ]
+    for cmd in ammessi:
+        r = pred(cmd)
+        prova(f"var9: `{cmd.replace(chr(10), ' ')[:70]}`: ammesso (la variabile punta a un'altra cartella)",
+              r.ammesso, repr(r))
+    negati = [
+        # la cartella vera, nominata dalla variabile
+        f"PLANCIA_HOME=@D@ python3 - <<'EOF'\n{scrive_cfg}\nEOF",
+        f"export PLANCIA_HOME=@D@; python3 -c \"{scrive_cfg}\"",
+        f"env PLANCIA_HOME=@D@ python3 -c \"{scrive_cfg}\"",
+        "PLANCIA_HOME=@D@ python3 -c \"import os, shutil; shutil.rmtree(os.environ['PLANCIA_HOME'])\"",
+        "PLANCIA_HOME=@D@ python3 -c \"from plancia import config as c; c.CONFIG_FILE.write_text('{}')\"",
+        "CLAUDE_CONFIG_DIR=@C@ python3 -c \"import os, json; json.dump({}, open(os.environ['CLAUDE_CONFIG_DIR'] + '/settings.json', 'w'))\"",
+        # la variabile non e' assegnata dal comando: vale quella della sessione, che e' la vera
+        f"python3 -c \"{scrive_cfg}\"",
+        "python3 -c \"import os, json; json.dump({}, open(os.environ['CLAUDE_CONFIG_DIR'] + '/settings.json', 'w'))\"",
+        "python3 -c \"from plancia import config as c; c.CONFIG_FILE.write_text('{}')\"",
+        # assegnata a un valore che non si sa, o dopo un `source`: il bersaglio resta ignoto
+        f"source env.sh; python3 -c \"{scrive_cfg}\"",
+        f". ./env.sh && python3 -c \"{scrive_cfg}\"",
+        f"PLANCIA_HOME=$(cat cartella) python3 -c \"{scrive_cfg}\"",
+        f"PLANCIA_HOME=$CARTELLA_IGNOTA python3 -c \"{scrive_cfg}\"",
+        f"PLANCIA_HOME=$(dirname @D@/config.json) python3 -c \"{scrive_cfg}\"",
+        f"PLANCIA_HOME=@X@; source env.sh; python3 -c \"{scrive_cfg}\"",
+        f"export PLANCIA_HOME=@X@; eval \"$(cat env.sh)\"; python3 -c \"{scrive_cfg}\"",
+        # una sola variabile risolta non salva un percorso vero nello stesso codice
+        "PLANCIA_HOME=@X@ python3 -c \"import json; json.dump({}, open('@D@/config.json', 'w'))\"",
+        "HOME=@X@ python3 -c \"import os, json; json.dump({}, open(os.environ['PLANCIA_HOME'] + '/config.json', 'w'))\"",
+    ]
+    for cmd in negati:
+        r = pred(cmd)
+        prova(f"var9: `{cmd.replace(chr(10), ' ')[:70]}`: negato", r.negato, repr(r))
+    # la CLI di Plancia resta negata con qualunque PLANCIA_HOME (lo dicono le prove dell'autoprotezione)
+    r = pred("PLANCIA_HOME=@X@ plancia config guardiano spento")
+    prova("var9: `PLANCIA_HOME=<altra> plancia config guardiano spento`: negato (come prima)",
+          r.negato, repr(r))
+    # il nominato, con la cartella dei dati assegnata altrove, sta comunque ai suoi permessi
+    r = a.chiama(a.pl("Bash", {"command": f"PLANCIA_HOME={altra} python3 -c \"{scrive_cfg}\""},
+                      sid=S_ALFA_LIBERA, aperta_in=_alfa_pulita(a)))
+    prova("var9: alfa, `PLANCIA_HOME=<altra> python3 -c ...`: nessun errore interno del guardiano",
+          "errore interno" not in r.out and not [x for x in a.registro() if x.get("esito") == "errore-interno"],
+          repr(r))
+    a.togli_config()
+
+
+def _prove_nomi_relativi_9(prova, a: Ambiente):
+    """Nono giro, punto 4 (preesistente): dopo `cd <cartella di Claude o dei dati>`, o con quella
+    cartella come cartella della sessione, `python3 -c "open('settings.json', 'w')"` passava
+    (anche con `json.dump`, `Path.write_text`, `shutil.copy`, `writeFileSync`); da shell `echo x >
+    settings.json` era negato. Ora un nome relativo nel codice si risolve contro la cartella da cui
+    parte il segmento, come per la shell. Vale per i nomi dei file del guardiano; se la cartella
+    non si sa (`cd -`) resta com'era."""
+    a.togli_config()
+    a.scrivi_config(a.config("bloccante"))
+    (a.claude / "settings.json").write_text(_settings(), "utf-8")
+    cl, dati, prog = str(a.claude), str(a.dati), str(a.progetto)
+
+    def pred(cmd, cwd=None):
+        return a.chiama(a.pl("Bash", {"command": cmd.replace("@C@", cl).replace("@D@", dati)
+                                      .replace("@P@", prog)}, sid=S_COMUNE, aperta_in=a.progetto,
+                             cwd=cwd))
+
+    scrive_settings = [
+        "python3 -c \"open('settings.json', 'w').write('{}')\"",
+        "python3 -c \"import json; json.dump({}, open('settings.json', 'w'))\"",
+        "python3 -c \"from pathlib import Path; Path('settings.json').write_text('{}')\"",
+        "python3 -c \"import shutil; shutil.copy('x.json', 'settings.json')\"",
+        "python3 -c \"import os; os.replace('x.json', 'settings.json')\"",
+        "python3 -c \"import os; os.remove('settings.json')\"",
+        "python3 -c \"open('sett' + 'ings.json', 'w').write('{}')\"",
+        "python3 - <<'EOF'\nimport json\nd = json.load(open('settings.json'))\nd['theme'] = 'x'\njson.dump(d, open('settings.json', 'w'))\nEOF",
+        "node -e \"require('fs').writeFileSync('settings.json', '{}')\"",
+        "python3 -c \"import os; os.system('echo x > settings.json')\"",
+    ]
+    for c in scrive_settings:
+        r = pred(c, cwd=cl)
+        prova(f"rel9: cartella della sessione = quella di Claude, `{c.replace(chr(10), ' ')[:56]}`: negato",
+              r.negato and "settings" in r.motivo, repr(r))
+        r = pred("cd @C@ && " + c)
+        prova(f"rel9: `cd <cartella di Claude> && {c.replace(chr(10), ' ')[:44]}`: negato",
+              r.negato and "settings" in r.motivo, repr(r))
+    scrive_dati = [
+        "python3 -c \"open('config.json', 'w').write('{}')\"",
+        "python3 -c \"open('guardiano.log', 'w').write('')\"",
+        "python3 -c \"import os; os.remove('config.json')\"",
+        "python3 -c \"import shutil; shutil.move('config.json', 'x.old')\"",
+        "python3 -c \"import os; os.system('echo x > config.json')\"",
+        "python3 -c \"import json; json.dump({}, open('compartimenti.ultima-valida.json', 'w'))\"",
+    ]
+    for c in scrive_dati:
+        r = pred(c, cwd=dati)
+        prova(f"rel9: cartella della sessione = quella dei dati, `{c[:56]}`: negato", r.negato, repr(r))
+        r = pred("cd @D@ && " + c)
+        prova(f"rel9: `cd <cartella dei dati> && {c[:46]}`: negato", r.negato, repr(r))
+    r = pred("cd @C@ && cd .. && python3 -c \"open('claude/settings.json', 'w').write('{}')\"")
+    prova("rel9: `cd claude && cd .. && ... open('claude/settings.json', 'w')`: negato (percorso relativo con "
+          "una sottocartella)", r.negato, repr(r))
+    r = pred("cd @P@ && python3 -c \"open('../../claude/settings.json', 'w').write('{}')\"")
+    prova("rel9: `open('../../claude/settings.json', 'w')` da una cartella del progetto: negato",
+          r.negato, repr(r))
+    # niente da negare
+    ammessi = [
+        ("cd @C@ && python3 -c \"print(open('settings.json').read())\"", None),
+        ("cd @C@ && python3 -c \"import json; print(json.load(open('settings.json')))\"", None),
+        ("python3 -c \"import json; print(json.load(open('settings.json')))\"", cl),
+        ("python3 -c \"print(open('config.json').read())\"", dati),
+        ("cd @C@ && python3 -c \"open('note.txt', 'w').write('x')\"", None),
+        ("cd @C@ && python3 -c \"open('sotto/settings.json', 'w').write('x')\"", None),
+        ("cd @D@ && python3 -c \"open('appunti.txt', 'w').write('x')\"", None),
+        ("cd @P@ && python3 -c \"open('settings.json', 'w').write('{}')\"", None),
+        ("cd @P@ && python3 -c \"open('config.json', 'w').write('{}')\"", None),
+        ("python3 -c \"open('config.json', 'w').write('{}')\"", prog),
+        ("cd @P@ && python3 -c \"import shutil; shutil.copy('settings.json', 'copia.json')\"", None),
+    ]
+    for c, cwd in ammessi:
+        r = pred(c, cwd=cwd)
+        prova(f"rel9: `{c.replace(chr(10), ' ')[:70]}`{' (cwd nella cartella sua)' if cwd else ''}: ammesso",
+              r.ammesso, repr(r))
+    a.togli_config()
+
+
 def _prove_limiti_6(prova):
     """Sesto giro, punto 7: i limiti dichiarati, nel docstring del modulo e nel README
     (inglese e italiano): l'elenco onesto di cio' che il guardiano non vede e la frase
@@ -4901,6 +5263,10 @@ def esegui(prova):
         _prove_errori_interni_8(prova, a)
         _prove_settings_8(prova, a)
         _prove_falsi_8(prova, a)
+        _prove_operativi_9(prova, a)
+        _prove_glob_tempo_9(prova, a)
+        _prove_var_assegnate_9(prova, a)
+        _prove_nomi_relativi_9(prova, a)
         _prove_limiti_6(prova)
     finally:
         a.chiudi()
