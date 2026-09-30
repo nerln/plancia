@@ -4,8 +4,7 @@ const TOKEN = document.querySelector('meta[name=plancia-token]').content;
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 
-const state = { overview: null, view: null, filters: {}, paletteIndex: 0, paletteHits: [],
-                compartimenti: null, compartimento: null };
+const state = { overview: null, view: null, filters: {}, sel: {}, compartimenti: null, compartimento: null };
 
 
 /* ---------------------------------------------------------------- lingue */
@@ -197,7 +196,7 @@ const EN = {
   // concordate con L2-GLASS in LOTTO-L2-VISTA.md; il loro testo italiano
   // non è la chiave stessa (a differenza del resto di questo dizionario) e
   // si legge da IT_TESTI, poco sotto: qui c'è solo l'inglese.
-  'prossimi': 'Next up', 'prossimi_altri': '{n} more',
+  'prossimi': 'Next up', 'prossimi_altri': 'Show {n} more',
   'prossimi_vuoto': 'Nothing coming up', 'area_senza': 'No area',
   'cartelle_viste': 'Folders seen', 'tutti_i_task': 'All tasks',
   'tutti_i_task_nota': 'Plancia, Claude Code and Codex',
@@ -209,11 +208,80 @@ const EN = {
   // cambia da una lingua all'altra.
   'spia_titolo': 'data status',
   'spia_aggiornato': 'updated at {ora}',
-  'spia_memoria': 'from memory, {ora}, server unreachable',
+  'spia_memoria': 'server unreachable, data from {ora}',
   'spia_aggiorno': 'updating…',
   // E1-PLANCIA: il selettore di compartimento in alto.
   'compartimento_etichetta': 'Compartment',
   'compartimento_predefinito': 'Default',
+
+  // Seconda passata del design (Plancia 2.0 per Mac): le stringhe delle viste nuove.
+  'Leggi': 'Read aloud',
+  'Proposte': 'Suggestions',
+  'Tutte le fonti': 'All sources',
+  'Aperti': 'Open',
+  'Fatti': 'Done',
+  'Tutti': 'All',
+  'Stato': 'Status',
+  'Fonte': 'Source',
+  'Titolo': 'Title',
+  'Progetto': 'Project',
+  'Scadenza': 'Due',
+  'Aggiornato': 'Updated',
+  'Scegli un task': 'Pick a task',
+  'Scegli un post': 'Pick a post',
+  'Scegli una memoria': 'Pick a note',
+  'Indietro': 'Back',
+  'Fatto': 'Done',
+  'Apri progetto': 'Open project',
+  'Mostra': 'Show',
+  'Tipo': 'Type',
+  'Attivo': 'Active',
+  'Prossima azione': 'Next action',
+  'Aggiorna prossima azione': 'Update next action',
+  'nessun post': 'no posts',
+  'Piattaforma': 'Platform',
+  'Immagine': 'Image',
+  'Programmato': 'Scheduled',
+  'Pubblicato': 'Published',
+  'Aggiungi indirizzo': 'Add link',
+  'Elenco': 'List',
+  'Grafo': 'Graph',
+  'Vista': 'View',
+  'Livello': 'Level',
+  'Livello 1': 'Level 1',
+  'Livello 2': 'Level 2',
+  'Tutto': 'All',
+  'Ingrandisci': 'Zoom in',
+  'Riduci': 'Zoom out',
+  'Adatta': 'Fit',
+  'Grafo della memoria': 'Memory graph',
+  'Prova la memoria': 'Test the memory',
+  'Aggiornata': 'Updated',
+  'Cartella': 'Folder',
+  'Usata in': 'Used in',
+  'il richiamo può portarla in contesto': 'recall can bring it into context',
+  'nessuno, troppo corta': 'none, too short',
+  'Legami': 'Links',
+  'Nessun legame.': 'No links.',
+  'link rotto': 'broken link',
+  'Mostra nel grafo': 'Show in graph',
+  'Nessun testo oltre alla descrizione.': 'No text beyond the description.',
+  'Registro': 'Log',
+  'Ambito': 'Scope',
+  'Ricerca': 'Search',
+  'cerco…': 'searching…',
+  'Nessun risultato': 'No results',
+  'Aspetto': 'Appearance',
+  'Sistema': 'System',
+  'Chiaro': 'Light',
+  'Scuro': 'Dark',
+  'Lingua': 'Language',
+  'Dimensione del testo': 'Text size',
+  'Guida di Plancia': 'Plancia guide',
+  'Impostazioni': 'Settings',
+  'Lanci': 'Runs',
+  'appuntato': 'pinned',
+  'post_n': '{n} posts', 'fatti_n': '{n} notes',
 };
 
 // Il testo italiano delle chiavi qui sopra che non sono già, loro stesse, la
@@ -229,7 +297,7 @@ const EN = {
 // T(), continua a funzionare senza cambiare una riga.
 const IT_TESTI = {
   'Lavagna': 'Tutti i task',
-  'prossimi': 'Prossimi', 'prossimi_altri': 'altri {n}',
+  'prossimi': 'Prossimi', 'prossimi_altri': 'Mostra altri {n}',
   'prossimi_vuoto': 'Niente in arrivo', 'area_senza': 'Senza area',
   'cartelle_viste': 'cartelle viste', 'tutti_i_task': 'Tutti i task',
   'tutti_i_task_nota': 'Plancia, Claude Code e Codex',
@@ -251,12 +319,13 @@ const IT_TESTI = {
   // LOTTO-L4-MEMORIA punto 4: vedi il commento in EN, poco più sopra.
   'spia_titolo': 'stato dei dati',
   'spia_aggiornato': 'aggiornato alle {ora}',
-  'spia_memoria': 'memoria delle {ora}, server non raggiungibile',
+  'spia_memoria': 'server non raggiungibile, dati delle {ora}',
   'spia_aggiorno': 'aggiorno…',
 
   // E1-PLANCIA: il selettore di compartimento in alto (vedi conCompartimento).
   'compartimento_etichetta': 'Compartimento',
   'compartimento_predefinito': 'Predefinito',
+  'post_n': '{n} post', 'fatti_n': '{n} fatti',
 };
 
 // Gli eventi li scrive Plancia stessa, quindi si possono tradurre a vista.
@@ -366,8 +435,11 @@ function traduciShell() {
   $$('[data-t]').forEach((el) => {
     const chiave = el.dataset.t;
     if (el.tagName === 'INPUT') el.placeholder = T(chiave);
-    else el.childNodes[0].nodeValue = T(chiave);
+    else if (el.firstChild && el.firstChild.nodeType === 3) el.firstChild.nodeValue = T(chiave);
   });
+  const sync = $('#btn-sync'), imp = $('#btn-imp');
+  if (sync) { sync.title = T('Aggiorna'); sync.setAttribute('aria-label', T('Aggiorna')); }
+  if (imp) { imp.title = T('Impostazioni'); imp.setAttribute('aria-label', T('Impostazioni')); }
   document.documentElement.lang = UILANG;
 }
 
@@ -480,217 +552,124 @@ const statusClass = {
 
 /* ---------------------------------------------------------------- viste */
 const views = {};
+const DETTAGLI = {};
+
+/* ---------------------------------------------------------------- oggi */
+/* Una colonna di lettura, larga quanto una riga di testo e non di piu': il
+   riepilogo della giornata, i prossimi passi per progetto, le proposte. Non
+   si allarga con la finestra e non porta riquadri dentro riquadri. */
+const CHEV = '<svg class="chev" viewBox="0 0 8 12" aria-hidden="true"><path d="M1.5 1.5L6.5 6l-5 4.5"/></svg>';
+const CHEV_GIU = '<svg class="chev" viewBox="0 0 12 8" width="10" height="7" aria-hidden="true"><path d="M1.5 1.5L6 6.5l4.5-5"/></svg>';
+
+const isoOggi = () => {
+  const d = new Date();
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+};
+const scaduta = (iso) => !!iso && String(iso).slice(0, 10) < isoOggi();
+const dataBreve = (iso) => iso
+  ? new Date(String(iso).slice(0, 10) + 'T12:00:00').toLocaleDateString(LOC(), { day: 'numeric', month: 'short' }).replace(/\.$/, '')
+  : '';
+const cap = (s) => (s ? s[0].toUpperCase() + s.slice(1) : '');
 
 views.oggi = async () => {
   const d = state.overview = await api('/api/overview?lang=' + UILANG);
   state.overviewQuando = new Date(); // vedi spiaAggiorna in route(): l'ora dei DATI, non del disegno
-  const riepilogo = await bloccoRiepilogo(true);
-  // Il pannello Prossimi (LOTTO-L2-VISTA punto 2, ex "Task aperti"): si
-  // aspetta qui, prima di restituire la vista, non dentro il pannello
-  // stesso: altrimenti la vista tornerebbe con un segnaposto "carico…" per
-  // il solo pannello, che il punto 7 del lotto vieta esplicitamente (il
-  // collaudo a video lo vedrebbe come rosso). Se l'API non risponde (server
-  // giù, o vuota) `prossimi` resta null e panelloProssimi mostra
-  // 'prossimi_vuoto' invece di rompere il resto della vista.
+  const riepilogo = await bloccoRiepilogo();
+  // Prossimi si aspetta qui, prima di restituire la vista: una vista che torna
+  // con un segnaposto "carico..." per un solo pezzo e' quello che il collaudo a
+  // video vede come rosso. Se l'API non risponde `prossimi` resta null e
+  // panelloProssimi dice 'prossimi_vuoto' invece di rompere il resto.
   let prossimi = null;
   try { prossimi = await api('/api/prossimi'); } catch (e) { /* prossimi_vuoto sotto */ }
-  const s = d.stats;
-  const attivi = d.progetti.filter((p) => p.status === 'attivo');
-  const oggi = d.attivita[d.attivita.length - 1] || { claude: 0, codex: 0, commit: 0 };
-  const agenti = Object.fromEntries((d.agenti || []).map((a) => [a.agente, a]));
-  const coda = d.post.filter((p) => p.status !== 'pubblicato' && p.status !== 'scartato');
+  const proposte = d.proposte || [];
 
   return `
-  <div class="view-head">
-    <h1>${T('Oggi')}</h1>
-    <p>${new Date().toLocaleDateString(LOC(), { weekday: 'long', day: 'numeric', month: 'long' })}</p>
-    <span class="spacer"></span>
-    <p>${T('aggiornato ')}${ago(d.ultimo_sync)}</p>
-  </div>
-
-  <div data-in="1" style="margin-bottom:var(--s3)">${riepilogo}</div>
-
-  <div class="bento" data-in="2">
-    <div class="cell tall wide" style="justify-content:flex-start">
-      <div class="k">${T('Ritmo · 30 giorni')}</div>
-      ${nastro(d.attivita)}
-    </div>
-    ${cella(oggi.claude + oggi.codex, T('sessioni oggi'), '', oggi.commit ? `${oggi.commit} ${T('commit oggi')}` : '')}
-    ${cella(s.task_aperti, T('task aperti'), s.task_scaduti ? 'alarm' : '',
-       s.task_scaduti ? `${s.task_scaduti} ${T('in ritardo')}` : '')}
-    ${cella(s.progetti_attivi, T('progetti attivi'))}
-    ${cella(kilo(s.token_out_mese), T('token 30 giorni'), s.fuga ? 'warn' : 'quiet',
-       s.fuga ? `${T('oggi')} ${String(s.fuga).replace('.', ',')}× ${T('la media')}` : '')}
-  </div>
-
-  <div class="bento" data-in="3" style="grid-template-columns:repeat(4,1fr)">
-    ${agenteCella('claude', agenti.claude)}
-    ${agenteCella('codex', agenti.codex)}
-    ${cella(s.scambi || 0, T('sessioni con scambi'), s.scambi ? 'nominal' : 'quiet',
-       s.scambi ? T('Codex e Claude si sono parlati') : '')}
-    ${cella(s.post_in_coda, T('post in coda'), 'quiet',
-       s.post_pubblicati ? `${s.post_pubblicati} ${T('pubblicati')}` : '')}
-  </div>
-
-  ${(d.proposte || []).length ? `
-  <div class="panel" data-in="3" style="margin-bottom:var(--s3)">
-    <header><h3>${T('Cosa converrebbe fare')}</h3><span class="spacer"></span>
-      <span class="tag mono">${d.proposte.length}</span></header>
-    <div class="panel-body tight">
-      ${d.proposte.map((p, i) => {
-        // L3-RIPRENDI-UI-4 (obbligatoria del critico): un click su "Riprendi"
-        // qui mandava SUBITO /api/jarvis {testo:'fallo'}, che sul server
-        // esegue la proposta scelta senza nessuna conferma - su una proposta
-        // "manda" quello vuol dire un claude/codex headless partito senza
-        // drawer, senza pulsante di stato, senza che l'utente lo vedesse
-        // arrivare. Ora "manda" apre lo stesso drawer del pulsante Riprendi
-        // di riga (con o senza task, come apriRiprendi già sa fare): il
-        // lancio parte solo dal click su "In background" dentro il drawer.
-        // Le altre proposte NON passano da lì: il click va dritto a
-        // /api/jarvis (vedi il gestore di data-act="proposta" più sotto), ma
-        // "vai" e "rilancia" non fanno la stessa cosa una volta arrivate
-        // laggiù (L4-MEMORIA, obbligatoria del critico: questo commento
-        // diceva "chiama cantiere e lancia davvero" per ENTRAMBE, ed era
-        // falso per "vai"). "rilancia" chiama davvero cantiere.avvia
-        // (plancia/jarvis.py:_esegui_proposta) - voluto, non un residuo: è
-        // la risposta a "Il lancio è fallito. Lo riprovo?", e per questo
-        // l'etichetta dice "Rilancia", non "Riprendi", che qui promette una
-        // ripresa (un drawer, una scelta) che non fa. "vai" invece non
-        // tocca cantiere per niente: jarvis risponde solo con un'azione di
-        // navigazione ({tipo:'vai', vista}, senza lancio), che il gestore
-        // più sotto ora segue (location.hash = '#/' + vista) - prima di
-        // L4-MEMORIA non la seguiva affatto, e il bottone "Apri" mostrava
-        // solo il toast senza aprire niente.
-        // (Dal tester di L3-RIPRENDI-UI: questo commento diceva il
-        // contrario, che "vai"/"rilancia" restassero pura navigazione - non
-        // era vero già prima di questo lotto per "rilancia".)
-        const az = p.azione || {};
-        const frase = i === 0 ? 'fallo' : ['', 'la seconda', 'la terza', 'la quarta'][i] || 'fallo';
-        const etichetta = az.tipo === 'manda' ? T('Riprendi') : az.tipo === 'rilancia' ? T('Rilancia') : T('Apri');
-        return `
-        <div class="row">
-          <div class="prio p${p.urgenza < 2 ? 1 : p.urgenza < 4 ? 2 : 3}"></div>
-          <div class="main"><div class="title">${esc(p.testo)}</div></div>
-          <div class="side">
-            <button class="mini go riprendi" data-act="proposta" data-frase="${frase}"
-              data-testo="${esc(p.testo)}" data-tipo="${esc(az.tipo || '')}"
-              data-task="${az.task_id || ''}" data-titolo="${esc(az.titolo || '')}"
-              data-progetto="${esc(az.progetto || '')}">${etichetta}</button>
-          </div>
-        </div>`;
-      }).join('')}
-    </div>
-  </div>` : ''}
-
-  <div class="grid cols-2" data-in="4">
-    <div style="display:flex;flex-direction:column;gap:var(--s3)">
-      <div class="panel">
-        <header><h3>${T('prossimi')}</h3></header>
-        <form class="inline-form" data-form="task-quick">
-          <input type="text" name="title" placeholder="${T('Aggiungi un task e premi invio')}" autocomplete="off">
-          <select name="project" style="width:150px">
-            <option value="">${T('nessun progetto')}</option>
-            ${d.progetti.map((p) => `<option value="${esc(p.key)}">${esc(p.name)}</option>`).join('')}
-          </select>
-        </form>
-        <div class="panel-body tight">${panelloProssimi(prossimi)}</div>
-      </div>
-
-      <div class="panel">
-        <header><h3>${T('Progetti attivi')}</h3><span class="spacer"></span>
-          <a class="mini" href="#/progetti">${T('tutti')}</a></header>
-        <div class="panel-body tight">
-          ${attivi.slice(0, 7).map((p) => `
-            <div class="row" data-project="${esc(p.key)}" style="cursor:pointer">
-              <div class="prio p${p.priority}"></div>
-              <div class="main">
-                <div class="title">${esc(p.name)}</div>
-                <div class="sub truncate">${esc(p.next_action || p.summary) || '—'}</div>
-              </div>
-              <div class="side">
-                ${p.task_aperti ? `<span class="tag">${p.task_aperti}</span>` : ''}
-                <span class="tag mono">${ago(p.last_activity)}</span>
-              </div>
-            </div>`).join('') || `<div class="empty">${T('nessun progetto attivo')}</div>`}
-        </div>
-      </div>
-    </div>
-
-    <div style="display:flex;flex-direction:column;gap:var(--s3)">
-      <div class="panel">
-        <header><h3>${T('Attività recente')}</h3><span class="spacer"></span>
-          <a class="mini" href="#/archivio">${T('sessioni')}</a></header>
-        <div class="panel-body"><div class="tl">${timeline(d.eventi.slice(0, 20))}</div></div>
-      </div>
-      ${coda.length ? `
-      <div class="panel">
-        <header><h3>${T('Social in coda')}</h3><span class="spacer"></span>
-          <a class="mini" href="#/social">${T('pipeline')}</a></header>
-        <div class="panel-body tight">
-          ${coda.slice(0, 4).map((p) => `
-            <div class="row"><div class="main">
-              <div class="title clamp2">${esc(p.text)}</div>
-              <div class="sub">${esc(p.platform)} · ${esc(p.project) || T('nessun progetto')}</div>
-            </div><div class="side"><span class="tag ${statusClass[p.status] || ''}">${T(p.status)}</span></div></div>`).join('')}
-        </div>
-      </div>` : ''}
-    </div>
+  <div class="lettura">
+    ${riepilogo}
+    <section class="sez"><h2>${T('prossimi')}</h2>${panelloProssimi(prossimi)}</section>
+    ${proposte.length ? `<section class="sez"><h2>${T('Proposte')}</h2>
+      <div class="gruppo">${proposte.map(rigaProposta).join('')}</div></section>` : ''}
+    <section class="sez"><h2>${T('Chiedi')}</h2>
+      <form data-form="chiedi" class="chiedi-form">
+        <input type="text" name="domanda" placeholder="${T('Chiedi qualcosa sul tuo lavoro')}" autocomplete="off">
+        <button class="primary" type="submit">${T('Chiedi')}</button>
+      </form>
+      <div id="qa-bolle">${(state.recap.qa || []).map((b) =>
+        `<div class="bolla ${b.mia ? 'mia' : 'sua'}">${esc(b.testo)}</div>`).join('')}</div>
+    </section>
   </div>`;
 };
 
-const cella = (v, etichetta, cls = '', nota = '') => `
-  <div class="cell ${cls}">
-    <div class="k">${etichetta}</div>
-    <div class="v">${typeof v === 'number' ? num(v) : v}</div>
-    ${nota ? `<div class="n">${nota}</div>` : ''}
-  </div>`;
-
-const agenteCella = (nome, a) => {
-  const colore = nome === 'codex' ? 'var(--codex)' : 'var(--claude)';
-  if (!a) return `<div class="cell quiet"><div class="k">${nome}</div>
-    <div class="v" style="font-size:15px">${T('Codex non è collegato')}</div></div>`;
+/* Una proposta e un solo pulsante. "Riprendi" su una proposta "manda" apre il
+   cassetto (con o senza task, come apriRiprendi gia' sa fare): il lancio parte
+   solo dal click su "In background" li' dentro, mai da questo pulsante da solo.
+   "Rilancia" chiama davvero cantiere.avvia (plancia/jarvis.py, _esegui_proposta):
+   e' la risposta a "Il lancio e' fallito. Lo riprovo?", per questo dice
+   Rilancia e non Riprendi. "Apri" segue la navigazione che jarvis risponde. */
+function rigaProposta(p, i) {
+  const az = p.azione || {};
+  const frase = i === 0 ? 'fallo' : ['', 'la seconda', 'la terza', 'la quarta'][i] || 'fallo';
+  const etichetta = az.tipo === 'manda' ? T('Riprendi') : az.tipo === 'rilancia' ? T('Rilancia') : T('Apri');
   return `
-  <div class="cell" style="cursor:pointer" data-goto="agenti">
-    <div class="k"><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:${colore};margin-right:6px;vertical-align:1px"></span>${nome}</div>
-    <div class="v">${num(a.sessioni)}<small>${T('sessioni')}</small></div>
-    <div class="n">${kilo(a.token)} ${T('token generati')} · ${num(a.tool)} tool</div>
+  <div class="riga">
+    <div class="txt"><div class="t">${esc(p.testo)}</div></div>
+    <div class="side">
+      <button class="mini go riprendi" data-act="proposta" data-frase="${frase}"
+        data-testo="${esc(p.testo)}" data-tipo="${esc(az.tipo || '')}"
+        data-task="${az.task_id || ''}" data-titolo="${esc(az.titolo || '')}"
+        data-progetto="${esc(az.progetto || '')}">${etichetta}</button>
+    </div>
   </div>`;
-};
+}
 
-/* Il nastro: una linea d'orizzonte, le sessioni sopra e i commit sotto.
-   Si legge di sbieco, che è il punto di uno strumento. */
-function nastro(giorni) {
-  const maxSu = Math.max(1, ...giorni.map((g) => (g.claude || 0) + (g.codex || 0)));
-  const maxGiu = Math.max(1, ...giorni.map((g) => g.commit || 0));
-  const H = 42;
-  const totC = giorni.reduce((a, g) => a + (g.claude || 0), 0);
-  const totX = giorni.reduce((a, g) => a + (g.codex || 0), 0);
-  const totK = giorni.reduce((a, g) => a + (g.commit || 0), 0);
+/* Il pannello "Prossimi": una riga per progetto, raggruppata per area come
+   /api/prossimi la manda (plancia/api.py:prossimi_raggruppati). Il tetto di 7
+   righe visibili vale sul totale e si applica qui: ogni riga oltre il tetto e'
+   gia' nel markup, solo nascosta, e "Mostra altri N" la rivela senza una
+   seconda chiamata. Un gruppo che finisce tutto oltre il tetto resta nascosto
+   con le sue righe: mai un'area con l'intestazione e niente sotto. */
+const PROSSIMI_TETTO = 7;
+
+function panelloProssimi(dati) {
+  if (!dati) return `<div class="vuoto prossimi-vuoto">${T('prossimi_vuoto')}</div>`;
+  const gruppi = [
+    ...dati.aree.map((a) => ({
+      key: a.key, name: a.key === 'cartelle-viste' ? T('cartelle_viste') : a.name, righe: a.righe,
+    })),
+    ...(dati.senza_area.length ? [{ key: '', name: T('area_senza'), righe: dati.senza_area }] : []),
+  ].filter((g) => g.righe.length);
+  if (!gruppi.length) return `<div class="vuoto prossimi-vuoto">${T('prossimi_vuoto')}</div>`;
+
+  let mostrate = 0, nascoste = 0;
+  const blocchi = gruppi.map((g) => {
+    const visibili = Math.min(g.righe.length, Math.max(0, PROSSIMI_TETTO - mostrate));
+    mostrate += visibili;
+    nascoste += g.righe.length - visibili;
+    return `
+    <div class="prossimi-blocco"${visibili ? '' : ' hidden data-extra'}>
+      <div class="sez-area prossimi-area"><span class="prossimi-area-nome">${esc(g.name)}</span></div>
+      <div class="gruppo">${g.righe.map((r, i) => rigaProssimo(r, g.key, i >= visibili)).join('')}</div>
+    </div>`;
+  }).join('');
+  return `<div class="prossimi">${blocchi}${nascoste ? `
+    <button class="altri-out" type="button" data-act="prossimi-altri">${conN('prossimi_altri', nascoste)}</button>` : ''}</div>`;
+}
+
+function rigaProssimo(r, areaKey, nascosta) {
   return `
-  <div class="ribbon">
-    ${giorni.map((g, i) => {
-      const c = g.claude || 0, x = g.codex || 0, k = g.commit || 0;
-      const su = ((c + x) / maxSu) * H, giu = (k / maxGiu) * H;
-      const hc = (c + x) ? (c / (c + x)) * su : 0;
-      const ultimo = i === giorni.length - 1;
-      return `<div class="day ${ultimo ? 'oggi' : ''}" title="${g.giorno} · ${c} claude, ${x} codex, ${k} commit">
-        ${x ? `<div class="up codex" style="height:${su}px"></div>` : ''}
-        ${c ? `<div class="up" style="height:${hc}px"></div>` : ''}
-        ${k ? `<div class="down" style="height:${giu}px"></div>` : ''}
-        ${(!c && !x && !k) ? '<div class="tick"></div>' : ''}
-      </div>`;
-    }).join('')}
-  </div>
-  <div class="ribbon-legend">
-    <span><i style="background:var(--claude)"></i>claude ${totC}</span>
-    <span><i style="background:var(--codex)"></i>codex ${totX}</span>
-    <span><i style="background:var(--text-3);opacity:.6"></i>commit ${totK}</span>
-    <span class="spacer">${T('sopra la linea le sessioni, sotto i commit')}</span>
+  <div class="riga prossimi-riga" data-project="${esc(r.key)}" data-area="${esc(areaKey)}"
+       data-chiave="${esc(areaKey)}:${esc(r.key)}" tabindex="0" role="button"${nascosta ? ' hidden data-extra' : ''}>
+    <div class="txt">
+      <div class="t prossimi-progetto">${esc(r.name)}</div>
+      <div class="s prossimi-cosa">${r.cosa ? esc(r.cosa) : T('niente in coda')}</div>
+    </div>
+    ${r.scadenza ? `<span class="scad prossimi-scadenza${scaduta(r.scadenza) ? ' scaduta' : ''}">${dataBreve(r.scadenza)}</span>` : ''}
+    ${CHEV}
   </div>`;
 }
 
 function timeline(events) {
-  if (!events.length) return `<div class="empty">${T('niente da mostrare')}</div>`;
+  if (!events.length) return `<div class="vuoto">${T('niente da mostrare')}</div>`;
   return events.map((e) => `
     <div class="ev" data-k="${esc(e.kind)}">
       <div class="when">${ago(e.ts)} · ${T(e.kind)}${e.progetto ? ' · ' + esc(e.progetto) : ''}</div>
@@ -699,9 +678,9 @@ function timeline(events) {
 }
 
 function taskRows(tasks) {
-  if (!tasks.length) return `<div class="empty">${T('nessun task aperto')}</div>`;
+  if (!tasks.length) return `<div class="vuoto">${T('nessun task aperto')}</div>`;
   return tasks.map((t) => `
-    <div class="row" data-task="${t.id}">
+    <div class="riga" data-task="${t.id}">
       <div class="prio p${t.priority}"></div>
       <div class="main">
         <div class="title">${esc(t.title)}</div>
@@ -717,85 +696,17 @@ function taskRows(tasks) {
     </div>`).join('');
 }
 
-/* Il pannello "Prossimi" di Oggi (LOTTO-L2-VISTA punto 2): una riga per
-   progetto, raggruppata per area come /api/prossimi la manda già (vedi
-   plancia/api.py:prossimi_raggruppati). Il tetto di 7 righe VISIBILI in
-   totale si applica qui, non sul server: ogni riga oltre il tetto è
-   comunque nel markup (per non fare una seconda chiamata quando si preme
-   "altri N"), solo nascosta con [hidden] e rivelata dal click
-   (data-act="prossimi-altri" nel listener). Il tetto è per gruppo di
-   comparsa: un gruppo incontrato dopo che le 7 sono già finite mostra 0
-   righe e va comunque dietro il proprio "altri N" (mai un gruppo silenzioso
-   senza modo di aprirlo). */
-const PROSSIMI_TETTO = 7;
-
-function panelloProssimi(dati) {
-  if (!dati) return `<div class="prossimi-vuoto">${T('prossimi_vuoto')}</div>`;
-  const gruppi = [
-    // Come in alberoPadre: il nome dell'area 'cartelle-viste' passa da T(),
-    // non dal nome vero del progetto (sempre in italiano lì), cosi' l'inglese
-    // mostra un nome tradotto anche qui.
-    ...dati.aree.map((a) => ({
-      key: a.key, name: a.key === 'cartelle-viste' ? T('cartelle_viste') : a.name, righe: a.righe,
-    })),
-    ...(dati.senza_area.length ? [{ key: '', name: T('area_senza'), righe: dati.senza_area }] : []),
-  ].filter((g) => g.righe.length);
-  if (!gruppi.length) return `<div class="prossimi-vuoto">${T('prossimi_vuoto')}</div>`;
-
-  let mostrate = 0;
-  return `<div class="prossimi">${gruppi.map((g) => {
-    const visibili = Math.min(g.righe.length, Math.max(0, PROSSIMI_TETTO - mostrate));
-    mostrate += visibili;
-    return `
-    <div class="prossimi-area">
-      <span class="prossimi-area-nome">${esc(g.name)}</span>
-      <span class="prossimi-area-conta">${g.righe.length}</span>
-    </div>
-    ${g.righe.map((r, i) => rigaProssimo(r, g.key, i >= visibili)).join('')}
-    ${g.righe.length > visibili ? `<button class="mini prossimi-altri" type="button"
-        data-act="prossimi-altri" data-area="${esc(g.key)}">${conN('prossimi_altri', g.righe.length - visibili)}</button>` : ''}`;
-  }).join('')}</div>`;
-}
-
-const FONTE_CHIAVE = { task: 'task', next_action: 'next_action', vuoto: 'vuoto' };
-// Nomi CSS concordati con L2-GLASS (LOTTO-L2-VISTA): 'next_action' diventa
-// 'fonte-next', non 'fonte-next_action'.
-const FONTE_CLASSE = { task: 'fonte-task', next_action: 'fonte-next', vuoto: 'fonte-vuoto' };
-
-function rigaProssimo(r, areaKey, nascosta) {
-  // Quando la fonte è 'vuoto' non c'è niente da attribuire: la piccola
-  // etichetta di fonte si salta (altrimenti sarebbe "vuoto vuoto", la
-  // stessa parola due volte per due cose diverse nella stessa riga).
-  const fonte = r.fonte !== 'vuoto'
-    ? `<span class="prossimi-fonte ${FONTE_CLASSE[r.fonte] || 'fonte-vuoto'}">${T(FONTE_CHIAVE[r.fonte])}</span>` : '';
-  return `
-  <div class="prossimi-riga" data-project="${esc(r.key)}" data-area="${esc(areaKey)}"
-       data-chiave="${esc(areaKey)}:${esc(r.key)}"${nascosta ? ' hidden' : ''}>
-    <div class="prossimi-progetto">${esc(r.name)}</div>
-    <div class="prossimi-cosa">${r.cosa ? esc(r.cosa) : T('niente in coda')} ${fonte}</div>
-    ${r.scadenza ? `<div class="prossimi-scadenza">${dateIt(r.scadenza)}</div>` : ''}
-    <div class="prossimi-quando">${ago(r.ultima_attivita)}</div>
-  </div>`;
-}
-
-
 /* ---------------------------------------------------------------- riepilogo */
-const SUGGERIMENTI = {
-  it: ['Cosa dovrei riprendere adesso?', 'Cosa ho fatto ieri?', 'Su cosa sono fermo da troppo?', 'Quanto ho lavorato questa settimana?'],
-  en: ['What should I pick up now?', 'What did I do yesterday?', 'What has been idle too long?', 'How much did I work this week?'],
-  es: ['¿Qué debería retomar ahora?', '¿Qué hice ayer?', '¿Qué lleva parado demasiado?', '¿Cuánto he trabajado esta semana?'],
-};
 
-async function bloccoRiepilogo(soloCorpo) {
+async function bloccoRiepilogo() {
   const r = state.recap || (state.recap = { lang: '', data: null, qa: [], voce: null });
-  // Una lingua sola per superficie: quella scelta col selettore. La lingua
+  // Una lingua sola per superficie: quella scelta nelle Impostazioni. La lingua
   // della configurazione resta per il riepilogo che parte da solo la mattina,
   // quando nessuno sta guardando l'interfaccia.
   r.lang = UILANG;
-  const lingue = ['it', 'en', 'es', 'fr', 'de', 'pt'];
-  const attiva = r.lang || 'it';
+  r.qa = r.qa || [];
 
-  // Se c'è in cache si dipinge subito; altrimenti si genera in sottofondo.
+  // Se c'e' in cache si dipinge subito; altrimenti si genera in sottofondo.
   let daRinfrescare = false;
   if (!r.data) {
     try {
@@ -810,44 +721,16 @@ async function bloccoRiepilogo(soloCorpo) {
   const d = r.data;
 
   return `
-  ${soloCorpo ? '' : `<div class="view-head">
-    <h1>${T('Riepilogo')}</h1><p>${T('la tua giornata, raccontata come la diresti a voce')}</p>
-  </div>`}
-
-  <div class="recap">
-    <div class="panel">
-      <header><h3>${T('Riepilogo')}</h3><span class="spacer"></span>
-        ${d ? `<span class="tag ${d.fonte === 'claude' ? 'accent' : ''}">${esc(T(d.fonte))}</span>` : ''}
-      </header>
-      <div class="panel-body">
-        <div class="recap-testo ${d ? '' : 'attesa'}" id="recap-testo">${
-          d ? esc(d.testo) : T('preparo il riepilogo, ci vogliono pochi secondi…')}</div>
-        <div class="recap-bar" style="margin-top:16px">
-          <button class="speak" data-act="recap-play" ${d ? '' : 'disabled'}>
-            <span id="speak-icona">▶</span><span id="speak-testo">${T('Ascolta')}</span></button>
-          <button class="ghost" data-act="recap-stop">${T('Ferma')}</button>
-          <span style="color:var(--faint);font-size:12px" id="recap-voce">${
-            r.voce ? T('voce') + ': ' + esc(r.voce) : ''}</span>
-        </div>
-      </div>
+  <section class="riepilogo">
+    <p class="recap-testo ${d ? '' : 'attesa'}" id="recap-testo" ${d ? 'data-act="recap-espandi"' : ''}>${
+      d ? esc(d.testo) : T('preparo il riepilogo, ci vogliono pochi secondi…')}</p>
+    <div class="recap-bar">
+      <button class="btn" data-act="recap-play" ${d ? '' : 'disabled'}>
+        <span id="speak-icona">▶</span><span id="speak-testo">${T('Leggi')}</span></button>
+      <button class="ghost" data-act="recap-stop">${T('Ferma')}</button>
     </div>
-
-    <div class="panel">
-      <header><h3>${T('Chiedi')}</h3><span class="spacer"></span>
-        <span class="tag mono">claude</span></header>
-      <div class="panel-body qa">
-        <div class="suggerimenti">${(SUGGERIMENTI[attiva] || SUGGERIMENTI.en).map((q) =>
-          `<span class="chip" data-act="chiedi-veloce" data-q="${esc(q)}">${esc(q)}</span>`).join('')}</div>
-        <form data-form="chiedi" style="display:flex;gap:8px">
-          <input type="text" name="domanda" placeholder="${T('Chiedi qualcosa sul tuo lavoro')}" autocomplete="off">
-          <button class="primary" type="submit">${T('Chiedi')}</button>
-        </form>
-        <div id="qa-bolle">${r.qa.map((b) =>
-          `<div class="bolla ${b.mia ? 'mia' : 'sua'}">${esc(b.testo)}</div>`).join('')}</div>
-      </div>
-    </div>
-  </div>`;
-};
+  </section>`;
+}
 
 async function generaRecap(rigenera) {
   const r = state.recap;
@@ -887,7 +770,7 @@ function aggiornaBottoneVoce(attivo) {
   const icona = $('#speak-icona'), testo = $('#speak-testo');
   if (!icona || !testo) return;
   icona.innerHTML = attivo ? '<span class="wave"><i></i><i></i><i></i><i></i></span>' : '▶';
-  testo.textContent = attivo ? T('in ascolto') : T('Ascolta');
+  testo.textContent = attivo ? T('in ascolto') : T('Leggi');
 }
 
 async function chiedi(domanda) {
@@ -983,7 +866,7 @@ async function bloccoAgenti(soloCorpo) {
               <i class="x" style="width:${(p.codex / tot) * 100}%"></i>
             </div>
           </div>`;
-        }).join('') || `<div class="empty">${T('niente da mostrare')}</div>`}
+        }).join('') || `<div class="vuoto">${T('niente da mostrare')}</div>`}
       </div>
     </div>
 
@@ -1014,105 +897,331 @@ async function bloccoAgenti(soloCorpo) {
           <span class="tag mono">${d.scambi.length}</span></header>
         <div class="panel-body tight">
           ${raggruppa(d.scambi).slice(0, 8).map((e) => `
-            <div class="row"><div class="main">
+            <div class="riga"><div class="main">
               <div class="title truncate">${esc(e.title)}</div>
               <div class="sub">${ago(e.ts)} · ${e.n > 1 ? e.n + ' ' + T('riprese') + ' · ' : ''}${esc(e.detail || '')}${e.progetto ? ' · ' + esc(e.progetto) : ''}</div>
-            </div></div>`).join('') || `<div class="empty">${T('nessuno scambio registrato')}</div>`}
+            </div></div>`).join('') || `<div class="vuoto">${T('nessuno scambio registrato')}</div>`}
         </div>
       </div>
     </div>
   </div>`;
 };
 
-
 /* ---------------------------------------------------------------- archivio */
+/* Tutto quello che e' gia' successo: le sessioni in una tabella che si ordina,
+   i due agenti, le capacita, e il registro degli eventi. Le memorie hanno la
+   loro vista. */
 const SEGMENTI = [['sessioni', 'Sessioni'], ['agenti', 'Agenti'],
-                  ['memoria', 'Conoscenza'], ['capacita', 'Capacità']];
+                  ['capacita', 'Capacità'], ['registro', 'Registro']];
 
 views.archivio = async () => {
   const f = state.filters.archivio || (state.filters.archivio = { seg: 'sessioni' });
   const corpo = f.seg === 'agenti' ? await bloccoAgenti(true)
-    : f.seg === 'memoria' ? await bloccoConoscenza(true)
     : f.seg === 'capacita' ? await bloccoCapacita(true)
+    : f.seg === 'registro' ? await bloccoRegistro(true)
     : await bloccoSessioni(true);
   return `
-  <div class="view-head">
-    <h1>${T('Archivio')}</h1><p>${T('tutto quello che è già successo')}</p>
-    <span class="spacer"></span>
-    <div class="filters" style="margin:0">
-      ${SEGMENTI.map(([k, etichetta]) =>
-        `<span class="chip ${f.seg === k ? 'on' : ''}" data-filter="archivio.seg" data-value="${k}">${T(etichetta)}</span>`).join('')}
-    </div>
+  <div class="view-tools">
+    <div class="seg" role="group" aria-label="${T('Archivio')}">${SEGMENTI.map(([k, etichetta]) =>
+      `<button class="${f.seg === k ? 'on' : ''}" data-filter="archivio.seg" data-value="${k}">${T(etichetta)}</button>`).join('')}</div>
   </div>
-  <div data-in="1">${corpo}</div>`;
+  <div class="scheda-pagina">${corpo}</div>`;
 };
 
+/* Il registro degli eventi (/api/eventi): quello che Plancia ha visto fare, in
+   ordine, con il tipo e il progetto. */
+async function bloccoRegistro() {
+  const d = await api('/api/eventi?limite=200');
+  const righe = d.eventi || [];
+  return righe.length ? `
+  <table class="tabella">
+    <thead><tr><th>${T('quando')}</th><th>${T('Tipo')}</th><th>${T('Titolo')}</th><th class="c-nascondi">${T('progetto')}</th></tr></thead>
+    <tbody>${righe.slice().reverse().map((e) => `
+      <tr><td class="c-sec">${esc(ago(e.ts))}</td>
+        <td><span class="tag">${esc(e.tipo)}</span></td>
+        <td class="c-tit">${esc(Tev(e.titolo || ''))}</td>
+        <td class="c-sec c-nascondi">${esc(e.progetto || '')}</td></tr>`).join('')}</tbody>
+  </table>` : `<div class="vuoto">${T('niente da mostrare')}</div>`;
+}
+const ORD_SESS = {
+  quando: (s) => s.started_at || '', di_cosa: (s) => (s.title || s.first_prompt || '').toLowerCase(),
+  agente: (s) => s.agent || 'claude', progetto: (s) => (s.progetto || '').toLowerCase(),
+  turni: (s) => s.n_user || 0, tool: (s) => s.n_tools || 0,
+};
 
+async function bloccoSessioni(soloCorpo) {
+  const f = state.filters.sessioni || (state.filters.sessioni = { q: '', project: '', agent: '' });
+  const ord = state.ordSess || (state.ordSess = { col: 'quando', dir: -1 });
+  const [rows0, projects] = await Promise.all([
+    api(`/api/sessions?limit=150${f.q ? '&q=' + encodeURIComponent(f.q) : ''}${f.project ? '&project=' + encodeURIComponent(f.project) : ''}${f.agent ? '&agent=' + f.agent : ''}`),
+    api('/api/projects'),
+  ]);
+  const chiave = ORD_SESS[ord.col] || ORD_SESS.quando;
+  const rows = rows0.slice().sort((a, b) => {
+    const x = chiave(a), y = chiave(b);
+    return (x < y ? -1 : x > y ? 1 : 0) * ord.dir;
+  });
+  const th = (col, etichetta, cls = '') => `<th class="ord ${cls}" data-act="ordina" data-col="${col}"
+    aria-sort="${ord.col === col ? (ord.dir > 0 ? 'ascending' : 'descending') : 'none'}">${etichetta}${
+      ord.col === col ? (ord.dir > 0 ? ' ▲' : ' ▼') : ''}</th>`;
+  return `
+  <div class="filters">
+    <input type="search" data-filter-input="sessioni.q" value="${esc(f.q)}" placeholder="${T('cerca nel primo messaggio…')}"
+      aria-label="${T('cerca nel primo messaggio…')}" style="min-width:240px;width:auto">
+    <div class="seg">${['', 'claude', 'codex'].map((a) =>
+      `<button class="${f.agent === a ? 'on' : ''}" data-filter="sessioni.agent" data-value="${a}">${a ? cap(a) : T('tutti')}</button>`).join('')}</div>
+    <select data-filter-select="sessioni.project" aria-label="${T('progetto')}">
+      <option value="">${T('tutti i progetti')}</option>
+      ${projects.map((p) => `<option value="${esc(p.key)}" ${f.project === p.key ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
+    </select>
+    <span class="faint sub">${rows.length} ${T('conversazioni con Claude Code')}</span>
+  </div>
+  <table class="tabella">
+    <thead><tr>${th('quando', T('quando'))}${th('di_cosa', T('di cosa'))}${th('agente', T('agente'), 'c-nascondi')}${th('progetto', T('progetto'), 'c-nascondi')}${th('turni', T('turni'), 'destra c-nascondi')}${th('tool', T('tool'), 'destra c-nascondi')}<th></th></tr></thead>
+    <tbody>${rows.map((s) => `
+      <tr>
+        <td class="c-sec">${esc(dateIt(s.started_at))}<div class="sub">${esc(ago(s.started_at))}</div></td>
+        <td class="c-tit"><div>${esc(s.title || (s.prompt || s.first_prompt || '').slice(0, 90)) || T('senza titolo')}</div>
+          <div class="sub clamp2">${esc((s.first_prompt || '').slice(0, 190))}</div></td>
+        <td class="c-nascondi"><span class="tag agente ${s.agent === 'codex' ? 'codex' : ''}">${esc(cap(s.agent || 'claude'))}</span></td>
+        <td class="c-sec c-nascondi">${s.progetto ? esc(s.progetto) : '-'}${
+          s.dedotto_da === 'percorsi' ? `<div class="sub" title="${esc(s.dir_dedotta || '')}">${T('dedotta dai percorsi')}</div>` : ''}</td>
+        <td class="destra num c-nascondi">${num(s.n_user)}</td>
+        <td class="destra num c-nascondi">${num(s.n_tools)}</td>
+        <td class="destra"><button class="mini" data-act="copy-resume" data-id="${esc(s.session_id)}" data-cwd="${esc(s.cwd || '')}">${T('riprendi')}</button></td>
+      </tr>`).join('') || `<tr><td colspan="7" class="vuoto">${T('nessuna sessione')}</td></tr>`}
+    </tbody>
+  </table>`;
+}
 
-/* ------------------------------------------------------------------- cerca */
-/* La ragione per aprire quest'app, che prima non c'era. Fino al 9 agosto 2026 la
-   ricerca vedeva il solo primo prompt di ogni sessione, lo 0,08% del materiale,
-   e infatti non trovava niente. Adesso guarda dentro dodicimila turni: quello
-   che è stato detto davvero, con la riga esatta da cui viene. */
+/* ------------------------------------------------------------------- ricerca */
+/* Il campo in alto cerca subito: appena si scrive, la vista Risultati prende il
+   posto del contenuto finche' il campo non e' vuoto. Prima il filtro locale sui
+   dati gia' caricati (nessuna attesa), poi /api/search con un po' di calma
+   (200 ms) e la richiesta di prima annullata; i risultati del server si
+   aggiungono senza far saltare la lista. Fino al 9 agosto 2026 la ricerca
+   vedeva il solo primo prompt di ogni sessione; adesso guarda dentro i turni
+   veri, con la riga esatta da cui vengono. */
+const AMBITI = [['tutto', 'Tutto'], ['task', 'Task'], ['progetti', 'Progetti'],
+                ['sessioni', 'Sessioni'], ['memoria', 'Memoria']];
+const GRUPPI_RIC = [['task', 'Task'], ['progetti', 'Progetti'], ['sessioni', 'Sessioni'],
+                    ['memoria', 'Memoria'], ['altro', 'Altro']];
+const ric = { q: '', ambito: 'tutto', indiceP: null, indice: null, server: null, aperta: false,
+              ctl: null, timer: null, cerca: 0 };
 
-/* Il frammento arriva con i termini fra « » perché SQLite non sa niente di HTML.
-   Si scappa prima e si marca dopo, o un turno che parla di uno script diventa
-   uno script. */
 const marca = (frammento) => esc(frammento || '')
   .split('«').join('<mark>').split('»').join('</mark>');
 
-const RUOLO = { assistant: 'Claude', user: 'tu' };
-
-function rigaTurno(t) {
-  const file = (t.percorso || '').split('/').pop();
-  return `
-  <article class="trovato">
-    <div class="trovato-testa">
-      <span class="tag${t.ruolo === 'user' ? ' tu' : ''}">${T(RUOLO[t.ruolo] || t.ruolo)}</span>
-      <span class="mono muted">${esc((t.progetto || '').split('/').pop())}</span>
-      <span class="spacer"></span>
-      <span class="mono faint">${ago(t.ts)}</span>
-    </div>
-    <p class="trovato-testo">${marca(t.frammento)}</p>
-    <div class="trovato-piede mono faint">${esc(file)} · ${T('riga')} ${t.riga}</div>
-  </article>`;
+/* Il testo con i termini cercati in evidenza. Si scappa prima e si marca dopo,
+   o un titolo che contiene "<" diventa markup. */
+function evidenzia(testo, q) {
+  const t = String(testo || '');
+  const i = q ? t.toLowerCase().indexOf(q.toLowerCase()) : -1;
+  if (i < 0) return esc(t);
+  return esc(t.slice(0, i)) + '<mark>' + esc(t.slice(i, i + q.length)) + '</mark>' + esc(t.slice(i + q.length));
 }
 
-/* I progetti da cui vengono i risultati, con quanti per uno. Il conto è su tutto
-   l'indice e non sulla pagina, quindi dice davvero se la cosa cercata sta in un
-   posto solo. Cliccare stringe, ricliccare allarga. */
-function chipProgetti(gruppi, attivo) {
-  if (!gruppi || gruppi.length < 2) return '';
-  const uno = (g) => `<button class="chip${g.progetto === attivo ? ' on' : ''}"
-      data-progetto="${esc(g.progetto)}">${esc(g.progetto)} <em>${g.turni}</em></button>`;
-  return `<div class="chips">${gruppi.map(uno).join('')}</div>`;
-}
-
-views.cerca = async () => {
-  const f = state.filters.cerca || (state.filters.cerca = { q: '', progetto: '' });
-  let corpo = '', chips = '';
-  if ((f.q || '').trim()) {
-    const d = await api('/api/search?q=' + encodeURIComponent(f.q)
-      + (f.progetto ? '&progetto=' + encodeURIComponent(f.progetto) : ''));
-    const trovati = d.turni || [];
-    chips = chipProgetti(d.progetti, f.progetto);
-    corpo = trovati.length
-      ? `<div class="trovati">${trovati.map(rigaTurno).join('')}</div>`
-      : `<div class="empty">${T('nessun turno contiene quelle parole')}</div>`;
-  } else {
-    corpo = `<div class="empty">${T('Scrivi qualcosa che ricordi di aver detto, o letto.')}</div>`;
-  }
-  return `
-  <div class="view-head">
-    <h1>${T('Cerca')}</h1><p>${T('dentro quello che è stato detto, non solo nei titoli')}</p>
-  </div>
-  <input class="cercabox" type="search" autocomplete="off" data-filter-input="cerca.q"
-         placeholder="${T('una frase, un nome di file, un numero…')}"
-         value="${esc(f.q || '')}">
-  ${chips}
-  <div data-in="1">${corpo}</div>`;
+const ICONA_RIC = {
+  task: '<path d="M4 6.5l1.6 1.6L8.4 5M4 12.5l1.6 1.6 2.8-3.1M12 6.5h8M12 12.5h8M4 18.5h4M12 18.5h8"/>',
+  progetti: '<path d="M3 7.5a2 2 0 0 1 2-2h4l2 2.2h8a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
+  sessioni: '<rect x="3" y="4.5" width="18" height="4.5" rx="1"/><path d="M5 9v9a1.5 1.5 0 0 0 1.5 1.5h11A1.5 1.5 0 0 0 19 18V9M10 13h4"/>',
+  memoria: '<circle cx="6" cy="7" r="2.2"/><circle cx="18" cy="8" r="2.2"/><circle cx="12" cy="17.5" r="2.4"/><path d="M8 7.6l7.8.3M7.2 9l3.6 6.3M16.7 10l-3.6 5.3"/>',
+  altro: '<circle cx="12" cy="12" r="8"/><path d="M8.5 12h.01M12 12h.01M15.5 12h.01"/>',
 };
+const iconaRic = (g) => `<svg class="i" viewBox="0 0 24 24" aria-hidden="true">${ICONA_RIC[g] || ICONA_RIC.altro}</svg>`;
 
+/* I dati su cui filtrare subito. Si caricano la prima volta che si mette il
+   dito sul campo (focus) o si scrive, e si buttano quando i dati cambiano. */
+function caricaIndice() {
+  if (ric.indiceP) return ric.indiceP;
+  const ok = (p, vuoto) => p.catch(() => vuoto);
+  ric.indiceP = Promise.all([
+    ok(api('/api/lavagna?stato=tutti&limite=400'), { voci: [] }),
+    ok(api('/api/projects'), []),
+    ok(api('/api/knowledge'), []),
+    ok(api('/api/sessions?limit=300'), []),
+  ]).then(([lav, prog, mem, ses]) => {
+    ric.indice = { task: lav.voci || [], progetti: prog, memoria: mem, sessioni: ses };
+    return ric.indice;
+  });
+  return ric.indiceP;
+}
+
+function filtraLocale(q) {
+  const ix = ric.indice;
+  if (!ix || !q) return [];
+  const t = q.toLowerCase();
+  const punteggio = (titolo, ...altri) => {
+    const a = String(titolo || '').toLowerCase();
+    if (a === t) return 4;
+    if (a.startsWith(t)) return 3;
+    if (a.includes(t)) return 2;
+    return altri.some((x) => x && String(x).toLowerCase().includes(t)) ? 1 : 0;
+  };
+  const dai = (lista, gruppo, titolo, altri, fai) => lista
+    .map((x) => [punteggio(titolo(x), ...altri(x)), x])
+    .filter(([p]) => p > 0).sort((a, b) => b[0] - a[0]).slice(0, 25)
+    .map(([, x]) => fai(x));
+  return [
+    ...dai(ix.task, 'task', (v) => v.titolo, (v) => [v.dettaglio, v.progetto], (v) => ({
+      gruppo: 'task', titolo: v.titolo, sec: [v.progetto, T(v.stato), ago(v.aggiornato_at)].filter(Boolean).join(' · '),
+      vai: 'task:' + v.id })),
+    ...dai(ix.progetti, 'progetti', (p) => p.name, (p) => [p.key, p.summary, p.next_action], (p) => ({
+      gruppo: 'progetti', titolo: p.name, sec: p.next_action || p.summary || '', vai: 'progetti:' + p.key })),
+    ...dai(ix.sessioni, 'sessioni', (s) => s.title || s.first_prompt, (s) => [s.first_prompt, s.progetto, s.cwd], (s) => ({
+      gruppo: 'sessioni', titolo: s.title || (s.first_prompt || '').slice(0, 90) || T('senza titolo'),
+      sec: [s.progetto, cap(s.agent || 'claude'), ago(s.started_at)].filter(Boolean).join(' · '), vai: 'sessioni:' + (s.title || s.first_prompt || '').slice(0, 60) })),
+    ...dai(ix.memoria, 'memoria', (k) => k.name, (k) => [k.description], (k) => ({
+      gruppo: 'memoria', titolo: k.name, sec: k.description || '', vai: 'memoria:' + k.name })),
+  ];
+}
+
+/* Quello che risponde il server, nello stesso formato. Le schede tornano con
+   un `kind`; i turni sono le frasi vere dentro le conversazioni. */
+function dalServer(d, q) {
+  const gruppoDi = { task: 'task', progetto: 'progetti', project: 'progetti', sessione: 'sessioni', memoria: 'memoria' };
+  const schede = (d.schede || []).map((h) => {
+    const g = gruppoDi[h.kind] || 'altro';
+    const etichetta = g === 'altro' ? cap(T(h.kind)) : '';
+    return {
+      gruppo: g, titolo: h.title || T('senza titolo'), snip: h.snip || '',
+      sec: [etichetta, h.project, h.ts ? ago(h.ts) : ''].filter(Boolean).join(' · '),
+      vai: g === 'altro' ? '' : (g === 'memoria' ? 'memoria:' + h.title : g === 'task' ? 'task:'
+        : g === 'progetti' ? 'progetti:' + (h.project || '') : 'sessioni:' + (h.title || '')),
+      dallaRete: true };
+  });
+  const turni = (d.turni || []).map((t) => ({
+    gruppo: 'sessioni', turno: t, titolo: '', snip: t.frammento || '', vai: '',
+    sec: [(t.progetto || '').split('/').pop(), t.ts ? ago(t.ts) : ''].filter(Boolean).join(' · '),
+    piede: `${(t.percorso || '').split('/').pop()} · ${T('riga')} ${t.riga}`, dallaRete: true }));
+  return [...schede, ...turni];
+}
+
+function unisci() {
+  const locali = filtraLocale(ric.q);
+  const chiavi = new Set(locali.map((r) => r.gruppo + '|' + r.titolo.toLowerCase()));
+  const dalla = (ric.server || []).filter((r) => r.turno || !chiavi.has(r.gruppo + '|' + r.titolo.toLowerCase()));
+  return [...locali, ...dalla];
+}
+
+function rigaRisultato(r, q) {
+  const attr = r.vai ? ` data-vai="${esc(r.vai)}" role="button" tabindex="0"` : '';
+  if (r.turno) {
+    return `<div class="risultato"${attr}>${iconaRic('sessioni')}<div style="min-width:0">
+      <div class="t">${marca(r.snip)}</div>
+      <div class="s">${esc(r.sec)}</div>
+      <div class="s faint mono" style="font-size:var(--t-xs)">${esc(r.piede)}</div></div></div>`;
+  }
+  return `<div class="risultato"${attr}>${iconaRic(r.gruppo)}<div style="min-width:0">
+    <div class="t">${evidenzia(r.titolo, q)}</div>
+    ${r.snip ? `<div class="s">${marca(r.snip)}</div>` : (r.sec ? `<div class="s clamp2">${evidenzia(r.sec, q)}</div>` : '')}
+    ${r.snip && r.sec ? `<div class="s faint">${esc(r.sec)}</div>` : ''}</div></div>`;
+}
+
+function disegnaRisultati() {
+  const view = $('#view');
+  if (!view) return;
+  const q = ric.q.trim();
+  const tutti = unisci();
+  const contaPer = (g) => tutti.filter((r) => r.gruppo === g).length;
+  const visibili = tutti.filter((r) => ric.ambito === 'tutto' || r.gruppo === ric.ambito
+    || (ric.ambito === 'sessioni' && false));
+  const gruppi = GRUPPI_RIC.filter(([g]) => visibili.some((r) => r.gruppo === g));
+  const attesa = ric.cerca > 0;
+  view.dataset.layout = '';
+  view.innerHTML = `
+  <div class="lettura larga risultati">
+    <div class="seg ambiti" role="group" aria-label="${T('Ambito')}">${AMBITI.map(([k, l]) =>
+      `<button class="${ric.ambito === k ? 'on' : ''}" data-act="ambito" data-v="${k}">${T(l)}${
+        k !== 'tutto' && contaPer(k) ? ' ' + contaPer(k) : ''}</button>`).join('')}</div>
+    ${gruppi.map(([g, etichetta]) => `
+      <section class="sez"><h2>${T(etichetta)}</h2>
+        <div>${visibili.filter((r) => r.gruppo === g).map((r) => rigaRisultato(r, q)).join('')}</div></section>`).join('')}
+    ${!gruppi.length ? `<div class="vuoto">${attesa ? T('cerco…') : T('Nessun risultato')}</div>`
+      : (attesa ? `<div class="ric-attesa">${T('cerco…')}</div>` : '')}
+  </div>`;
+  const t = $('#tb-titolo'); if (t) t.textContent = T('Ricerca');
+}
+
+async function cercaOra(q) {
+  ric.q = q;
+  const dritti = q.trim();
+  if (!dritti) { chiudiRicerca(true); return; }
+  ric.aperta = true;
+  distruggiGrafo();
+  disegnaRisultati();
+  caricaIndice().then(() => { if (ric.q === q) disegnaRisultati(); });
+  clearTimeout(ric.timer);
+  if (ric.ctl) ric.ctl.abort();
+  if (dritti.length < 2) { ric.server = null; return; }
+  ric.cerca++;
+  ric.timer = setTimeout(async () => {
+    ric.ctl = new AbortController();
+    try {
+      const d = await api('/api/search?q=' + encodeURIComponent(dritti), { signal: ric.ctl.signal });
+      if (ric.q !== q) return;
+      ric.server = dalServer(d, dritti);
+    } catch (e) {
+      if (e && e.name === 'AbortError') return;
+      ric.server = ric.server || [];
+    } finally { ric.cerca = Math.max(0, ric.cerca - 1); }
+    if (ric.q === q) disegnaRisultati();
+  }, 200);
+}
+
+function chiudiRicerca(rifai) {
+  clearTimeout(ric.timer);
+  if (ric.ctl) ric.ctl.abort();
+  const era = ric.aperta;
+  Object.assign(ric, { q: '', aperta: false, server: null, cerca: 0, ambito: 'tutto' });
+  const inp = $('#cerca-q');
+  if (inp) inp.value = '';
+  if (era && rifai) route();
+}
+
+function vaiA(vai) {
+  const i = vai.indexOf(':');
+  const tipo = vai.slice(0, i), id = vai.slice(i + 1);
+  let dest = '#/oggi';
+  if (tipo === 'task') {
+    state.filters.lavagna = { fonte: '', stato: 'tutti' };
+    dest = '#/lavagna' + (id ? '/' + encodeURIComponent(id) : '');
+  } else if (tipo === 'progetti') {
+    dest = '#/progetti/' + encodeURIComponent(id);
+  } else if (tipo === 'memoria') {
+    const f = state.filters.memoria || (state.filters.memoria = { lente: '', modo: 'elenco', livello: 0 });
+    f.lente = '';
+    dest = '#/memoria/' + encodeURIComponent(id);
+  } else if (tipo === 'sessioni') {
+    state.filters.sessioni = { q: id || '', project: '', agent: '' };
+    state.filters.archivio = { seg: 'sessioni' };
+    dest = '#/archivio';
+  }
+  chiudiRicerca(false);
+  // stesso indirizzo di prima: hashchange non scatta, si ridisegna a mano
+  if (location.hash === dest) route(); else location.hash = dest;
+}
+
+(function collegaRicerca() {
+  const inp = $('#cerca-q');
+  inp.addEventListener('focus', () => { caricaIndice(); });
+  inp.addEventListener('input', () => cercaOra(inp.value));
+  inp.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape') { ev.preventDefault(); chiudiRicerca(true); inp.blur(); }
+  });
+  // il campo svuotato con la croce del browser
+  inp.addEventListener('search', () => { if (!inp.value && ric.aperta) chiudiRicerca(true); });
+})();
+
+// La scorciatoia di ricerca e' Cmd+K sul Mac e Ctrl+K altrove (il gestore accetta
+// tutte e due): il suggerimento nel campo dice quella giusta.
+(function suggerimentoScorciatoia() {
+  const fuoriMac = !/mac|iphone|ipad/i.test(
+    (navigator.userAgentData && navigator.userAgentData.platform)
+    || navigator.platform || navigator.userAgent || '');
+  const kbd = $('#btn-search kbd');
+  if (kbd && fuoriMac) kbd.textContent = 'Ctrl+K';
+})();
 
 /* ---------------------------------------------------------------- benvenuto */
 const PASSI = [
@@ -1192,24 +1301,22 @@ views.benvenuto = async () => {
     null, null, null,
   ][i];
   return `
-  <div style="max-width:660px;margin:6vh auto 0" data-in="1">
-    <div class="label" style="margin-bottom:var(--s4)">
+  <div class="guida">
+    <div class="label">
       ${i + 1} / ${PASSI.length}
-      <span style="display:inline-flex;gap:4px;margin-left:var(--s3);vertical-align:middle">
-        ${PASSI.map((_, k) => `<i style="width:${k === i ? 18 : 6}px;height:3px;border-radius:2px;background:${k <= i ? 'var(--amber)' : 'var(--border)'};display:block"></i>`).join('')}
-      </span>
+      <span class="passi">${PASSI.map((_, k) => `<i class="${k <= i ? 'fatto' : ''}" style="width:${k === i ? 18 : 6}px"></i>`).join('')}</span>
     </div>
-    <h1 class="serif" style="font-size:32px;letter-spacing:-.03em;line-height:1.15">${p.t[L]}</h1>
-    <p style="font-size:16px;line-height:1.7;color:var(--muted);margin-top:var(--s4)">${p.c[L]}</p>
-    ${CIFRE ? `<div class="grid cols-3" style="margin-top:var(--s5)">
-      ${CIFRE.map(([n, e]) => `<div class="kpi"><div class="num mono">${n}</div><div class="label">${e}</div></div>`).join('')}
+    <h1>${p.t[L]}</h1>
+    <p class="corpo">${p.c[L]}</p>
+    ${CIFRE ? `<div class="cifre">
+      ${CIFRE.map(([n, e]) => `<div class="kpi"><div class="num">${n}</div><div class="label">${e}</div></div>`).join('')}
     </div>` : ''}
-    <div style="display:flex;gap:var(--s2);margin-top:var(--s6);align-items:center">
+    <div class="comandi">
       ${i > 0 ? `<button class="ghost" data-act="passo" data-n="${i - 1}">${L === 'en' ? 'Back' : 'Indietro'}</button>` : ''}
       ${p.prova ? `<button class="ghost" data-act="prova-passo"
         data-vista="${p.prova.vista || ''}" data-azione="${p.prova.azione || ''}"
         data-url="${p.prova.url || ''}">${p.prova.etichetta[L]}</button>` : ''}
-      <span class="spacer" style="margin-left:auto"></span>
+      <span class="spacer"></span>
       ${i < PASSI.length - 1
         ? `<button class="primary" data-act="passo" data-n="${i + 1}">${L === 'en' ? 'Next' : 'Avanti'}</button>`
         : `<button class="primary" data-act="fine-benvenuto">${L === 'en' ? 'Start using it' : 'Comincia'}</button>`}
@@ -1218,75 +1325,124 @@ views.benvenuto = async () => {
   </div>`;
 };
 
-/* ---------------------------------------------------------------- lavagna */
-const FONTI = [['', 'tutti'], ['plancia', 'plancia'], ['claude', 'claude'], ['codex', 'codex']];
+/* ---------------------------------------------------------------- task */
+/* Tutti i task di tutti, in una tabella: stato, titolo, progetto, scadenza,
+   fonte. Un click su una riga apre il dettaglio a destra. La lavagna di prima
+   (/api/lavagna) e' la stessa fonte; la scadenza viene da /api/tasks, perche'
+   solo i task di Plancia ne hanno una. */
+const FONTI = [['', 'Tutte le fonti'], ['plancia', 'Plancia'], ['claude', 'Claude'], ['codex', 'Codex']];
+const STATI_TASK = [['aperti', 'Aperti'], ['fatto', 'Fatti'], ['tutti', 'Tutti']];
+const CLASSE_STATO = { aperto: '', 'in corso': 'in-corso', bloccato: 'bloccato', fatto: 'fatto' };
 
-views.lavagna = async (soloCorpo) => {
+/* La riga scelta. Se quella ricordata non c'e' piu' (filtro cambiato, task
+   chiuso) si passa alla prima; senza righe, a niente. */
+function scegliSel(lista, ids) {
+  const attuale = state.sel[lista];
+  const scelta = (attuale != null && ids.map(String).includes(String(attuale))) ? attuale : (ids.length ? ids[0] : null);
+  state.sel[lista] = scelta;
+  return scelta;
+}
+
+const cerchioTask = (v) => {
+  const cl = CLASSE_STATO[v.stato] || '';
+  if (v.fonte === 'plancia' && v.task_id) {
+    return `<button class="cerchio ${cl}" data-act="task-toggle" data-id="${v.task_id}" data-status="${esc(v.stato)}"
+      title="${v.stato === 'fatto' ? T('riapri') : T('Fatto')}" aria-label="${T(v.stato)}"></button>`;
+  }
+  return `<span class="cerchio fisso ${cl}" title="${T(v.stato)}" role="img" aria-label="${T(v.stato)}"></span>`;
+};
+
+views.lavagna = async () => {
   const f = state.filters.lavagna || (state.filters.lavagna = { fonte: '', stato: 'aperti' });
-  const [d, lanci, progetti] = await Promise.all([
+  const [d, lanci, progetti, tasks] = await Promise.all([
     api(`/api/lavagna?stato=${f.stato}${f.fonte ? '&fonte=' + f.fonte : ''}`),
     api('/api/runs?limite=6'),
     api('/api/projects'),
+    api('/api/tasks?status=tutti&limit=300'),
   ]);
   state.progetti = progetti;
+  const scadenze = Object.fromEntries(tasks.map((t) => [t.id, t.due]));
+  const voci = d.voci.map((v) => ({ ...v, scadenza: v.task_id ? scadenze[v.task_id] : null }));
+  state.voci = Object.fromEntries(voci.map((v) => [String(v.id), v]));
+  const sel = scegliSel('lavagna', voci.map((v) => v.id));
   const attivi = lanci.filter((r) => r.stato === 'in coda' || r.stato === 'in corso');
 
   return `
-  ${soloCorpo ? '' : `<div class="view-head">
-    <h1>${T('tutti_i_task')}</h1><p>${T('tutti_i_task_nota')}</p>
+  <div class="view-tools">
+    <div class="seg" role="group" aria-label="${T('Stato')}">${STATI_TASK.map(([k, l]) =>
+      `<button class="${f.stato === k ? 'on' : ''}" data-filter="lavagna.stato" data-value="${k}">${T(l)}</button>`).join('')}</div>
+    <select data-filter-select="lavagna.fonte" aria-label="${T('Fonte')}">${FONTI.map(([k, l]) =>
+      `<option value="${k}" ${f.fonte === k ? 'selected' : ''}>${T(l)}${
+        k && d.conteggi[k] ? ' (' + (d.conteggi[k].aperti || 0) + ')' : ''}</option>`).join('')}</select>
     <span class="spacer"></span>
-    <button class="ghost" data-act="manda-nuovo">${T('in_background')}</button>
-  </div>`}
-
-  <div class="filters" data-in="1">
-    ${FONTI.map(([k, etichetta]) => `<span class="chip ${f.fonte === k ? 'on' : ''}"
-      data-filter="lavagna.fonte" data-value="${k}">${k ? etichetta : T(etichetta)}${
-        k && d.conteggi[k] ? ` <b style="opacity:.6">${d.conteggi[k].aperti || 0}</b>` : ''}</span>`).join('')}
-    <span style="margin-left:auto"></span>
-    ${['aperti', 'fatto', 'tutti'].map((k) => `<span class="chip ${f.stato === k ? 'on' : ''}"
-      data-filter="lavagna.stato" data-value="${k}">${T(k)}</span>`).join('')}
+    <button class="btn" data-act="task-nuovo-apri">＋ ${T('Nuovo task')}</button>
   </div>
-
-  ${attivi.length ? `<div class="panel" data-in="2" style="margin-bottom:var(--s3)">
-    <header><h3>${T('In lavorazione')}</h3><span class="spacer"></span>
-      <span class="dot busy"></span></header>
-    <div class="panel-body tight">${attivi.map(rigaLancio).join('')}</div>
-  </div>` : ''}
-
-  <div class="panel" data-in="3">
-    <div class="panel-body tight">
-      ${d.voci.map((v) => `
-        <div class="row">
-          <span class="tag agente ${v.fonte === 'codex' ? 'codex' : v.fonte === 'plancia' ? 'plancia' : ''}"
-            style="flex:none">${esc(v.fonte)}</span>
-          <div class="main">
-            <div class="title">${esc(v.titolo)}</div>
-            <div class="sub">${T(v.stato)}${v.progetto ? ' · ' + esc(v.progetto) : ''}${
-              v.aggiornato_at ? ' · ' + ago(v.aggiornato_at) : ''}</div>
-          </div>
-          <div class="side">
-            <button class="mini go riprendi" data-act="manda" data-titolo="${esc(v.titolo)}"
-              data-dettaglio="${esc((v.dettaglio || '').slice(0, 600))}"
-              data-progetto="${esc(v.progetto_chiave || '')}"
-              data-task="${v.fonte === 'plancia' ? v.task_id || '' : ''}"
-              data-sessione="${esc(v.sessione || '')}" data-agente="${esc(v.agente || '')}"
-              >${T('Riprendi')}</button>
-          </div>
-        </div>`).join('') || `<div class="empty">${T('nessun task aperto da nessuna parte')}</div>`}
+  <form class="tools-form" data-form="task-quick" id="task-form" hidden>
+    <input type="text" name="title" placeholder="${T('Nuovo task')}" autocomplete="off" aria-label="${T('Nuovo task')}">
+    <select name="project" aria-label="${T('Progetto')}">
+      <option value="">${T('nessun progetto')}</option>
+      ${progetti.map((p) => `<option value="${esc(p.key)}">${esc(p.name)}</option>`).join('')}
+    </select>
+    <select name="priority" aria-label="${T('priorità')}">
+      <option value="2">${T('media')}</option><option value="1">${T('alta')}</option><option value="3">${T('bassa')}</option>
+    </select>
+    <button class="primary" type="submit">${T('Aggiungi')}</button>
+  </form>
+  <div class="md-view" data-lista="lavagna">
+    <div class="lista">
+      ${attivi.length ? `<div class="in-lavoro"><div class="gruppo-testa"><span>${T('In lavorazione')}</span>
+        <span class="dot busy"></span></div>${attivi.map(rigaLancio).join('')}</div>` : ''}
+      ${voci.length ? `<table class="tabella">
+        <thead><tr><th class="c-stato"></th><th>${T('Titolo')}</th><th class="c-nascondi">${T('Progetto')}</th>
+          <th>${T('Scadenza')}</th><th class="c-nascondi">${T('Fonte')}</th></tr></thead>
+        <tbody>${voci.map((v) => `
+          <tr data-sel="${v.id}" tabindex="0" class="${String(v.id) === String(sel) ? 'sel' : ''}">
+            <td class="c-stato">${cerchioTask(v)}</td>
+            <td class="c-tit">${esc(v.titolo)}</td>
+            <td class="c-sec c-nascondi">${esc(v.progetto || '')}</td>
+            <td class="c-sec"><span class="${scaduta(v.scadenza) && v.stato !== 'fatto' ? 'scad scaduta' : ''}">${dataBreve(v.scadenza)}</span></td>
+            <td class="c-sec c-nascondi">${esc(cap(v.fonte))}</td>
+          </tr>`).join('')}</tbody></table>`
+        : `<div class="vuoto">${T('nessun task aperto da nessuna parte')}</div>`}
+      ${lanci.length ? `<details class="lanci"><summary>${T('Lanci recenti')}</summary>
+        ${lanci.slice(0, 6).map(rigaLancio).join('')}</details>` : ''}
     </div>
-  </div>
+    <aside class="dettaglio" id="dettaglio" aria-live="polite"></aside>
+  </div>`;
+};
 
-  ${lanci.length ? `<div class="panel" data-in="4" style="margin-top:var(--s3)">
-    <header><h3>${T('Lanci recenti')}</h3></header>
-    <div class="panel-body tight">${lanci.slice(0, 6).map(rigaLancio).join('')}</div>
-  </div>` : ''}`;
+DETTAGLI.lavagna = async (id) => {
+  const v = (state.voci || {})[String(id)];
+  if (!v) return `<div class="vuoto">${T('Scegli un task')}</div>`;
+  const campi = [
+    [T('Stato'), esc(T(v.stato))],
+    [T('Progetto'), v.progetto ? esc(v.progetto) : '-'],
+    [T('Fonte'), esc(cap(v.fonte))],
+    v.scadenza ? [T('Scadenza'), `<span class="${scaduta(v.scadenza) && v.stato !== 'fatto' ? 'scad scaduta' : ''}">${dataBreve(v.scadenza)}</span>`] : null,
+    [T('Aggiornato'), esc(ago(v.aggiornato_at))],
+  ].filter(Boolean);
+  return `
+    <button class="ghost indietro" data-act="indietro">‹ ${T('Indietro')}</button>
+    <h2>${esc(v.titolo)}</h2>
+    <dl class="campi">${campi.map(([k, val]) => `<div><dt>${k}</dt><dd>${val}</dd></div>`).join('')}</dl>
+    ${v.dettaglio ? `<p class="corpo">${esc(v.dettaglio)}</p>` : ''}
+    <div class="azioni">
+      <button class="btn riprendi" data-act="manda" data-titolo="${esc(v.titolo)}"
+        data-dettaglio="${esc((v.dettaglio || '').slice(0, 600))}"
+        data-progetto="${esc(v.progetto_chiave || '')}"
+        data-task="${v.fonte === 'plancia' ? v.task_id || '' : ''}"
+        data-sessione="${esc(v.sessione || '')}" data-agente="${esc(v.agente || '')}">▷ ${T('Riprendi')}</button>
+      ${v.fonte === 'plancia' && v.task_id && v.stato !== 'fatto'
+        ? `<button class="btn" data-act="task-done" data-id="${v.task_id}">${T('Fatto')}</button>` : ''}
+      ${v.progetto_chiave ? `<button class="btn" data-goto="progetti/${esc(v.progetto_chiave)}">${T('Apri progetto')}</button>` : ''}
+    </div>`;
 };
 
 const STATO_LANCIO = { riuscito: 'ok', fallito: 'danger', bloccato: 'warn',
                        'in corso': 'accent', 'in coda': '', annullato: '' };
 
 const rigaLancio = (r) => `
-  <div class="row" data-act="lancio" data-id="${r.id}" style="cursor:pointer">
+  <div class="riga" data-act="lancio" data-id="${r.id}" style="cursor:pointer">
     <span class="tag agente ${r.agente === 'codex' ? 'codex' : ''}" style="flex:none">${esc(r.agente)}</span>
     <div class="main">
       <div class="title truncate">${esc(r.task || (r.prompt || '').split('\n').filter((x) =>
@@ -1411,261 +1567,247 @@ async function apriLancio(id) {
   $('#drawer').hidden = false;
 }
 
-views.progetti = async () => {
-  // LOTTO-L4-MEMORIA (correzione del critico, punto "la spia"): quando non
-  // c'è niente in cassa il fetch va salvato in state.overview (prima si
-  // buttava via tutto tranne .progetti), altrimenti la prossima vista che
-  // legge state.overview lo trova ancora vuoto e rifà la stessa richiesta -
-  // e senza state.overviewQuando la spia non saprebbe mai l'ora di QUESTI
-  // dati quando un'altra vista li riuserà dalla cassa.
-  if (!state.overview) { state.overview = await api('/api/overview?lang=' + UILANG); state.overviewQuando = new Date(); }
-  const list = state.overview.progetti;
-  const groups = [['attivo', T('attivo')], ['idea', T('idea')], ['in pausa', T('in pausa')], ['concluso', T('concluso')]];
-  // Annidamento (LOTTO-L2-VISTA punto 4): /api/overview porta già
-  // parent_id su ogni progetto (colonna di projects, letta con "p.*" in
-  // plancia/api.py:overview), quindi il nido si costruisce qui dai dati che
-  // la vista scarica comunque, senza una seconda chiamata a
-  // /api/projects?albero=1; quell'endpoint resta per chi vuole solo
-  // l'albero (stessa slot.albero(), stessi totali, vedi plancia/api.py), ma
-  // qui servirebbe solo a duplicare un calcolo già fatto da /api/overview
-  // (che in più porta repos e token_30g, che slot.albero() non calcola).
-  // Un figlio non compare mai come card a sé nel proprio gruppo di stato:
-  // resta sempre dentro il padre, qualunque sia lo stato del figlio.
-  const figliDiId = {};
-  list.forEach((p) => { if (p.parent_id) (figliDiId[p.parent_id] = figliDiId[p.parent_id] || []).push(p); });
-  const eFiglio = new Set(list.filter((p) => p.parent_id).map((p) => p.id));
+/* ---------------------------------------------------------------- progetti */
+/* A sinistra l'elenco, raggruppato per stato, con i figli sotto il padre; a
+   destra il progetto scelto per intero. Il vecchio cassetto restava sopra a
+   tutto e nascondeva l'elenco: qui i due stanno insieme. */
+const chiusiAlbero = new Set(['cartelle-viste']);
 
-  return `
-  <div class="view-head"><h1>${T('Progetti')}</h1><p>${list.length} ${T('tracciati')}</p></div>
-  ${groups.map(([st, label]) => {
-    const items = list.filter((p) => p.status === st && !eFiglio.has(p.id));
-    if (!items.length) return '';
-    return `<h3 style="margin:18px 0 10px;color:var(--faint);font-size:12px;text-transform:uppercase;letter-spacing:.05em">${label} · ${items.length}</h3>
-    <div class="albero cards">${items.map((p) =>
-      figliDiId[p.id] ? alberoPadre(p, figliDiId[p.id]) : projectCard(p)).join('')}</div>`;
-  }).join('')}`;
-};
-
-/* Un padre con figli (LOTTO-L2-VISTA punto 4): nasce APERTO, figli visibili
-   sotto (.albero-figli senza [hidden]) - solo `cartelle-viste` (il
-   contenitore delle cartelle senza un manuale, kind infra, creato da
-   plancia/ingest.py e plancia/riordina.py) nasce chiuso
-   (.albero-padre.chiusa, [hidden] su .albero-figli): non è "un'idea di
-   cartelle raggruppate" in generale, è quell'area specifica, e il verdetto
-   (docs/CONSIGLIO-2026-09-16-verdetto.md) la vuole chiusa di default in
-   quanto tale, non come regola per ogni padre. Il toggle è sul bottone
-   .albero-toggle (data-act="albero-toggle" nel listener), i totali sommati
-   padre+figli vanno su .albero-totali. Il click che apre il drawer resta
-   sul nome/descrizione, non sull'intera card: altrimenti coprirebbe anche
-   il bottone del toggle (il listener dei click controlla prima [data-act],
-   quindi non ci sarebbe un conflitto reale, ma un'area di click più piccola
-   e precisa per "apri il progetto" evita comunque l'ambiguità visiva di una
-   card che fa due cose diverse a seconda di dove la tocchi). */
-function alberoPadre(padre, figli) {
-  const task = (padre.task_aperti || 0) + figli.reduce((n, f) => n + (f.task_aperti || 0), 0);
-  const sessioni = (padre.sessioni || 0) + figli.reduce((n, f) => n + (f.sessioni || 0), 0);
-  // Residuo dei tester dell'ondata 2 (16/09/2026), punto 5: la card del
-  // padre aveva solo priorità e i due totali, non le altre informazioni che
-  // una projectCard normale porta già (kind, token, repo, pinned) né i
-  // totali veri del sottoalbero per token e ultima attività.
-  const token30 = (padre.token_30g || 0) + figli.reduce((n, f) => n + (f.token_30g || 0), 0);
-  const ultimaAttivita = figli.reduce(
-    (max, f) => (f.last_activity && f.last_activity > (max || '')) ? f.last_activity : max,
-    padre.last_activity);
-  const chiusa = padre.key === 'cartelle-viste';
-  // Il nome di 'cartelle-viste' passa da T() (chiave 'cartelle_viste') così
-  // l'inglese non mostra il nome italiano del progetto: per ogni altro
-  // padre il nome resta quello vero, che non è una chiave da tradurre.
-  const nome = chiusa ? T('cartelle_viste') : padre.name;
-  return `
-  <div class="albero-padre card${chiusa ? ' chiusa' : ''}${padre.pinned ? ' pinned' : ''}" data-chiave="${esc(padre.key)}">
-    <div style="display:flex;align-items:baseline;gap:8px" data-project="${esc(padre.key)}">
-      <h4>${esc(nome)}</h4>
-      <span class="spacer" style="margin-left:auto"></span>
-      <span class="tag ${padre.priority === 1 ? 'danger' : ''}">${prioTag(padre.priority)}</span>
-    </div>
-    <div class="desc clamp2" data-project="${esc(padre.key)}">${
-      esc(padre.summary || padre.next_action) || T('nessuna descrizione')}</div>
-    <div class="meta albero-totali">
-      <span class="tag">${T(padre.kind)}</span>
-      ${task ? `<span class="tag warn">${task} ${task === 1 ? T('task aperto') : T('task aperti')}</span>` : ''}
-      ${sessioni ? `<span class="tag">${sessioni} ${T('sessioni')}</span>` : ''}
-      ${token30 ? `<span class="tag mono" title="${T('token generati negli ultimi 30 giorni')}">${kilo(token30)}</span>` : ''}
-      ${padre.repos ? `<span class="tag info mono">${esc(String(padre.repos).split(',')[0])}</span>` : ''}
-      <span style="margin-left:auto">${ago(ultimaAttivita)}</span>
-    </div>
-    <button class="mini albero-toggle" type="button" data-act="albero-toggle">${progettiN(figli.length)}</button>
-    <div class="albero-figli"${chiusa ? ' hidden' : ''}>${figli.map((f) => projectCard(f, 'albero-figlio')).join('')}</div>
-  </div>`;
+/* I totali di un padre contano anche i figli: task aperti, sessioni, token
+   degli ultimi 30 giorni, e l'attivita' piu' recente di tutto il sottoalbero
+   (non solo quella del padre, che spesso e' ferma mentre un figlio lavora). */
+function totaliAlbero(padre, figli) {
+  return {
+    task: (padre.task_aperti || 0) + figli.reduce((n, f) => n + (f.task_aperti || 0), 0),
+    sessioni: (padre.sessioni || 0) + figli.reduce((n, f) => n + (f.sessioni || 0), 0),
+    token30: (padre.token_30g || 0) + figli.reduce((n, f) => n + (f.token_30g || 0), 0),
+    ultima: figli.reduce((max, f) => (f.last_activity && f.last_activity > (max || '')) ? f.last_activity : max,
+      padre.last_activity),
+  };
 }
 
-const projectCard = (p, extra = '') => `
-  <div class="card ${extra} ${p.pinned ? 'pinned' : ''} ${p.status === 'concluso' ? 'dim' : ''}"
-       data-project="${esc(p.key)}" data-chiave="${esc(p.key)}">
-    <div style="display:flex;align-items:baseline;gap:8px">
-      <h4>${esc(p.name)}</h4>
-      <span class="spacer" style="margin-left:auto"></span>
-      <span class="tag ${p.priority === 1 ? 'danger' : ''}">${prioTag(p.priority)}</span>
-    </div>
-    <div class="desc clamp2">${esc(p.summary || p.next_action) || T('nessuna descrizione')}</div>
-    <div class="meta">
-      <span class="tag">${T(p.kind)}</span>
-      ${p.task_aperti ? `<span class="tag warn">${p.task_aperti} ${p.task_aperti === 1 ? T('task aperto') : T('task aperti')}</span>` : ''}
-      ${p.sessioni ? `<span class="tag">${p.sessioni} ${T('sessioni')}</span>` : ''}
-      ${p.token_30g ? `<span class="tag mono" title="${T('token generati negli ultimi 30 giorni')}">${kilo(p.token_30g)}</span>` : ''}
-      ${p.repos ? `<span class="tag info mono">${esc(String(p.repos).split(',')[0])}</span>` : ''}
-      <span style="margin-left:auto">${ago(p.last_activity)}</span>
-    </div>
-  </div>`;
+views.progetti = async () => {
+  // Quando non c'e' niente in cassa il fetch va salvato in state.overview: la
+  // prossima vista che lo legge non rifa' la richiesta, e senza
+  // state.overviewQuando la spia non saprebbe l'ora di QUESTI dati.
+  if (!state.overview) { state.overview = await api('/api/overview?lang=' + UILANG); state.overviewQuando = new Date(); }
+  const list = state.overview.progetti;
+  const gruppi = [['attivo', T('attivo')], ['idea', T('idea')], ['in pausa', T('in pausa')], ['concluso', T('concluso')]];
+  // Un figlio non compare mai da solo nel proprio gruppo di stato: resta
+  // sempre dentro il padre, qualunque sia il suo stato (parent_id arriva gia'
+  // in /api/overview, quindi il nido si costruisce senza un'altra chiamata).
+  const figliDi = {};
+  list.forEach((p) => { if (p.parent_id) (figliDi[p.parent_id] = figliDi[p.parent_id] || []).push(p); });
+  const eFiglio = new Set(list.filter((p) => p.parent_id).map((p) => p.id));
+  const visibili = list.filter((p) => !eFiglio.has(p.id));
+  const ordine = gruppi.flatMap(([st]) => visibili.filter((p) => p.status === st).map((p) => p.key));
+  // la prima e' quella di partenza; anche un figlio, raggiunto da un indirizzo, e' una scelta valida
+  const sel = scegliSel('progetti', [...ordine, ...list.map((p) => p.key).filter((k) => !ordine.includes(k))]);
 
-async function bloccoTask(soloCorpo) {
-  const f = state.filters.task || (state.filters.task = { status: 'aperti', project: '' });
-  const [tasks, projects] = await Promise.all([
-    api(`/api/tasks?status=${encodeURIComponent(f.status)}${f.project ? '&project=' + encodeURIComponent(f.project) : ''}`),
-    api('/api/projects'),
-  ]);
+  const padreSel = list.find((p) => p.key === sel && p.parent_id);
+  if (padreSel) { const pa = list.find((p) => p.id === padreSel.parent_id); if (pa) chiusiAlbero.delete(pa.key); }
+  const riga = (p, extra = '', figli = null) => {
+    const conFigli = !!(figli && figli.length);
+    const tot = conFigli ? totaliAlbero(p, figli) : { task: p.task_aperti || 0, ultima: p.last_activity };
+    const nome = p.key === 'cartelle-viste' ? T('cartelle_viste') : p.name;
+    return `<div class="riga ${extra} ${p.key === sel ? 'sel' : ''}" data-sel="${esc(p.key)}" data-chiave="${esc(p.key)}" tabindex="0">
+      ${!extra && !conFigli ? '<span class="disclosure vuoto-slot"></span>' : ''}${conFigli ? `<button class="disclosure" data-act="albero-toggle" data-key="${esc(p.key)}" aria-label="${T('Mostra')}">${CHEV_GIU}</button>` : ''}
+      <div class="txt"><div class="t">${esc(nome)}${p.pinned ? ' <span class="faint" title="' + T('appuntato') + '">★</span>' : ''}</div>
+        <div class="s truncate">${conFigli ? esc(progettiN(figli.length)) + ' · ' : ''}${esc(p.next_action || p.summary || '') || '-'}</div></div>
+      <div class="side">${tot.task ? `<span class="tag warn" title="${T('task aperti')}">${tot.task}</span>` : ''}
+        <span class="scad">${esc(ago(tot.ultima))}</span></div>
+    </div>`;
+  };
+  const blocco = (p) => {
+    const figli = figliDi[p.id] || [];
+    if (!figli.length) return riga(p);
+    const chiusa = chiusiAlbero.has(p.key);
+    return `<div class="albero-padre${chiusa ? ' chiusa' : ''}" data-key="${esc(p.key)}">
+      ${riga(p, '', figli)}
+      <div class="albero-figli"${chiusa ? ' hidden' : ''}>${figli.map((f) => riga(f, 'figlio')).join('')}</div>
+    </div>`;
+  };
+
   return `
-  ${soloCorpo ? '' : `<div class="view-head"><h1>${T('Task')}</h1><p>${tasks.length} ${T('in elenco')}</p></div>`}
-  <div class="filters">
-    ${['aperti', 'in corso', 'bloccato', 'fatto', 'tutti'].map((s) =>
-      `<span class="chip ${f.status === s ? 'on' : ''}" data-filter="task.status" data-value="${s}">${T(s)}</span>`).join('')}
-    <select data-filter-select="task.project" style="margin-left:auto">
-      <option value="">${T('tutti i progetti')}</option>
-      ${projects.map((p) => `<option value="${esc(p.key)}" ${f.project === p.key ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
-    </select>
-  </div>
-  <div class="panel">
-    <form class="inline-form" data-form="task-quick">
-      <input type="text" name="title" placeholder="${T('Nuovo task')}" autocomplete="off">
-      <select name="project" style="width:170px">
-        <option value="${esc(f.project)}">${esc(projects.find((p) => p.key === f.project)?.name || 'nessun progetto')}</option>
-        ${projects.filter((p) => p.key !== f.project).map((p) => `<option value="${esc(p.key)}">${esc(p.name)}</option>`).join('')}
-      </select>
-      <select name="priority" style="width:110px">
-        <option value="2">${T('media')}</option><option value="1">${T('alta')}</option><option value="3">${T('bassa')}</option>
-      </select>
-      <button class="primary" type="submit">${T('Aggiungi')}</button>
-    </form>
-    <div class="panel-body tight">${taskRows(tasks)}</div>
+  <div class="md-view" data-lista="progetti">
+    <div class="lista">
+      ${gruppi.map(([st, label]) => {
+        const items = visibili.filter((p) => p.status === st);
+        if (!items.length) return '';
+        return `<div class="gruppo-testa"><span>${cap(label)}</span><span class="n">${items.length}</span></div>
+          <div class="lista-righe">${items.map(blocco).join('')}</div>`;
+      }).join('') || `<div class="vuoto">${T('nessun progetto attivo')}</div>`}
+    </div>
+    <aside class="dettaglio" id="dettaglio" aria-live="polite"></aside>
   </div>`;
 };
 
+DETTAGLI.progetti = async (key) => {
+  const d = await api('/api/projects/' + encodeURIComponent(key));
+  const p = d.progetto;
+  const campi = [
+    [T('Stato'), `<span class="tag ${statusClass[p.status] || ''}">${esc(T(p.status))}</span>`],
+    [T('Tipo'), esc(T(p.kind))],
+    [cap(T('priorità')), esc(cap(prioTag(p.priority)))],
+    [T('Attivo'), esc(ago(p.last_activity))],
+  ];
+  return `
+    <button class="ghost indietro" data-act="indietro">‹ ${T('Indietro')}</button>
+    <h2>${esc(p.name)}</h2>
+    ${p.summary ? `<p class="corpo">${esc(p.summary)}</p>` : ''}
+    <dl class="campi">${campi.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join('')}</dl>
+
+    <h3>${T('Prossima azione')}</h3>
+    <form data-form="project-edit" data-key="${esc(p.key)}">
+      <input type="text" name="next_action" value="${esc(p.next_action || '')}" placeholder="${T('prossimo passo concreto')}"
+        aria-label="${T('Prossima azione')}">
+      <div class="qui">
+        <select name="status" aria-label="${T('Stato')}">${['attivo', 'in pausa', 'idea', 'concluso']
+          .map((s) => `<option value="${s}" ${p.status === s ? 'selected' : ''}>${T(s)}</option>`).join('')}</select>
+        <select name="priority" aria-label="${T('priorità')}">${[[1, 'alta'], [2, 'media'], [3, 'bassa']]
+          .map(([v, l]) => `<option value="${v}" ${p.priority === v ? 'selected' : ''}>${T(l)}</option>`).join('')}</select>
+        <button class="primary" type="submit">${T('Aggiorna prossima azione')}</button>
+      </div>
+    </form>
+
+    ${section(T('Task'), sezioneTaskDrawer(d.task))}
+    ${cassettoDopo(p, d.task)}
+
+    ${d.memoria.length ? section(T('Memoria'), `<div class="elenco">${d.memoria.map((k) =>
+      `<div class="riga" data-memory="${esc(k.name)}"><div class="txt"><div class="t">${esc(k.name)}</div>
+        <div class="s clamp2">${esc(k.description || '')}</div></div>${CHEV}</div>`).join('')}</div>`) : ''}
+
+    ${d.repo.length ? section(T('Repository'), `<div class="elenco">${d.repo.map((r) =>
+      `<div class="riga"><div class="txt"><div class="t mono">${esc(r.name)}</div>
+        <div class="s">${esc(r.description || cartellaCorta(r.local_path) || '')}</div></div>
+        <div class="side">${r.visibility ? `<span class="tag">${esc(r.visibility)}</span>` : ''}
+        ${r.dirty ? `<span class="tag warn">${r.dirty} ${T('modifiche')}</span>` : ''}
+        ${r.url ? `<a class="mini" href="${esc(r.url)}" target="_blank" rel="noopener">github</a>` : ''}</div>
+      </div>`).join('')}</div>`) : ''}
+
+    ${d.commit.length ? section(T('Commit recenti'), `<div class="elenco">${
+      d.commit.slice(0, 12).map((c) => `<div class="riga"><div class="txt">
+        <div class="t truncate">${esc(c.message)}</div>
+        <div class="s mono truncate">${esc(c.repo)} · ${esc((c.sha || '').slice(0, 7))} · ${esc(ago(c.date))}${
+          c.sessione_titolo ? ` · ${T('da')} ${esc(c.sessione_titolo.slice(0, 46))}` : ''}</div>
+      </div></div>`).join('')}</div>`) : ''}
+
+    ${d.sessioni.length ? section(T('Sessioni'), `<div class="elenco">${
+      d.sessioni.slice(0, 12).map((s) => `<div class="riga"><div class="txt">
+        <div class="t truncate">${esc(s.title || (s.prompt || '').slice(0, 80)) || T('senza titolo')}</div>
+        <div class="s">${esc(dateIt(s.started_at))} · ${s.n_user} ${T('scambi')} · ${s.n_tools} tool${
+          s.dedotto_da === 'percorsi' ? ' · ' + T('dedotta dai percorsi') : ''}</div>
+      </div><div class="side"><button class="mini" data-act="copy-resume" data-id="${esc(s.session_id)}" data-cwd="">${T('riprendi')}</button></div></div>`).join('')}</div>`) : ''}
+
+    ${d.post.length ? section(T('Post'), `<div class="elenco">${d.post.map((o) =>
+      `<div class="riga"><div class="txt"><div class="t clamp2">${esc(o.text)}</div>
+        <div class="s">${esc(o.platform)}</div></div>
+        <span class="tag ${statusClass[o.status] || ''}">${T(o.status)}</span></div>`).join('')}</div>`) : ''}
+
+    ${section(T('Cronologia'), `<div class="tl">${timeline(d.eventi.slice(0, 30))}</div>`)}
+  `;
+};
+
+const section = (title, html) => `<section><h3>${title}</h3>${html}</section>`;
+
+/* La sezione "Task" del dettaglio mostra solo il primo task aperto (quello che
+   slot.prossimi() usa come "cosa") piu' quelli chiusi: gli altri aperti stanno
+   nel cassetto "Dopo" qui sotto, senza righe ripetute fra le due. */
+function sezioneTaskDrawer(task) {
+  const aperti = task.filter((t) => ['aperto', 'in corso', 'bloccato'].includes(t.status));
+  const resto = task.filter((t) => !['aperto', 'in corso', 'bloccato', 'archiviato'].includes(t.status));
+  const mostrati = (aperti.length ? [aperti[0]] : []).concat(resto);
+  return mostrati.length
+    ? `<div class="elenco">${taskRows(mostrati)}</div>`
+    : `<p class="faint">${T('nessuno')}</p>`;
+}
+
+/* Il cassetto "Dopo": chiuso, un titolo con il conteggio; il contenuto si carica
+   al click da /api/tasks?dopo=1, per non portare a video una lista che nessuno
+   apre mai. */
+function cassettoDopo(p, task) {
+  const aperti = task.filter((t) => ['aperto', 'in corso', 'bloccato'].includes(t.status));
+  const conta = Math.max(0, aperti.length - 1);
+  if (!conta) return '';
+  return `
+  <section class="cassetto-dopo">
+    <h3 data-act="cassetto-dopo" data-key="${esc(p.key)}" role="button" tabindex="0">${conN('dopo_conta', conta)}</h3>
+    <div class="cassetto-dopo-lista elenco" hidden></div>
+  </section>`;
+}
+
+/* ---------------------------------------------------------------- social */
 const LANES = [['idea', 'Idee'], ['bozza', 'Bozze'], ['approvato', 'Approvati'],
   ['programmato', 'Programmati'], ['pubblicato', 'Pubblicati']];  // etichette tradotte in vista
 const NEXT = { idea: 'bozza', bozza: 'approvato', approvato: 'programmato', programmato: 'pubblicato' };
 
 views.social = async () => {
   const [posts, projects] = await Promise.all([api('/api/posts'), api('/api/projects')]);
+  state.posts = Object.fromEntries(posts.map((p) => [String(p.id), p]));
+  const ordine = LANES.flatMap(([st]) => posts.filter((p) => p.status === st).map((p) => p.id));
+  const sel = scegliSel('social', ordine);
   return `
-  <div class="view-head">
-    <h1>${T('Social')}</h1><p>${T('ogni post è legato al lavoro che lo ha prodotto')}</p>
+  <div class="view-tools">
+    <span class="muted">${posts.length ? conN('post_n', posts.length) : ''}</span>
     <span class="spacer"></span>
-    <button class="ghost" data-act="post-new">${T('Nuova bozza')}</button>
+    <button class="btn" data-act="post-new">＋ ${T('Nuova bozza')}</button>
   </div>
-  <div class="kanban">
-    ${LANES.map(([st, label]) => {
-      const items = posts.filter((p) => p.status === st);
-      return `<div class="klane"><h4>${T(label)}<span>${items.length}</span></h4>
-        <div class="kbody">${items.map((p) => `
-          <div class="kcard" data-chiave="${p.id}">
-            <div class="txt">${esc(p.text.length > 260 ? p.text.slice(0, 260) + '…' : p.text)}</div>
-            ${p.source_ref ? `<div class="foot mono truncate">${T('fonte')}: ${esc(p.source_ref)}</div>` : ''}
-            <div class="foot">
-              <span class="tag">${esc(p.platform)}</span>
-              ${p.project ? `<span class="tag info">${esc(p.project)}</span>` : ''}
-              <span class="spacer"></span>
-              ${p.url ? `<a class="mini" href="${esc(p.url)}" target="_blank" rel="noopener">${T('apri')}</a>` : ''}
-              ${NEXT[p.status] ? `<button class="mini go" data-act="post-next" data-id="${p.id}" data-next="${NEXT[p.status]}">→ ${T(NEXT[p.status])}</button>` : ''}
-              ${p.status !== 'pubblicato' ? `<button class="mini" data-act="post-edit" data-id="${p.id}">url</button>` : ''}
-            </div>
-          </div>`).join('') || `<div class="empty" style="padding:14px;font-size:12px">${T('vuoto')}</div>`}
-        </div></div>`;
-    }).join('')}
-  </div>
-  <div class="panel" style="margin-top:16px" id="post-form" hidden>
-    <header><h3>${T('Nuova bozza')}</h3></header>
-    <div class="panel-body">
-      <form data-form="post-new" style="display:flex;flex-direction:column;gap:10px">
-        <textarea name="text" placeholder="${T('Il testo del post')}" required></textarea>
-        <div style="display:flex;gap:10px;flex-wrap:wrap">
-          <select name="platform" style="width:130px"><option value="x">x</option><option value="linkedin">linkedin</option><option value="bluesky">bluesky</option><option value="mastodon">mastodon</option><option value="hn">hn</option><option value="reddit">reddit</option></select>
-          <select name="project" style="width:190px"><option value="">nessun progetto</option>
-            ${projects.map((p) => `<option value="${esc(p.key)}">${esc(p.name)}</option>`).join('')}</select>
-          <input type="text" name="source_ref" placeholder="${T('fonte: commit, repo, sessione')}" style="flex:1;min-width:200px">
-          <button class="primary" type="submit">${T('Salva bozza')}</button>
-        </div>
-      </form>
+  <form class="tools-form" data-form="post-new" id="post-form" hidden>
+    <textarea name="text" placeholder="${T('Il testo del post')}" required aria-label="${T('Il testo del post')}" style="flex-basis:100%"></textarea>
+    <select name="platform" aria-label="${T('Piattaforma')}"><option value="x">x</option><option value="linkedin">linkedin</option><option value="bluesky">bluesky</option><option value="mastodon">mastodon</option><option value="hn">hn</option><option value="reddit">reddit</option></select>
+    <select name="project" aria-label="${T('Progetto')}"><option value="">${T('nessun progetto')}</option>
+      ${projects.map((p) => `<option value="${esc(p.key)}">${esc(p.name)}</option>`).join('')}</select>
+    <input type="text" name="source_ref" placeholder="${T('fonte: commit, repo, sessione')}">
+    <button class="primary" type="submit">${T('Salva bozza')}</button>
+  </form>
+  <div class="md-view" data-lista="social">
+    <div class="lista">
+      ${posts.length ? LANES.map(([st, label]) => {
+        const items = posts.filter((p) => p.status === st);
+        if (!items.length) return '';
+        return `<div class="gruppo-testa"><span>${T(label)}</span><span class="n">${items.length}</span></div>
+          <div class="lista-righe">${items.map((p) => `
+            <div class="riga ${String(p.id) === String(sel) ? 'sel' : ''}" data-sel="${p.id}" data-chiave="${p.id}" tabindex="0">
+              <div class="txt"><div class="t clamp2">${esc(p.text)}</div>
+                <div class="s">${esc(p.platform)}${p.project ? ' · ' + esc(p.project) : ''}</div></div>
+              <span class="tag ${statusClass[p.status] || ''}">${T(p.status)}</span>
+            </div>`).join('')}</div>`;
+      }).join('') : `<div class="vuoto">${T('nessun post')}</div>`}
     </div>
+    <aside class="dettaglio" id="dettaglio" aria-live="polite"></aside>
   </div>`;
 };
 
-async function bloccoSessioni(soloCorpo) {
-  const f = state.filters.sessioni || (state.filters.sessioni = { q: '', project: '', agent: '' });
-  const [rows, projects] = await Promise.all([
-    api(`/api/sessions?limit=150${f.q ? '&q=' + encodeURIComponent(f.q) : ''}${f.project ? '&project=' + encodeURIComponent(f.project) : ''}${f.agent ? '&agent=' + f.agent : ''}`),
-    api('/api/projects'),
-  ]);
+DETTAGLI.social = async (id) => {
+  const p = (state.posts || {})[String(id)];
+  if (!p) return `<div class="vuoto">${T('Scegli un post')}</div>`;
+  const campi = [
+    [T('Stato'), `<span class="tag ${statusClass[p.status] || ''}">${esc(T(p.status))}</span>`],
+    [T('Piattaforma'), esc(p.platform)],
+    [T('Progetto'), p.project ? esc(p.project) : '-'],
+    p.source_ref ? [T('fonte'), `<span class="mono">${esc(p.source_ref)}</span>`] : null,
+    p.media ? [T('Immagine'), `<span class="mono">${esc(cartellaCorta(p.media))}</span>`] : null,
+    p.scheduled_for ? [T('Programmato'), esc(dateIt(p.scheduled_for))] : null,
+    p.published_at ? [T('Pubblicato'), esc(dateIt(p.published_at))] : null,
+    [T('Aggiornato'), esc(ago(p.updated_at))],
+  ].filter(Boolean);
   return `
-  ${soloCorpo ? '' : `<div class="view-head"><h1>${T('Sessioni')}</h1><p>${rows.length} ${T('conversazioni con Claude Code')}</p></div>`}
-  <div class="filters">
-    <input type="search" data-filter-input="sessioni.q" value="${esc(f.q)}" placeholder="${T('cerca nel primo messaggio…')}" style="min-width:280px">
-    ${['', 'claude', 'codex'].map((a) =>
-      `<span class="chip ${f.agent === a ? 'on' : ''}" data-filter="sessioni.agent" data-value="${a}">${a || T('tutti')}</span>`).join('')}
-    <select data-filter-select="sessioni.project">
-      <option value="">${T('tutti i progetti')}</option>
-      ${projects.map((p) => `<option value="${esc(p.key)}" ${f.project === p.key ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
-    </select>
-  </div>
-  <div class="panel"><table>
-    <thead><tr><th>${T('quando')}</th><th>${T('di cosa')}</th><th>${T('agente')}</th><th>${T('progetto')}</th><th style="text-align:right">${T('turni')}</th><th style="text-align:right">${T('tool')}</th><th></th></tr></thead>
-    <tbody>${rows.map((s) => `
-      <tr>
-        <td class="num" style="white-space:nowrap;color:var(--faint)">${dateIt(s.started_at)}<br><small>${ago(s.started_at)}</small></td>
-        <td><div style="max-width:520px">
-          <div>${esc(s.title || (s.prompt || s.first_prompt || '').slice(0, 90)) || T('senza titolo')}</div>
-          <div class="sub clamp2" style="color:var(--faint);font-size:11.5px">${esc((s.first_prompt || '').slice(0, 190))}</div>
-        </div></td>
-        <td><span class="tag agente ${s.agent === 'codex' ? 'codex' : ''}">${esc(s.agent || 'claude')}</span></td>
-        <td>${s.progetto ? `<span class="tag">${esc(s.progetto)}</span>` : '<span style="color:var(--faint)">—</span>'}
-          ${s.dedotto_da === 'percorsi' ? `<div class="sub" style="color:var(--faint);font-size:10.5px"
-            title="${esc(s.dir_dedotta || '')}">${T('dedotta dai percorsi')}</div>` : ''}</td>
-        <td class="num" style="text-align:right">${num(s.n_user)}</td>
-        <td class="num" style="text-align:right">${num(s.n_tools)}</td>
-        <td style="text-align:right;white-space:nowrap">
-          <button class="mini" data-act="copy-resume" data-id="${esc(s.session_id)}" data-cwd="${esc(s.cwd || '')}">${T('riprendi')}</button>
-        </td>
-      </tr>`).join('') || `<tr><td colspan="7" class="empty">${T('nessuna sessione')}</td></tr>`}
-    </tbody>
-  </table></div>`;
-};
-
-async function bloccoConoscenza(soloCorpo) {
-  const rows = await api('/api/knowledge');
-  const byType = {};
-  rows.forEach((r) => (byType[r.type || 'altro'] = byType[r.type || 'altro'] || []).push(r));
-  const label = { project: T('Progetti'), feedback: T('Come lavorare'), user: T('Chi sei'), reference: T('Riferimenti'), altro: T('Altro') };
-  return `
-  ${soloCorpo ? '' : `<div class="view-head"><h1>${T('Conoscenza')}</h1><p>${rows.length} ${T('memorie indicizzate da Claude')}</p></div>`}
-  ${Object.entries(byType).map(([type, items]) => `
-    <h3 style="margin:18px 0 10px;color:var(--faint);font-size:12px;text-transform:uppercase;letter-spacing:.05em">${label[type] || type} · ${items.length}</h3>
-    <div class="panel"><div class="panel-body tight">
-      ${items.map((k) => `
-        <div class="row" data-memory="${esc(k.name)}" style="cursor:pointer">
-          <div class="main">
-            <div class="title">${esc(k.name)}</div>
-            <div class="sub clamp2">${esc(k.description || '')}</div>
-          </div>
-          <div class="side">${k.progetto ? `<span class="tag">${esc(k.progetto)}</span>` : ''}<span class="tag mono">${ago(k.updated_at)}</span></div>
-        </div>`).join('')}
-    </div></div>`).join('')}`;
+    <button class="ghost indietro" data-act="indietro">‹ ${T('Indietro')}</button>
+    <h2>${T('Post')}</h2>
+    <p class="corpo" style="color:var(--text)">${esc(p.text)}</p>
+    <dl class="campi">${campi.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join('')}</dl>
+    <div class="azioni">
+      ${NEXT[p.status] ? `<button class="btn primary" data-act="post-next" data-id="${p.id}" data-next="${NEXT[p.status]}">→ ${T(NEXT[p.status])}</button>` : ''}
+      ${p.status !== 'pubblicato' ? `<button class="btn" data-act="post-edit" data-id="${p.id}">${T('Aggiungi indirizzo')}</button>` : ''}
+      ${p.url ? `<a class="btn" href="${esc(p.url)}" target="_blank" rel="noopener">${T('apri')}</a>` : ''}
+    </div>`;
 };
 
 /* ------------------------------------------------------------------ memoria */
-/* L'elenco delle memorie stava già in Archivio, e diceva cosa c'è. Qui si vede
-   com'è messo: chi tira le fila, cosa non è legato a niente, e soprattutto cosa
-   il richiamo potrà davvero andare a prendere quando serve, che da quando il
-   richiamo esiste è la domanda vera. Le posizioni dei nodi le calcola il server
-   e non cambiano mai: una mappa che si ridispone a ogni apertura non si impara. */
+/* Due modi sugli stessi fatti. L'elenco raggruppato per tipo, con il fatto per
+   intero a destra. Il grafo, dove le memorie si muovono con una fisica vera:
+   si trascinano, si zooma, si passa da "un legame" a "due legami" a "tutto"
+   attorno a quella scelta. Nessuna libreria: un canvas e poche forze. */
 
 const TIPI_MEM = [['feedback', 'preferenze'], ['user', 'chi sei'],
                   ['reference', 'riferimenti'], ['project', 'progetti']];
@@ -1673,8 +1815,8 @@ const TIPI_MEM = [['feedback', 'preferenze'], ['user', 'chi sei'],
 const LENTI = [['', 'tutte'], ['doppie', 'in due cartelle'], ['orfane', 'senza legami'],
                ['rotti', 'link rotti'], ['vuote', 'quasi vuote']];
 
-/* Chi finisce sotto la lente. Fuori da lì i nodi restano, ma spenti: togliere
-   il resto della mappa farebbe perdere il punto di riferimento. */
+/* Chi finisce sotto la lente. Nell'elenco gli altri spariscono; nel grafo
+   restano ma spenti: togliere il resto farebbe perdere il punto di riferimento. */
 function accesiMem(m, lente) {
   const d = m.diagnosi;
   if (lente === 'doppie') return new Set(d.doppie.map((x) => x.nome));
@@ -1684,148 +1826,529 @@ function accesiMem(m, lente) {
   return null;
 }
 
-function mappaMem(m, lente) {
-  const W = 1000, H = 520;
-  const acceso = accesiMem(m, lente);
-  const dove = {};
-  m.nodi.forEach((n) => { dove[n.nome] = [n.x * W, n.y * H]; });
-  const archi = m.archi.map((a) => {
-    const p = dove[a.da], q = dove[a.a];
-    if (!p || !q) return '';
-    const vivo = !acceso || acceso.has(a.da) || acceso.has(a.a);
-    return `<line x1="${p[0].toFixed(1)}" y1="${p[1].toFixed(1)}" x2="${q[0].toFixed(1)}"
-      y2="${q[1].toFixed(1)}" class="marco${vivo ? '' : ' spento'}"/>`;
-  }).join('');
-  // Le etichette si contendono lo spazio con le altre etichette e con i nodi:
-  // un nome scritto sopra due pallini non si legge più di due nomi sovrapposti.
-  // I cerchi prenotano il posto per primi, poi i nomi, in ordine di grado, così
-  // chi tira le fila lo dice e chi non ne ha tace.
-  // Sotto la lente prenotano il posto solo i nodi accesi: gli altri sono
-  // sbiaditi al diciotto per cento, e un nome che ci passa sopra si legge
-  // lo stesso. Senza questo, accendere otto memorie ne mostrava quattro.
-  const presi = m.nodi.filter((n) => !acceso || acceso.has(n.nome)).map((n) => {
-    const r = 5 + Math.min(n.grado, 18) * 1.05;
-    return [n.x * W - r, n.y * H - r, n.x * W + r, n.y * H + r];
-  });
-  const cape = (x, y, testo, ancora) => {
-    const largo = testo.length * 5.6, alto = 13;
-    const sx = ancora === 'start' ? x : ancora === 'end' ? x - largo : x - largo / 2;
-    const box = [sx, y - alto, sx + largo, y];
-    if (presi.some((p) => box[0] < p[2] && box[2] > p[0] && box[1] < p[3] && box[3] > p[1])) {
-      return false;
-    }
-    presi.push(box);
-    return true;
-  };
-  const nodi = m.nodi.map((n) => {
-    const [x, y] = dove[n.nome];
-    const r = 5 + Math.min(n.grado, 18) * 1.05;
-    const vivo = !acceso || acceso.has(n.nome);
-    // L'etichetta solo a chi tira le fila, o a chi la lente ha appena acceso:
-    // scriverle tutte e quarantasette vuol dire non leggerne nessuna.
-    const merita = vivo && (n.grado >= 4 || (acceso && acceso.has(n.nome)));
-    const nome = merita ? esc(n.nome) : '';
-    // Vicino ai bordi il nome si aggancia dal lato che lo tiene dentro il
-    // riquadro, invece di uscire e farsi tagliare.
-    const ancora = n.x < 0.14 ? 'start' : n.x > 0.86 ? 'end' : 'middle';
-    // Sopra il nodo, tranne quando il nodo sta troppo in alto: lì l'etichetta
-    // uscirebbe dal riquadro, quindi passa sotto.
-    const ty = y - r - 5 > 12 ? y - r - 5 : y + r + 12;
-    const scritta = nome && cape(x, ty, n.nome, ancora);
-    // Il nome per esteso al passaggio del mouse: le etichette scritte sono
-    // poche per forza, ma nessun pallino deve restare senza nome.
-    const dove2 = (n.dove || []).join(', ');
-    return `<g data-memory="${esc(n.nome)}" class="mnodo ${esc(n.tipo)}${vivo ? '' : ' spento'}${
-      n.richiamabile ? ' preso' : ''}">
-      <title>${esc(n.nome)} · ${esc(n.tipo)}${dove2 ? ' · ' + esc(dove2) : ''}</title>
-      <circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${r.toFixed(1)}"/>
-      ${scritta ? `<text x="${x.toFixed(1)}" y="${ty.toFixed(1)}"
-        text-anchor="${ancora}">${nome}</text>` : ''}
-    </g>`;
-  }).join('');
-  return `<svg class="mmappa" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet">
-    <g class="archi">${archi}</g>${nodi}</svg>`;
-}
-
-/* Le poche cose contabili, e niente di più. Un pannello che elenca nove difetti
-   ogni volta che lo apri diventa un rimprovero fisso, e al terzo giorno non lo
-   apri più: quando non c'è niente, resta quasi bianco, ed è il premio. */
+/* Le poche cose contabili, e niente di piu': quando non c'e' niente da
+   sistemare la sezione resta quasi bianca, ed e' il premio. */
 function guaiMem(d) {
   const voci = [];
-  if (d.doppie.length) voci.push([d.doppie.length, 'in due cartelle',
-    d.doppie.map((x) => x.nome).join(', ')]);
-  if (d.orfane.length) voci.push([d.orfane.length, 'senza legami', d.orfane.join(', ')]);
-  if (d.rotti.length) voci.push([d.rotti.length, 'link rotti',
-    d.rotti.map((x) => x.da + ' → ' + x.verso).join(', ')]);
-  if (d.vuote.length) voci.push([d.vuote.length, 'quasi vuote', d.vuote.join(', ')]);
-  const righe = voci.map(([quante, etichetta, chi]) => `<div class="row">
-    <div class="main"><div class="title">${quante} ${T(etichetta)}</div>
-    <div class="sub clamp2">${esc(chi)}</div></div></div>`).join('');
-  // Un rinvio a una memoria che non c'è, ma verso un progetto che esiste, non
-  // è un guasto: è una memoria che varrebbe la pena scrivere. Va detto con
+  if (d.doppie.length) voci.push([d.doppie.length, 'in due cartelle', 'doppie', 'copy']);
+  if (d.orfane.length) voci.push([d.orfane.length, 'senza legami', 'orfane']);
+  if (d.rotti.length) voci.push([d.rotti.length, 'link rotti', 'rotti']);
+  if (d.vuote.length) voci.push([d.vuote.length, 'quasi vuote', 'vuote']);
+  const righe = voci.map(([quante, etichetta, lente]) => `
+    <div class="riga" data-act="mem-lente" data-value="${lente}" role="button" tabindex="0">
+      <div class="txt"><div class="t">${cap(T(etichetta))}</div></div>
+      <span class="scad">${quante}</span>${CHEV}</div>`).join('');
+  // Un rinvio a una memoria che non c'e', ma verso un progetto che esiste, non
+  // e' un guasto: e' una memoria che varrebbe la pena scrivere. Si dice con
   // un'altra voce, se no un invito si legge come un errore.
-  const invito = (d.da_scrivere || []).length ? `<div class="row">
-    <div class="main"><div class="title">${d.da_scrivere.length} ${
-      T('da scrivere')}</div>
-    <div class="sub clamp2">${esc(d.da_scrivere.join(', '))} · ${
-      T('le citi in altre memorie ma non le hai mai scritte')}</div></div></div>` : '';
-  if (!righe && !invito) return `<p class="sub">${T('niente da sistemare')}</p>`;
+  const invito = (d.da_scrivere || []).length ? `
+    <div class="riga"><div class="txt"><div class="t">${cap(T('da scrivere'))}</div>
+      <div class="s clamp2">${esc(d.da_scrivere.join(', '))} · ${T('le citi in altre memorie ma non le hai mai scritte')}</div></div>
+      <span class="scad">${d.da_scrivere.length}</span></div>` : '';
+  if (!righe && !invito) return `<div class="riga"><div class="txt"><div class="s">${T('niente da sistemare')}</div></div></div>`;
   return righe + invito;
 }
 
 views.memoria = async () => {
-  const f = state.filters.memoria || (state.filters.memoria = { lente: '' });
-  const m = await api('/api/memoria/mappa');
+  const f = state.filters.memoria || (state.filters.memoria = { lente: '', modo: 'elenco', livello: 0 });
+  const m = state.mappa = await api('/api/memoria/mappa');
   const d = m.diagnosi;
-  if (!d.totale) {
-    return `<div class="view-head"><h1>${T('Memoria')}</h1></div>
-      <div class="empty">${T('nessuna memoria')}</div>`;
-  }
+  if (!d.totale) return `<div class="vuoto">${T('nessuna memoria')}</div>`;
+  const acceso = accesiMem(m, f.lente);
+  const nodi = m.nodi.filter((n) => !acceso || acceso.has(n.nome));
+  const ordinati = TIPI_MEM.flatMap(([tipo]) => nodi.filter((n) => n.tipo === tipo)
+    .sort((a, b) => (a.aggiornata < b.aggiornata ? 1 : -1)));
+  const sel = scegliSel('memoria', ordinati.map((n) => n.nome));
   const conta = {};
   m.nodi.forEach((n) => { conta[n.tipo] = (conta[n.tipo] || 0) + 1; });
-  return `
-  <div class="view-head">
-    <h1>${T('Memoria')}</h1>
-    <p>${T('che forma ha quello che Claude si ricorda di te')}</p>
-  </div>
 
-  <div class="panel"><div class="panel-body">
-    <div class="mtesta">
-      <div><b class="num">${d.totale}</b> <span class="label">${T('fatti')}</span></div>
-      <div><b class="num">${d.richiamabili}</b> <span class="label">${
-        T("che il richiamo può andare a prendere da un'altra cartella")}</span></div>
-      <span class="spacer"></span>
-      <div class="filters" style="margin:0">${LENTI.map(([k, etichetta]) =>
-        `<span class="chip ${f.lente === k ? 'on' : ''}" data-filter="memoria.lente"
-          data-value="${k}">${T(etichetta)}</span>`).join('')}</div>
-    </div>
-    ${mappaMem(m, f.lente)}
-    <div class="mlegenda">${TIPI_MEM.map(([k, etichetta]) =>
-      `<span class="mvoce ${k}"><i></i>${T(etichetta)} <em>${conta[k] || 0}</em></span>`).join('')}
-      <span class="spacer"></span>
-      <span class="sub">${T('pieno vuol dire che il richiamo può portarla in contesto')}</span>
-    </div>
-    <p class="sub" style="margin:6px 0 0">${
-      T('i legami sono i doppi quadri che hai scritto a mano: due memorie sullo stesso argomento senza un legame, qui sembrano estranee')}</p>
-  </div></div>
+  const riga = (n) => `
+    <div class="riga ${n.nome === sel ? 'sel' : ''}" data-sel="${esc(n.nome)}" data-memory="${esc(n.nome)}" tabindex="0">
+      <span class="punto mnodo ${esc(n.tipo)}"></span>
+      <div class="txt"><div class="t">${esc(n.nome)}</div><div class="s clamp">${esc(n.descrizione || '')}</div></div>
+      <span class="scad">${dataBreve(n.aggiornata)}</span>
+    </div>`;
+  const elenco = TIPI_MEM.map(([tipo, etichetta]) => {
+    const items = nodi.filter((n) => n.tipo === tipo)
+      .sort((a, b) => (a.aggiornata < b.aggiornata ? 1 : -1));
+    if (!items.length) return '';
+    return `<div class="gruppo-testa"><span>${cap(T(etichetta))}</span><span class="n">${items.length}</span></div>
+      <div class="lista-righe">${items.map(riga).join('')}</div>`;
+  }).join('') + `
+    <div class="gruppo-testa"><span>${T('Da sistemare')}</span></div>
+    <div class="lista-righe">${guaiMem(d)}</div>`;
 
-  <div class="grid cols-2">
-    <div class="panel"><header><b>${T('Cosa ti direbbe')}</b>
-      <span class="sub">${T('scrivi una frase e guarda cosa ti richiamerebbe')}</span></header>
-      <div class="panel-body">
-        <div class="inline-form">
-          <input id="mfrase" autocomplete="off"
-            placeholder="${T('una frase qualsiasi, come la scriveresti a Claude')}">
-          <button class="mini go" data-act="mprova">${T('Prova')}</button>
+  const grafo = `
+    <div class="grafo-box" id="grafo-box">
+      <div class="grafo-comandi">
+        <div class="seg" role="group" aria-label="${T('Livello')}">
+          ${[[1, T('Livello 1')], [2, T('Livello 2')], [0, T('Tutto')]].map(([v, l]) =>
+            `<button class="${+f.livello === v ? 'on' : ''}" data-act="grafo-livello" data-v="${v}">${l}</button>`).join('')}
         </div>
-        <div id="mesito"></div>
+        <button class="icona-btn" data-act="grafo-zoom" data-v="1" aria-label="${T('Ingrandisci')}">＋</button>
+        <button class="icona-btn" data-act="grafo-zoom" data-v="-1" aria-label="${T('Riduci')}">－</button>
+        <button class="icona-btn" data-act="grafo-zoom" data-v="0" aria-label="${T('Adatta')}" title="${T('Adatta')}">⤢</button>
       </div>
+      <div class="grafo-legenda">${TIPI_MEM.map(([k, etichetta]) =>
+        `<span class="${k}"><i></i>${cap(T(etichetta))} ${conta[k] || 0}</span>`).join('')}
+        <span>${T('pieno vuol dire che il richiamo può portarla in contesto')}</span></div>
+    </div>`;
+
+  return `
+  <div class="view-tools">
+    <div class="seg" role="group" aria-label="${T('Vista')}">
+      <button class="${f.modo !== 'grafo' ? 'on' : ''}" data-filter="memoria.modo" data-value="elenco">${T('Elenco')}</button>
+      <button class="${f.modo === 'grafo' ? 'on' : ''}" data-filter="memoria.modo" data-value="grafo">${T('Grafo')}</button>
     </div>
-    <div class="panel"><header><b>${T('Da sistemare')}</b></header>
-      <div class="panel-body tight">${guaiMem(d)}</div>
+    <select data-filter-select="memoria.lente" aria-label="${T('Mostra')}">${LENTI.map(([k, etichetta]) =>
+      `<option value="${k}" ${f.lente === k ? 'selected' : ''}>${cap(T(etichetta))}</option>`).join('')}</select>
+    <span class="faint">${conN('fatti_n', d.totale)}</span>
+    <span class="spacer"></span>
+    <button class="btn" data-act="mem-prova-apri">${T('Prova la memoria')}</button>
+  </div>
+  <div class="prova-mem" id="prova-mem" hidden>
+    <div class="sub" style="margin-bottom:6px">${T('scrivi una frase e guarda cosa ti richiamerebbe')}</div>
+    <div class="inline-form">
+      <input type="text" id="mfrase" autocomplete="off" aria-label="${T('Prova la memoria')}"
+        placeholder="${T('una frase qualsiasi, come la scriveresti a Claude')}">
+      <button class="primary" data-act="mprova">${T('Prova')}</button>
     </div>
+    <div id="mesito"></div>
+  </div>
+  <div class="md-view" data-lista="memoria">
+    ${f.modo === 'grafo' ? grafo : `<div class="lista">${elenco}</div>`}
+    <aside class="dettaglio" id="dettaglio" aria-live="polite"></aside>
   </div>`;
 };
+
+DETTAGLI.memoria = async (nome) => {
+  const n = ((state.mappa || {}).nodi || []).find((x) => x.nome === nome);
+  if (!n) return `<div class="vuoto">${T('Scegli una memoria')}</div>`;
+  let corpo = '';
+  try { corpo = (await api('/api/knowledge?name=' + encodeURIComponent(nome))).body || ''; } catch (e) { /* solo la descrizione */ }
+  // il corpo di una memoria comincia spesso con il titolo che qui e' gia' sopra
+  corpo = corpo.replace(/^\s*#{1,3}\s+[^\n]*\n/, '');
+  const archi = state.mappa.archi;
+  const verso = archi.filter((a) => a.da === nome).map((a) => a.a);
+  const da = archi.filter((a) => a.a === nome).map((a) => a.da);
+  const legami = [...new Set([...verso, ...da])];
+  const esiste = new Set(state.mappa.nodi.map((x) => x.nome));
+  const tipoEt = (TIPI_MEM.find(([k]) => k === n.tipo) || [])[1];
+  return `
+    <button class="ghost indietro" data-act="indietro">‹ ${T('Indietro')}</button>
+    <div class="sub"><span class="punto mnodo ${esc(n.tipo)}" style="display:inline-block;margin-right:6px"></span>${
+      esc(cap(T(tipoEt || 'memoria')))}</div>
+    <h2>${esc(n.nome)}</h2>
+    ${n.descrizione ? `<p class="corpo">${esc(n.descrizione)}</p>` : ''}
+    ${corpo.trim() && corpo.trim() !== (n.descrizione || '').trim() ? `<div class="md" style="margin-top:12px">${md(corpo)}</div>`
+      : `<p class="faint" style="margin-top:12px">${T('Nessun testo oltre alla descrizione.')}</p>`}
+    <dl class="campi">
+      <div><dt>${T('Aggiornata')}</dt><dd>${esc(ago(n.aggiornata))}</dd></div>
+      <div><dt>${T('Cartella')}</dt><dd>${esc((n.dove || n.cartelle || []).join(', ') || '-')}</dd></div>
+      <div><dt>${T('Usata in')}</dt><dd>${n.richiamabile ? T('il richiamo può portarla in contesto') : T('nessuno, troppo corta')}</dd></div>
+    </dl>
+    <h3>${T('Legami')}</h3>
+    ${legami.length ? `<div class="elenco legami">${legami.map((x) => esiste.has(x)
+      ? `<div class="riga" data-memory="${esc(x)}"><div class="txt"><div class="t">${esc(x)}</div></div>${CHEV}</div>`
+      : `<div class="riga"><div class="txt"><div class="t faint">${esc(x)}</div><div class="s">${T('link rotto')}</div></div></div>`).join('')}</div>`
+      : `<p class="faint">${T('Nessun legame.')}</p>`}
+    ${(state.filters.memoria || {}).modo === 'grafo' ? '' : `<div class="azioni"><button class="btn" data-act="mem-grafo" data-nome="${esc(n.nome)}">${T('Mostra nel grafo')}</button></div>`}`;
+};
+
+/* ---------------------------------------------------------------- grafo */
+/* Le forze sono quattro: i nodi si respingono, un legame e' una molla, i tipi
+   si tirano verso il proprio angolo (senza questo un archivio senza legami e'
+   una nuvola), tutto e' tenuto vicino al centro. Il calore cala da solo e il
+   disegno si ferma; trascinare un nodo lo riaccende. Le posizioni iniziali
+   vengono da un generatore deterministico (dal nome), quindi lo stesso archivio
+   parte sempre uguale. */
+function seme(testo) {
+  let h = 2166136261;
+  for (let i = 0; i < testo.length; i++) { h ^= testo.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return () => { h = Math.imul(h ^ (h >>> 15), 2246822507); h ^= h >>> 13; return ((h >>> 0) % 100000) / 100000; };
+}
+
+function montaGrafo(host, m, opz) {
+  const cv = document.createElement('canvas');
+  cv.setAttribute('role', 'img');
+  cv.setAttribute('aria-label', T('Grafo della memoria'));
+  host.prepend(cv);
+  const ctx = cv.getContext('2d');
+  let W = 0, H = 0, dpr = 1, vivo = true, rAF = 0;
+  const ridotto = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  const nodi = m.nodi.map((n) => ({
+    id: n.nome, n, tipo: n.tipo, x: 0, y: 0, vx: 0, vy: 0, fisso: false, vis: 1, visT: 1, r: 6,
+    spento: false,
+  }));
+  const per = new Map(nodi.map((n) => [n.id, n]));
+  const archi = m.archi.map((a) => ({ a: per.get(a.da), b: per.get(a.a) }))
+    .filter((e) => e.a && e.b && e.a !== e.b);
+  const vicini = new Map(nodi.map((n) => [n.id, new Set()]));
+  archi.forEach((e) => { vicini.get(e.a.id).add(e.b.id); vicini.get(e.b.id).add(e.a.id); });
+  nodi.forEach((n) => { n.grado = Math.max(n.n.grado || 0, vicini.get(n.id).size); n.r = 5.5 + Math.min(n.grado, 14) * 0.9; });
+
+  // un angolo per tipo presente
+  const tipi = TIPI_MEM.map(([k]) => k).filter((k) => nodi.some((n) => n.tipo === k));
+  nodi.forEach((n) => { if (!tipi.includes(n.tipo)) tipi.push(n.tipo); });
+  const R_CL = tipi.length > 1 ? 300 : 0;
+  const centro = {};
+  tipi.forEach((t, i) => {
+    const a = -Math.PI / 2 + (i / tipi.length) * Math.PI * 2 + 0.4;
+    centro[t] = { x: Math.cos(a) * R_CL, y: Math.sin(a) * R_CL * 0.8 };
+  });
+  nodi.forEach((n) => {
+    const r = seme(n.id), c = centro[n.tipo] || { x: 0, y: 0 };
+    n.x = c.x + (r() - 0.5) * 200; n.y = c.y + (r() - 0.5) * 200;
+  });
+
+  let alpha = 1;
+  const cam = { x: 0, y: 0, k: 1 }, mira = { x: 0, y: 0, k: 1 };
+  let auto = true, sel = null, hov = null, drag = null, livello = +(opz.livello || 0);
+  const colori = {};
+  const leggiColori = () => {
+    const cs = getComputedStyle(host);
+    const v = (n) => cs.getPropertyValue(n).trim();
+    Object.assign(colori, {
+      bg: v('--bg') || '#fff', testo: v('--text') || '#000', testo2: v('--text-2') || '#666',
+      linea: v('--line-strong') || '#bbb', accento: v('--accent') || '#06f',
+      feedback: v('--t-feedback') || '#e90', user: v('--t-user') || '#27e',
+      reference: v('--t-reference') || '#2a5', project: v('--t-project') || '#a4d',
+      font: cs.fontFamily,
+    });
+  };
+  leggiColori();
+  const colore = (t) => colori[t] || colori.testo2;
+
+  const partecipa = (n) => n.visT > 0 || n.vis > 0.03;
+
+  function passo() {
+    const P = nodi.filter(partecipa);
+    for (let i = 0; i < P.length; i++) {
+      const a = P[i];
+      for (let j = i + 1; j < P.length; j++) {
+        const b = P[j];
+        let dx = b.x - a.x, dy = b.y - a.y, d2 = dx * dx + dy * dy;
+        if (d2 > 160000) continue;
+        if (d2 < 0.01) { dx = (Math.random() - 0.5); dy = (Math.random() - 0.5); d2 = dx * dx + dy * dy + 0.01; }
+        const d = Math.sqrt(d2);
+        let f = (6400 * alpha) / d2;
+        const min = a.r + b.r + 16;
+        if (d < min) f += (min - d) * 0.06;
+        const fx = (dx / d) * f, fy = (dy / d) * f;
+        a.vx -= fx; a.vy -= fy; b.vx += fx; b.vy += fy;
+      }
+    }
+    for (const e of archi) {
+      if (!partecipa(e.a) || !partecipa(e.b)) continue;
+      const dx = e.b.x - e.a.x, dy = e.b.y - e.a.y, d = Math.sqrt(dx * dx + dy * dy) || 0.01;
+      const f = (d - (84 + e.a.r + e.b.r)) * 0.035 * (0.4 + alpha);
+      const fx = (dx / d) * f, fy = (dy / d) * f;
+      e.a.vx += fx; e.a.vy += fy; e.b.vx -= fx; e.b.vy -= fy;
+    }
+    for (const n of P) {
+      const c = centro[n.tipo] || { x: 0, y: 0 };
+      n.vx += (c.x - n.x) * 0.022 * (0.3 + alpha) - n.x * 0.0015;
+      n.vy += (c.y - n.y) * 0.022 * (0.3 + alpha) - n.y * 0.0015;
+      n.vx *= 0.8; n.vy *= 0.8;
+      if (!n.fisso) { n.x += n.vx; n.y += n.vy; } else { n.vx = 0; n.vy = 0; }
+    }
+    alpha = Math.max(0.012, alpha * 0.985);
+  }
+
+  function ricalcolaVisibili() {
+    const s = sel ? per.get(sel) : null;
+    let dentro = null;
+    if (livello > 0 && s) {
+      dentro = new Set([s.id]);
+      let fronte = [s.id];
+      for (let l = 0; l < livello; l++) {
+        const prox = [];
+        fronte.forEach((id) => vicini.get(id).forEach((v) => { if (!dentro.has(v)) { dentro.add(v); prox.push(v); } }));
+        fronte = prox;
+      }
+    }
+    nodi.forEach((n) => { n.visT = (!dentro || dentro.has(n.id)) ? 1 : 0; });
+    alpha = Math.max(alpha, 0.55);
+    auto = true;
+    sveglia();
+  }
+
+  function adatta(subito) {
+    const V = nodi.filter((n) => n.visT > 0);
+    if (!V.length || !W || !H) return;
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    V.forEach((n) => { x0 = Math.min(x0, n.x - n.r); y0 = Math.min(y0, n.y - n.r); x1 = Math.max(x1, n.x + n.r); y1 = Math.max(y1, n.y + n.r); });
+    const bw = Math.max(80, x1 - x0) + 110, bh = Math.max(80, y1 - y0) + 100;
+    mira.k = Math.max(0.25, Math.min(2.2, Math.min(W / bw, H / bh)));
+    mira.x = (x0 + x1) / 2; mira.y = (y0 + y1) / 2;
+    if (subito) Object.assign(cam, mira);
+  }
+
+  const aSchermo = (x, y) => [(x - cam.x) * cam.k + W / 2, (y - cam.y) * cam.k + H / 2];
+  const aMondo = (sx, sy) => [(sx - W / 2) / cam.k + cam.x, (sy - H / 2) / cam.k + cam.y];
+
+  function disegna() {
+    if (!W || !H) return;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+    const vicSel = sel ? vicini.get(sel) : null;
+    const fuoco = hov;                       // si sfuma il resto solo sotto il puntatore
+    const evidenza = hov || (sel && per.get(sel)); // i legami del nodo scelto si accendono sempre
+    const vicFuoco = fuoco ? vicini.get(fuoco.id) : null;
+    const fioco = (n) => fuoco ? (n === fuoco || vicFuoco.has(n.id) ? 1 : 0.3) : 1;
+
+    ctx.save();
+    ctx.translate(W / 2, H / 2); ctx.scale(cam.k, cam.k); ctx.translate(-cam.x, -cam.y);
+    ctx.lineCap = 'round';
+    for (const e of archi) {
+      const v = Math.min(e.a.vis, e.b.vis);
+      if (v < 0.03) continue;
+      const evid = evidenza && (e.a === evidenza || e.b === evidenza);
+      ctx.globalAlpha = v * (evid ? 0.95 : (fuoco ? 0.12 : 0.5));
+      ctx.strokeStyle = evid ? colori.accento : colori.linea;
+      ctx.lineWidth = (evid ? 2 : 1.2) / cam.k * Math.min(cam.k, 1.4);
+      ctx.beginPath(); ctx.moveTo(e.a.x, e.a.y); ctx.lineTo(e.b.x, e.b.y); ctx.stroke();
+    }
+    for (const n of nodi) {
+      if (n.vis < 0.03) continue;
+      ctx.globalAlpha = n.vis * fioco(n) * (n.spento ? 0.2 : 1);
+      ctx.beginPath(); ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2);
+      if (n.n.richiamabile) { ctx.fillStyle = colore(n.tipo); ctx.fill(); }
+      else { ctx.fillStyle = colori.bg; ctx.fill(); ctx.lineWidth = 2; ctx.strokeStyle = colore(n.tipo); ctx.stroke(); }
+      if (n.id === sel || n === hov) {
+        ctx.beginPath(); ctx.arc(n.x, n.y, n.r + 4, 0, Math.PI * 2);
+        ctx.lineWidth = 2; ctx.strokeStyle = n.id === sel ? colori.accento : colori.testo2; ctx.stroke();
+      }
+    }
+    ctx.restore();
+
+    // le etichette in pixel di schermo, per restare nitide: prima chi conta
+    // (scelto, sotto il puntatore, vicino), poi per numero di legami; un nome
+    // che finirebbe sopra un altro non si scrive
+    const candidati = nodi.filter((n) => n.vis > 0.5 && !n.spento).map((n) => {
+      let prio = n.grado;
+      if (n.id === sel) prio = 1000;
+      else if (n === hov) prio = 900;
+      else if ((vicSel && vicSel.has(n.id)) || (hov && vicini.get(hov.id).has(n.id))) prio = 500 + n.grado;
+      return { n, prio };
+    }).sort((p, q) => q.prio - p.prio);
+    const presi = [];
+    ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+    ctx.font = `12px ${colori.font}`;
+    let scritte = 0;
+    for (const { n, prio } of candidati) {
+      const importante = prio >= 500;
+      if (!importante && cam.k < 0.55 && n.grado < 3) continue;
+      if (scritte > 80) break;
+      const [sx, sy] = aSchermo(n.x, n.y);
+      if (sx < -40 || sx > W + 40 || sy < -20 || sy > H + 20) continue;
+      const nome = n.id.length > 26 ? n.id.slice(0, 25) + '…' : n.id;
+      const w = ctx.measureText(nome).width + 8, y = sy + n.r * cam.k + 15;
+      const box = [sx - w / 2, y - 12, sx + w / 2, y + 3];
+      if (!importante && presi.some((b) => box[0] < b[2] && box[2] > b[0] && box[1] < b[3] && box[3] > b[1])) continue;
+      presi.push(box); scritte++;
+      ctx.globalAlpha = n.vis * fioco(n);
+      ctx.lineWidth = 4; ctx.strokeStyle = colori.bg; ctx.lineJoin = 'round';
+      ctx.strokeText(nome, sx, y);
+      ctx.fillStyle = importante ? colori.testo : colori.testo2;
+      ctx.fillText(nome, sx, y);
+    }
+    // nomi dei tipi sopra ogni nube: dicono cosa raggruppa. Si scrivono per ultimi,
+    // con l'alone del fondo, cosi' nessun nome di nodo li copre
+    if (tipi.length > 1) {
+      ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic'; ctx.lineJoin = 'round';
+      ctx.font = `700 11px ${colori.font}`;
+      tipi.forEach((t) => {
+        const gr = nodi.filter((n) => n.tipo === t && n.vis > 0.5);
+        if (!gr.length) return;
+        let cx = 0, alto = Infinity;
+        gr.forEach((n) => { cx += n.x; alto = Math.min(alto, n.y - n.r); });
+        cx /= gr.length;
+        const [sx, sy] = aSchermo(cx, alto);
+        const et = cap(T((TIPI_MEM.find(([k]) => k === t) || [0, 'memoria'])[1])).toUpperCase().split('').join('\u200a');
+        // se finirebbe sopra il nome di un nodo, sale finche' trova posto
+        const largo = ctx.measureText(et).width + 6;
+        let y = sy - 18;
+        for (let prova = 0; prova < 6; prova++) {
+          const box = [sx - largo / 2, y - 12, sx + largo / 2, y + 3];
+          if (!presi.some((p) => box[0] < p[2] && box[2] > p[0] && box[1] < p[3] && box[3] > p[1])) break;
+          y -= 14;
+        }
+        ctx.globalAlpha = 1; ctx.lineWidth = 5; ctx.strokeStyle = colori.bg; ctx.strokeText(et, sx, y);
+        ctx.fillStyle = colore(t); ctx.fillText(et, sx, y);
+      });
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  function frame() {
+    rAF = 0;
+    if (!vivo) return;
+    let mosso = false;
+    if (alpha > 0.0125 || drag) { passo(); mosso = true; }
+    for (const n of nodi) {
+      const t = n.visT;
+      if (Math.abs(n.vis - t) > 0.01) { n.vis += (t - n.vis) * 0.16; mosso = true; } else n.vis = t;
+    }
+    if (auto) adatta(false);
+    const dk = mira.k - cam.k, dx = mira.x - cam.x, dy = mira.y - cam.y;
+    if (Math.abs(dk) > 0.002 || Math.abs(dx) > 0.3 || Math.abs(dy) > 0.3) {
+      cam.k += dk * 0.18; cam.x += dx * 0.18; cam.y += dy * 0.18; mosso = true;
+    }
+    disegna();
+    if (mosso || drag) sveglia();
+  }
+  function sveglia() { if (!rAF && vivo) rAF = requestAnimationFrame(frame); }
+
+  function dimensiona() {
+    const r = host.getBoundingClientRect();
+    W = Math.max(0, Math.floor(r.width)); H = Math.max(0, Math.floor(r.height));
+    dpr = Math.min(2, window.devicePixelRatio || 1);
+    cv.width = Math.max(1, Math.floor(W * dpr)); cv.height = Math.max(1, Math.floor(H * dpr));
+    if (auto) { adatta(true); }
+    disegna(); sveglia();
+  }
+  const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(dimensiona) : null;
+  if (ro) ro.observe(host); else window.addEventListener('resize', dimensiona);
+  const suTema = () => { leggiColori(); disegna(); };
+  window.addEventListener('plancia-tema', suTema);
+
+  // il primo disegno e' gia' assestato: si fa girare la fisica prima di mostrarla
+  const giri = ridotto ? 500 : 340;
+  for (let i = 0; i < giri; i++) passo();
+  alpha = ridotto ? 0.012 : 0.05;
+
+  // ------------------------------------------------ puntatore
+  const punti = new Map();
+  let pinch = null;
+  const pos = (e) => { const r = cv.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
+  function colpisci(sx, sy) {
+    const [wx, wy] = aMondo(sx, sy);
+    for (let i = nodi.length - 1; i >= 0; i--) {
+      const n = nodi[i];
+      if (n.vis < 0.4) continue;
+      const r = n.r + 5 / cam.k;
+      if ((wx - n.x) ** 2 + (wy - n.y) ** 2 <= r * r) return n;
+    }
+    return null;
+  }
+  cv.addEventListener('pointerdown', (e) => {
+    try { cv.setPointerCapture(e.pointerId); } catch (err) { /* puntatore sintetico o gia' rilasciato */ }
+    const [sx, sy] = pos(e);
+    punti.set(e.pointerId, [sx, sy]);
+    if (punti.size === 2) {
+      const [p, q] = [...punti.values()];
+      pinch = { d: Math.hypot(p[0] - q[0], p[1] - q[1]), k: cam.k };
+      drag = null; auto = false; return;
+    }
+    const n = colpisci(sx, sy);
+    if (n) { drag = { nodo: n, sx, sy, mosso: false }; n.fisso = true; }
+    else drag = { pan: true, sx, sy, cx: cam.x, cy: cam.y, mosso: false };
+    cv.classList.add('trascina'); sveglia();
+  });
+  cv.addEventListener('pointermove', (e) => {
+    const [sx, sy] = pos(e);
+    if (punti.has(e.pointerId)) punti.set(e.pointerId, [sx, sy]);
+    if (pinch && punti.size === 2) {
+      const [p, q] = [...punti.values()];
+      const k = Math.max(0.15, Math.min(4, pinch.k * Math.hypot(p[0] - q[0], p[1] - q[1]) / pinch.d));
+      cam.k = mira.k = k; disegna(); return;
+    }
+    if (drag) {
+      if (Math.hypot(sx - drag.sx, sy - drag.sy) > 4) drag.mosso = true;
+      if (drag.nodo && drag.mosso) {
+        const [wx, wy] = aMondo(sx, sy);
+        drag.nodo.x = wx; drag.nodo.y = wy; drag.nodo.vx = drag.nodo.vy = 0;
+        alpha = Math.max(alpha, 0.4);
+      } else if (drag.pan && drag.mosso) {
+        auto = false;
+        cam.x = mira.x = drag.cx - (sx - drag.sx) / cam.k;
+        cam.y = mira.y = drag.cy - (sy - drag.sy) / cam.k;
+      }
+      sveglia(); return;
+    }
+    const n = colpisci(sx, sy);
+    if (n !== hov) { hov = n; cv.classList.toggle('su-nodo', !!n); disegna(); }
+  });
+  const fine = (e) => {
+    punti.delete(e.pointerId);
+    if (punti.size < 2) pinch = null;
+    if (drag) {
+      if (drag.nodo) {
+        drag.nodo.fisso = false;
+        if (!drag.mosso) { if (opz.onSeleziona) opz.onSeleziona(drag.nodo.id); }
+      }
+      drag = null; cv.classList.remove('trascina'); sveglia();
+    }
+  };
+  cv.addEventListener('pointerup', fine);
+  cv.addEventListener('pointercancel', fine);
+  cv.addEventListener('pointerleave', () => { if (hov && !drag) { hov = null; cv.classList.remove('su-nodo'); disegna(); } });
+  cv.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const [sx, sy] = pos(e);
+    const [wx, wy] = aMondo(sx, sy);
+    const k = Math.max(0.15, Math.min(4, cam.k * Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0018))));
+    cam.k = mira.k = k;
+    cam.x = mira.x = wx - (sx - W / 2) / k;
+    cam.y = mira.y = wy - (sy - H / 2) / k;
+    auto = false; disegna();
+  }, { passive: false });
+  cv.addEventListener('dblclick', (e) => {
+    const [sx, sy] = pos(e);
+    if (!colpisci(sx, sy)) { auto = true; adatta(false); sveglia(); }
+  });
+
+  // ------------------------------------------------ comandi dall'esterno
+  const api_ = {
+    seleziona(id) {
+      sel = per.has(id) ? id : null;
+      if (livello > 0) ricalcolaVisibili(); else disegna();
+    },
+    setLivello(v) { livello = +v; opz.livello = livello; ricalcolaVisibili(); },
+    zoom(dir) {
+      auto = false;
+      if (dir === 0) { auto = true; adatta(false); sveglia(); return; }
+      const k = Math.max(0.15, Math.min(4, cam.k * (dir > 0 ? 1.3 : 1 / 1.3)));
+      mira.k = k; mira.x = cam.x; mira.y = cam.y; sveglia();
+    },
+    // per le prove: dove sta un nodo sullo schermo, quanto e' ingrandito il disegno
+    posizione(id) { const n = per.get(id); return n ? aSchermo(n.x, n.y) : null; },
+    ingrandimento() { return cam.k; },
+    lente(acceso) { nodi.forEach((n) => { n.spento = !!acceso && !acceso.has(n.id); }); disegna(); },
+    distruggi() {
+      vivo = false; if (rAF) cancelAnimationFrame(rAF);
+      if (ro) ro.disconnect(); else window.removeEventListener('resize', dimensiona);
+      window.removeEventListener('plancia-tema', suTema);
+      cv.remove();
+    },
+    nodi,
+  };
+  sel = opz.sel && per.has(opz.sel) ? opz.sel : null;
+  if (opz.acceso) api_.lente(opz.acceso);
+  ricalcolaVisibili();
+  nodi.forEach((n) => { n.vis = n.visT; });
+  dimensiona();
+  return api_;
+}
+
+function distruggiGrafo() {
+  if (state.grafo) { state.grafo.distruggi(); state.grafo = null; }
+}
+
+/* Dopo che la vista e' nel documento: il canvas non sta nel markup. */
+function dopoMemoria() {
+  const f = state.filters.memoria;
+  distruggiGrafo();
+  if (!f || f.modo !== 'grafo' || !state.mappa) return;
+  const host = $('#grafo-box');
+  if (!host) return;
+  state.grafo = montaGrafo(host, state.mappa, {
+    livello: f.livello, sel: state.sel.memoria, acceso: accesiMem(state.mappa, f.lente),
+    onSeleziona: (id) => seleziona('memoria', id),
+  });
+}
 
 async function bloccoCapacita(soloCorpo) {
   const rows = await api('/api/capabilities');
@@ -1837,7 +2360,7 @@ async function bloccoCapacita(soloCorpo) {
     if (!items.length) return '';
     return `<h3 style="margin:18px 0 10px;color:var(--faint);font-size:12px;text-transform:uppercase;letter-spacing:.05em">${label} · ${items.length}</h3>
     <div class="panel"><div class="panel-body tight">
-      ${items.map((r) => `<div class="row"><div class="main">
+      ${items.map((r) => `<div class="riga"><div class="main">
         <div class="title">${esc(r.name)}</div>
         <div class="sub clamp2">${esc(r.description || '')}</div>
       </div><div class="side"><span class="tag mono">${ago(r.updated_at)}</span></div></div>`).join('')}
@@ -1852,124 +2375,6 @@ views.briefing = async () => {
   <div class="panel"><div class="panel-body md" id="briefing-md">${md(text)}</div></div>
   <textarea id="briefing-raw" hidden>${esc(text)}</textarea>`;
 };
-
-/* ---------------------------------------------------------------- drawer */
-async function openProject(key) {
-  const d = await api('/api/projects/' + encodeURIComponent(key));
-  const p = d.progetto;
-  $('#drawer-body').innerHTML = `
-    <h2>${esc(p.name)}</h2>
-    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">
-      <span class="tag ${statusClass[p.status] || ''}">${T(p.status)}</span>
-      <span class="tag">${T(p.kind)}</span>
-      <span class="tag">${T('priorità')} ${prioTag(p.priority)}</span>
-      <span class="tag mono">${esc(p.key)}</span>
-      <span class="tag">attivo ${ago(p.last_activity)}</span>
-    </div>
-    <p style="color:var(--muted)">${esc(p.summary || '')}</p>
-
-    <section>
-      <h3>${T('Governo')}</h3>
-      <form data-form="project-edit" data-key="${esc(p.key)}" style="display:flex;flex-direction:column;gap:8px">
-        <input type="text" name="next_action" value="${esc(p.next_action || '')}" placeholder="${T('prossimo passo concreto')}">
-        <div style="display:flex;gap:8px">
-          <select name="status" style="width:150px">${['attivo', 'in pausa', 'idea', 'concluso']
-            .map((s) => `<option value="${s}" ${p.status === s ? 'selected' : ''}>${T(s)}</option>`).join('')}</select>
-          <select name="priority" style="width:130px">${[[1, 'alta'], [2, 'media'], [3, 'bassa']]
-            .map(([v, l]) => `<option value="${v}" ${p.priority === v ? 'selected' : ''}>${T(l)}</option>`).join('')}</select>
-          <button class="primary" type="submit">${T('Salva')}</button>
-        </div>
-      </form>
-    </section>
-
-    ${section(T('Task'), sezioneTaskDrawer(d.task))}
-
-    ${cassettoDopo(p, d.task)}
-
-    ${d.memoria.length ? section(T('Memoria'), d.memoria.map((k) =>
-      `<div class="row" data-memory="${esc(k.name)}" style="cursor:pointer;border:1px solid var(--border);border-radius:8px;margin-bottom:6px">
-        <div class="main"><div class="title">${esc(k.name)}</div><div class="sub clamp2">${esc(k.description || '')}</div></div>
-      </div>`).join('')) : ''}
-
-    ${d.repo.length ? section(T('Repository'), d.repo.map((r) =>
-      `<div class="row" style="border:1px solid var(--border);border-radius:8px;margin-bottom:6px">
-        <div class="main"><div class="title mono">${esc(r.name)}</div>
-        <div class="sub">${esc(r.description || r.local_path || '')}</div></div>
-        <div class="side">${r.visibility ? `<span class="tag">${esc(r.visibility)}</span>` : ''}
-        ${r.dirty ? `<span class="tag warn">${r.dirty} ${T('modifiche')}</span>` : ''}
-        ${r.url ? `<a class="mini" href="${esc(r.url)}" target="_blank" rel="noopener">github</a>` : ''}</div>
-      </div>`).join('')) : ''}
-
-    ${d.commit.length ? section(T('Commit recenti'), `<div class="panel"><div class="panel-body tight">${
-      d.commit.slice(0, 12).map((c) => `<div class="row"><div class="main">
-        <div class="title truncate">${esc(c.message)}</div>
-        <div class="sub mono">${esc(c.repo)} · ${esc((c.sha || '').slice(0, 7))} · ${ago(c.date)}${
-          c.sessione_titolo ? ` · <span style="opacity:.75">${T('da')} ${esc(c.sessione_titolo.slice(0, 46))}</span>` : ''}</div>
-      </div></div>`).join('')}</div></div>`) : ''}
-
-    ${d.sessioni.length ? section(T('Sessioni'), `<div class="panel"><div class="panel-body tight">${
-      d.sessioni.slice(0, 12).map((s) => `<div class="row"><div class="main">
-        <div class="title truncate">${esc(s.title || (s.prompt || '').slice(0, 80)) || T('senza titolo')}</div>
-        <div class="sub">${dateIt(s.started_at)} · ${s.n_user} scambi · ${s.n_tools} tool${
-          s.dedotto_da === 'percorsi' ? ' · ' + T('dedotta dai percorsi') : ''}</div>
-      </div><div class="side"><button class="mini" data-act="copy-resume" data-id="${esc(s.session_id)}" data-cwd="">riprendi</button></div></div>`).join('')}</div></div>`) : ''}
-
-    ${d.post.length ? section(T('Post'), d.post.map((o) =>
-      `<div class="kcard" style="margin-bottom:8px"><div class="txt">${esc(o.text)}</div>
-      <div class="foot"><span class="tag ${statusClass[o.status] || ''}">${T(o.status)}</span>
-      <span class="tag">${esc(o.platform)}</span></div></div>`).join('')) : ''}
-
-    ${section(T('Cronologia'), `<div class="tl">${timeline(d.eventi.slice(0, 30))}</div>`)}
-  `;
-  $('#drawer').hidden = false;
-}
-
-const section = (title, html) => `<section><h3>${title}</h3>${html}</section>`;
-
-/* Residuo dei tester dell'ondata 2 (16/09/2026), punto 4: la sezione "Task"
-   del drawer mostrava OGNI task non archiviato, compresi tutti quelli
-   aperti - non solo il primo (quello che slot.prossimi() chiama "cosa") - e
-   il cassetto "Dopo" qui sotto li ripeteva daccapo (aperti.slice(1)), righe
-   duplicate fra le due sezioni. Qui resta solo il primo task aperto (se
-   c'è) più quelli chiusi/fatti: il resto sta solo nel cassetto. */
-function sezioneTaskDrawer(task) {
-  const aperti = task.filter((t) => ['aperto', 'in corso', 'bloccato'].includes(t.status));
-  const resto = task.filter((t) => !['aperto', 'in corso', 'bloccato', 'archiviato'].includes(t.status));
-  const mostrati = (aperti.length ? [aperti[0]] : []).concat(resto);
-  return mostrati.length
-    ? `<div class="panel"><div class="panel-body tight">${taskRows(mostrati)}</div></div>`
-    : `<p style="color:var(--faint)">${T('nessuno')}</p>`;
-}
-
-/* Il cassetto "Dopo" del drawer (LOTTO-L2-VISTA punto 3): il conteggio è
-   calcolato qui, dai task che il drawer ha già (d.task, stesso ordine di
-   actions.tasks_list di /api/tasks?project=&dopo=1: "il primo" è sempre lo
-   stesso in entrambi i posti); il contenuto invece si carica al click, da
-   quell'endpoint, per non portare a video una lista che nessuno apre mai. */
-function cassettoDopo(p, task) {
-  const aperti = task.filter((t) => ['aperto', 'in corso', 'bloccato'].includes(t.status));
-  const conta = Math.max(0, aperti.length - 1);
-  if (!conta) return '';
-  return `
-  <section class="cassetto-dopo">
-    <h3 data-act="cassetto-dopo" data-key="${esc(p.key)}">${conN('dopo_conta', conta)}</h3>
-    <div class="cassetto-dopo-lista" hidden></div>
-  </section>`;
-}
-
-async function openMemory(name) {
-  const k = await api('/api/knowledge?name=' + encodeURIComponent(name));
-  $('#drawer-body').innerHTML = `
-    <h2>${esc(k.name)}</h2>
-    <div style="display:flex;gap:6px;margin-bottom:10px">
-      <span class="tag">${T(k.type || 'memoria')}</span>
-      <span class="tag mono">${ago(k.updated_at)}</span>
-    </div>
-    <p style="color:var(--muted)">${esc(k.description || '')}</p>
-    <div class="md" style="margin-top:16px">${md(k.body)}</div>
-    <p style="color:var(--faint);font-size:11px;margin-top:22px" class="mono">${esc(k.path)}</p>`;
-  $('#drawer').hidden = false;
-}
 
 /* ---------------------------------------------------------------- memoria */
 /* LOTTO-L4-MEMORIA: "salvare in memoria gli ultimi aggiornamenti... fare in
@@ -2021,195 +2426,105 @@ function memoriaLeggi(vista, lingua) {
   } catch (e) { return null; }
 }
 
-/* La spia (punto 4): una pillola in topbar che dice se quello che si vede è
-   fresco o è la memoria di prima. `stato` è 'aggiorno' (memoria in vista,
-   fetch in corso), 'fresco' (fetch riuscito) o 'rotto' (fetch caduto, la
-   memoria resta a schermo). Fuori da questi tre casi (prima apertura, prima
-   che il primo fetch sia mai partito) la pillola resta nascosta: non c'è
-   ancora niente di cui dare conto. */
+/* La riga di stato: "aggiornato alle 21:59" nel sottotitolo della testata, e
+   da nessun'altra parte. Fresca, quella di prima mentre si aggiorna, oppure
+   la memoria con il server che non risponde. `stato` e' 'aggiorno' (memoria in
+   vista, fetch in corso), 'fresco' (fetch riuscito) o 'rotto' (fetch caduto,
+   la memoria resta a schermo). Fuori da questi tre (prima apertura) resta vuota:
+   non c'e' ancora niente di cui dare conto. */
 const oraCorta = (ts) => (ts ? new Date(ts) : new Date())
   .toLocaleTimeString(LOC(), { hour: '2-digit', minute: '2-digit' });
 
 function spiaAggiorna(stato, quando) {
-  const el = $('#spia-memoria');
+  const el = $('#tb-sub');
   if (!el) return;
-  if (!stato) { el.hidden = true; return; }
-  el.hidden = false;
-  el.title = T('spia_titolo');
   el.classList.toggle('avviso', stato === 'rotto');
-  if (stato === 'aggiorno') el.textContent = T('spia_aggiorno');
-  else if (stato === 'rotto') el.textContent = fmt('spia_memoria', { ora: oraCorta(quando) });
-  else el.textContent = fmt('spia_aggiornato', { ora: oraCorta(quando) });
+  if (!stato) { el.textContent = ''; state.subTesto = ''; return; }
+  if (stato === 'aggiorno') el.textContent = state.subTesto || T('spia_aggiorno');
+  else if (stato === 'rotto') el.textContent = state.subTesto = fmt('spia_memoria', { ora: oraCorta(quando) });
+  else el.textContent = state.subTesto = fmt('spia_aggiornato', { ora: oraCorta(quando) });
+  el.style.color = stato === 'rotto' ? 'var(--warn)' : '';
 }
 
-/* Il vortice (punto 3): FLIP sugli elementi con [data-chiave] (le card dei
-   progetti nell'albero e nella griglia, le righe di Prossimi, le card del
-   kanban - vedi projectCard, alberoPadre, rigaProssimo, views.social più
-   sopra). Si misurano le posizioni PRIMA di toccare il DOM (mentre è ancora
-   quello vecchio, quello di memoria), si sostituisce l'html, poi si misurano
-   le posizioni DOPO sugli elementi nuovi con la stessa chiave: chi
-   sopravvive (stessa chiave nei due momenti) anima dalla vecchia posizione
-   alla nuova con `transform` - mai `opacity` (vedi il commento in
-   web/moto.css: una finestra coperta sospende le animazioni css, e un
-   elemento fermo a opacity:0 resterebbe invisibile per sempre, il contrario
-   di "mai vuota"). Chi è nuovo (chiave non vista un momento fa) non ha da
-   dove animare uno spostamento: entra con .vortice-entra, il ritardo dato da
-   --i (impostato qui, letto da moto.css), fermo a un tetto cosicché tredici
-   card o tremila non superino mai i 320ms totali che il lotto chiede. Gli
-   elementi spariti non ricevono nessun trattamento: sono già scomparsi con
-   la sostituzione dell'html, un elemento che non c'è più non si anima.
-
-   Correzione del critico (il vortice non animava affatto, misurato
-   sull'app vera): web/style.css:.card ha GIÀ una `transition` su `transform`
-   (240ms, per l'hover), sempre attiva - non solo mentre corre .vortice-muove.
-   Se si legge un rect (getBoundingClientRect forza un ricalcolo di stile) fra
-   la scrittura del transform inverso di un elemento e quella del prossimo,
-   quella lettura fa scattare la transizione di .card SUL transform appena
-   scritto: l'elemento comincia a scivolare verso lo zero mentre il codice
-   crede ancora di essere nella fase "posiziona senza animare", e la classe
-   .vortice-muove (che dovrebbe SEGNARE l'inizio dell'animazione) arriva a
-   metà di una transizione già partita per conto suo. Il rimedio è
-   l'ordine classico del FLIP, in tre passate separate, mai intrecciate:
-   (1) SOLE LETTURE - tutti i rect "dopo" di tutti gli elementi sopravvissuti,
-   prima di scrivere qualunque cosa; (2) SOLE SCRITTURE - per ogni elemento
-   che si muove, transition:'none' (spegne la transizione di .card mentre si
-   scrive la posizione di partenza) e transform = l'inverso; (3) UN SOLO
-   reflow forzato (`view.offsetHeight`, letto e buttato via) che fa
-   applicare (2) per davvero prima di procedere - senza, il motore potrebbe
-   fondere (2) e la scrittura del rAF qui sotto nello stesso giro di stile e
-   non animare niente. Solo nel rAF che segue si toglie transition:'none' (si
-   assegna una transizione inline che vince su quella di .card qualunque sia
-   l'ordine in cui i due foglietti sono linkati), si aggiunge .vortice-muove
-   per chi la legge da fuori, e si azzera il transform: È QUESTO il momento
-   in cui l'animazione comincia, non un secondo giro di rAF (che qui non
-   serve più: il reflow forzato al passo (3) fa già da spartiacque fra "stato
-   vecchio applicato" e "stato nuovo in transizione").
-
-   Annidati (correzione del critico): un .albero-padre con [data-chiave] può
-   contenere .albero-figlio con [data-chiave] loro (vedi alberoPadre più
-   sopra). Se il padre si muove e il figlio riceve ANCHE lui un transform
-   proprio, il figlio finisce per somministrare due spostamenti (il suo più
-   quello, ereditato via CSS, del padre) e ruota attorno al centro del padre
-   invece che al proprio. Si anima solo lo spostato più esterno: un elemento
-   con un antenato [data-chiave] già in movimento non riceve trasformazioni
-   proprie, ci arriva già portato dal padre.
-
-   Rect nulli (correzione del critico): una riga di Prossimi oltre
-   PROSSIMI_TETTO porta [hidden] finché non si preme "altri" - il suo rect è
-   {0,0,0,0}. Un rect nullo PRIMA o DOPO non è una posizione da cui o verso
-   cui animare un transform: trattato come se l'elemento non ci fosse (va a
-   vortice-entra se ora è visibile, altrimenti ignorato del tutto) - non un
-   volo dall'angolo in alto a sinistra dello schermo. */
-const VORTICE_TETTO_I = 13; // 13 * 24ms = 312ms, sotto il tetto di 320ms
-const rectNullo = (r) => !r.width && !r.height;
-
-function vortice(view, html) {
-  // Passata di sole letture (PRIMA).
-  const prima = new Map();
-  $$('[data-chiave]', view).forEach((el) => {
-    const r = el.getBoundingClientRect();
-    if (!rectNullo(r)) prima.set(el.dataset.chiave, r);
+/* ---------------------------------------------------------------- selezione */
+/* Elenco e dettaglio stanno nella stessa pagina: scegliere una riga non
+   ridisegna la vista, cambia solo il pannello a destra e l'indirizzo
+   (replaceState, quindi niente hashchange e niente nuova richiesta). */
+async function seleziona(lista, id, opz = {}) {
+  state.sel[lista] = id;
+  const cont = $(`[data-lista="${lista}"]`);
+  if (!cont) return;
+  $$('[data-sel]', cont).forEach((el) => {
+    const on = el.dataset.sel === String(id);
+    el.classList.toggle('sel', on);
+    if (on && opz.scorri) el.scrollIntoView({ block: 'nearest' });
   });
-
-  view.innerHTML = html;
-  if (!prima.size) return; // niente da confrontare: nessuna card prima, nessun FLIP possibile
-
-  // Passata di sole letture (DOPO): TUTTI i rect nuovi, prima di scrivere
-  // qualunque transform - vedi il commento sopra sul perché intrecciare
-  // letture e scritture, qui, fa saltare l'animazione.
-  const dopo = new Map();
-  $$('[data-chiave]', view).forEach((el) => {
-    const r = el.getBoundingClientRect();
-    if (!rectNullo(r)) dopo.set(el.dataset.chiave, { el, r });
-  });
-
-  // Passata di sole scritture: decide chi si muove (e chi è nuovo) e scrive
-  // SOLO il transform inverso, senza leggere nient'altro nel frattempo.
-  const mossi = [];
-  const mossiSet = new Set();
-  let i = 0;
-  dopo.forEach(({ el, r: rDopo }, chiave) => {
-    const rPrima = prima.get(chiave);
-    if (!rPrima) {
-      el.classList.add('vortice-entra');
-      el.style.setProperty('--i', Math.min(i, VORTICE_TETTO_I));
-      i++;
-      // Consigliata dal critico (costa una riga): .vortice-entra ha
-      // animation-fill-mode 'both' (vedi moto.css), quindi il fotogramma
-      // finale (transform:none) resterebbe applicato per sempre e
-      // annullerebbe il .card:hover translateY(-1px) di style.css su ogni
-      // card entrata col vortice. Tolta la classe a animazione finita,
-      // l'hover torna a funzionare come su una card mai animata.
-      el.addEventListener('animationend', () => el.classList.remove('vortice-entra'), { once: true });
-      return;
-    }
-    const antenato = el.parentElement && el.parentElement.closest('[data-chiave]');
-    if (antenato && mossiSet.has(antenato)) return; // il padre lo porta già con sé (vedi sopra)
-    const dx = rPrima.left - rDopo.left, dy = rPrima.top - rDopo.top;
-    if (!dx && !dy) return; // stessa posizione: niente da animare
-    const rot = Math.max(-8, Math.min(8, (Math.abs(dx) >= Math.abs(dy) ? dx : dy) / 15));
-    el.style.transition = 'none';
-    el.style.transform = `translate(${dx}px, ${dy}px) rotate(${rot}deg)`;
-    mossi.push(el);
-    mossiSet.add(el);
-  });
-  if (!mossi.length) return;
-
-  // Un solo reflow forzato: applica per davvero la posizione di partenza
-  // scritta qui sopra (con transition:none) prima che il rAF che segue
-  // cambi lo stato - vedi il commento sopra la funzione.
-  void view.offsetHeight;
-
-  requestAnimationFrame(() => {
-    mossi.forEach((el) => {
-      el.classList.add('vortice-muove');
-      el.style.transition = 'transform 420ms var(--ease-out)'; // inline: vince su .card, qualunque sia l'ordine dei foglietti
-      el.style.transform = '';
-    });
-    setTimeout(() => mossi.forEach((el) => {
-      el.classList.remove('vortice-muove');
-      el.style.transition = '';
-      el.style.transform = '';
-    }), 460);
-  });
+  if (opz.apri !== false) cont.classList.add('aperto'); // sugli schermi stretti il dettaglio copre l'elenco
+  const det = $('#dettaglio', cont);
+  if (!det) return;
+  const turno = (state.turnoSel = (state.turnoSel || 0) + 1);
+  if (id == null) { det.innerHTML = ''; return; }
+  let html;
+  try { html = await DETTAGLI[lista](id); } catch (err) { html = `<div class="vuoto">${esc(err.message)}</div>`; }
+  if (turno !== state.turnoSel) return; // nel frattempo ne e' stata scelta un'altra
+  det.innerHTML = html;
+  det.scrollTop = 0;
+  if (opz.hash !== false) {
+    try { history.replaceState(null, '', '#/' + lista + '/' + encodeURIComponent(id)); } catch (e) { /* pazienza */ }
+  }
+  if (lista === 'memoria' && state.grafo) state.grafo.seleziona(id);
 }
 
 /* ---------------------------------------------------------------- router */
-/* Le vecchie viste sono diventate blocchi: i vecchi indirizzi continuano a
-   funzionare, portano dove il contenuto è finito. */
-const REDIREZIONI = { riepilogo: 'oggi', task: 'oggi', sessioni: 'archivio',
-                      agenti: 'archivio', conoscenza: 'archivio', capacita: 'archivio' };
+const TITOLI = { oggi: 'Oggi', lavagna: 'Task', progetti: 'Progetti', social: 'Social', memoria: 'Memoria',
+                 archivio: 'Archivio', briefing: 'Briefing', benvenuto: 'Guida di Plancia' };
+const VISTE_MD = new Set(['lavagna', 'progetti', 'social', 'memoria']);
+/* Le vecchie viste sono diventate altro: i vecchi indirizzi continuano a
+   funzionare, portano dove il contenuto e' finito. */
+const REDIREZIONI = { task: 'lavagna', riepilogo: 'oggi', sessioni: 'archivio', agenti: 'archivio',
+                      conoscenza: 'memoria', capacita: 'archivio' };
 
 async function route() {
+  // con la ricerca aperta il contenuto e' quello dei risultati: un
+  // aggiornamento di fondo non deve cancellarli
+  if (ric.aperta) { disegnaRisultati(); return; }
+  distruggiGrafo();
   const hash = location.hash.replace(/^#\//, '') || 'oggi';
-  let [name] = hash.split('/');
-  // `#/cerca?q=...&progetto=...`: una ricerca diventa un indirizzo che si salva
-  // e si riapre, invece di una cosa da riscrivere ogni volta.
+  let [name, ...resto] = hash.split('/');
+  let param = resto.length ? decodeURIComponent(resto.join('/')) : null;
+  // `#/cerca?q=...`: una ricerca resta un indirizzo che si salva e si riapre.
   const dom = name.indexOf('?');
+  let domanda = null;
   if (dom >= 0) {
-    const p = new URLSearchParams(name.slice(dom + 1));
+    domanda = new URLSearchParams(name.slice(dom + 1)).get('q') || '';
     name = name.slice(0, dom);
-    if (name === 'cerca') {
-      state.filters.cerca = { q: p.get('q') || '', progetto: p.get('progetto') || '' };
-    }
+  }
+  if (name === 'cerca') {
+    const inp = $('#cerca-q');
+    if (inp) { inp.value = domanda || ''; if (domanda) cercaOra(domanda); else inp.focus(); }
+    if (domanda) return;
+    name = state.view || 'oggi';
   }
   if (REDIREZIONI[name]) {
-    if (name !== 'riepilogo' && name !== 'task') {
-      state.filters.archivio = { seg: name === 'agenti' ? 'agenti'
-        : name === 'conoscenza' ? 'memoria' : name === 'capacita' ? 'capacita' : 'sessioni' };
+    if (name === 'sessioni' || name === 'agenti' || name === 'capacita') {
+      state.filters.archivio = { seg: name === 'agenti' ? 'agenti' : name === 'capacita' ? 'capacita' : 'sessioni' };
     }
     name = REDIREZIONI[name];
   }
-  const fn = views[name] || views.oggi;
+  if (!views[name]) name = 'oggi';
+  const fn = views[name];
+  if (param != null && DETTAGLI[name]) state.sel[name] = param;
   state.view = name;
   $$('.rail nav a').forEach((a) => a.classList.toggle('on', a.dataset.view === name));
+  const titolo = $('#tb-titolo');
+  if (titolo) titolo.textContent = T(TITOLI[name] || 'Oggi');
 
-  // LOTTO-L4-MEMORIA, punto 2 ("mai vuota"): se c'è memoria di questa vista
-  // (in questa lingua) va a schermo SUBITO, con data-memoria="1" e senza
-  // "carico…" - e resta interattiva (link e data-act funzionano) per tutto
-  // il tempo che il fetch qui sotto ci mette a finire, riuscito o no. Senza
-  // memoria (prima apertura di questa vista) il percorso è quello di sempre.
+  // Se c'e' memoria di questa vista (in questa lingua) va a schermo SUBITO e
+  // resta interattiva per tutto il tempo che il fetch qui sotto ci mette a
+  // finire, riuscito o no: la dashboard non e' mai vuota. Senza memoria (prima
+  // apertura di questa vista) si mostra un "carico" e basta.
   const view = $('#view');
+  view.dataset.layout = VISTE_MD.has(name) ? 'md' : '';
   const memoria = memoriaLeggi(name, UILANG);
   if (memoria) {
     view.innerHTML = memoria.html;
@@ -2217,42 +2532,41 @@ async function route() {
     spiaAggiorna('aggiorno');
   } else {
     delete view.dataset.memoria;
-    view.innerHTML = `<div class="empty">${T('carico…')}</div>`;
+    view.innerHTML = `<div class="vuoto">${T('carico…')}</div>`;
     spiaAggiorna(null);
   }
+  const scorriVia = view.scrollTop;
 
   try {
     const chiamatePrima = apiChiamateOk;
     const html = await fn();
-    // Il fetch è riuscito: da qui la vista è di nuovo fresca, la memoria
-    // (se c'era) ha fatto il suo lavoro e l'attributo sparisce. Html
-    // identico a quello di memoria -> niente animazione (punto 3, ultima
-    // riga); diverso -> il vortice fa il resto: FLIP su chi sopravvive,
-    // .vortice-entra su chi è nuovo, e sostituisce l'html lui stesso.
-    if (memoria && html !== memoria.html) vortice(view, html);
-    else if (!memoria) view.innerHTML = html;
+    if (ric.aperta) return; // mentre si aspettava e' stata aperta la ricerca
+    if (state.view !== name) return; // ...o si e' cambiata vista
+    if (!memoria || html !== memoria.html) view.innerHTML = html;
     delete view.dataset.memoria;
+    if (memoria) view.scrollTop = scorriVia;
     memoriaSalva(name, html);
-    // Correzione del critico: "aggiornato alle" deve dire QUANDO SONO STATI
-    // PRESI I DATI, non quando è finito questo giro di route(). fn() può
-    // arrivare qui senza aver chiamato api() nemmeno una volta (views.progetti
-    // e views.benvenuto riusano state.overview se c'è già): in quel caso
-    // apiChiamateOk non è cambiato, quello a schermo è la stessa istantanea
-    // di prima, e la pillola deve dire l'ora di QUELLA istantanea
-    // (state.overviewQuando), non "adesso" - altrimenti, navigando dal menu
-    // (Oggi -> Progetti, cassa calda) col server spento, la pillola direbbe
-    // un orario falso di "adesso" e non parlerebbe più di server
-    // irraggiungibile, pur non avendo controllato niente.
+    if (VISTE_MD.has(name)) {
+      if (name === 'memoria') dopoMemoria();
+      seleziona(name, state.sel[name], { hash: param != null, apri: false, scorri: true });
+    }
+    // "aggiornato alle" dice QUANDO SONO STATI PRESI I DATI, non quando e'
+    // finito questo giro di route(). fn() puo' arrivare qui senza aver
+    // chiamato api() nemmeno una volta (views.progetti riusa state.overview se
+    // c'e' gia'): in quel caso quello a schermo e' la stessa istantanea di
+    // prima, e la riga deve dire l'ora di QUELLA (state.overviewQuando), non
+    // "adesso". Se no, col server spento, mostrerebbe un orario falso.
     const fetchPartito = apiChiamateOk > chiamatePrima;
     spiaAggiorna('fresco', fetchPartito ? new Date() : (state.overviewQuando || new Date()));
+    if (fetchPartito) state.ultimoOk = new Date();
   } catch (err) {
+    if (state.view !== name) return;
     if (memoria) {
-      // La memoria resta a schermo (niente "errore: …" al suo posto): la
-      // spia dice che il server non risponde, data-memoria resta per dire
-      // che quello che si vede non è fresco.
+      // La memoria resta a schermo (niente "errore: ..." al suo posto): la
+      // riga dice che il server non risponde e da quando sono i dati.
       spiaAggiorna('rotto', memoria.quando);
     } else {
-      view.innerHTML = `<div class="empty">${T('errore: ')}${esc(err.message)}</div>`;
+      view.innerHTML = `<div class="vuoto">${T('errore: ')}${esc(err.message)}</div>`;
       spiaAggiorna(null);
     }
   }
@@ -2263,9 +2577,10 @@ async function refreshBadges() {
   try {
     let d = state.overview;
     if (!d) { d = state.overview = await api('/api/overview?lang=' + UILANG); state.overviewQuando = new Date(); }
-    const lav = $('#badge-lavagna');
-    if (lav) lav.textContent = d.stats.lavagna_aperti || d.stats.task_aperti || '';
-    $('#badge-social').textContent = d.stats.post_in_coda || '';
+    const t = $('#badge-task');
+    if (t) t.textContent = d.stats.lavagna_aperti || d.stats.task_aperti || '';
+    const s = $('#badge-social');
+    if (s) s.textContent = d.stats.post_in_coda || '';
     if (d.benvenuto && state.view !== 'benvenuto' && !state.benvenutoVisto) {
       state.benvenutoVisto = true;
       location.hash = '#/benvenuto';
@@ -2283,7 +2598,40 @@ document.addEventListener('click', async (ev) => {
     ev.preventDefault();
     const { act: name, id } = act.dataset;
     try {
-      if (name === 'task-cycle') {
+      if (name === 'task-toggle') {
+        const nuovo = act.dataset.status === 'fatto' ? 'aperto' : 'fatto';
+        await api('/api/tasks/' + id, { method: 'PATCH', body: { status: nuovo } });
+        if (nuovo === 'fatto') toast(T('task chiuso'));
+        state.overview = null; ric.indiceP = null; await route();
+      } else if (name === 'task-nuovo-apri') {
+        const f = $('#task-form'); f.hidden = !f.hidden;
+        if (!f.hidden) f.querySelector('input[name=title]').focus();
+      } else if (name === 'indietro') {
+        const c = act.closest('[data-lista]'); if (c) c.classList.remove('aperto');
+      } else if (name === 'recap-espandi') {
+        act.classList.toggle('aperto');
+      } else if (name === 'ambito') {
+        ric.ambito = act.dataset.v; disegnaRisultati();
+      } else if (name === 'ordina') {
+        const o = state.ordSess || (state.ordSess = { col: 'quando', dir: -1 });
+        if (o.col === act.dataset.col) o.dir = -o.dir; else { o.col = act.dataset.col; o.dir = act.dataset.col === 'quando' ? -1 : 1; }
+        await route();
+      } else if (name === 'mem-prova-apri') {
+        const b = $('#prova-mem'); b.hidden = !b.hidden;
+        if (!b.hidden) $('#mfrase').focus();
+      } else if (name === 'mem-lente') {
+        const f = state.filters.memoria || (state.filters.memoria = { lente: '', modo: 'elenco', livello: 0 });
+        f.lente = act.dataset.value; await route();
+      } else if (name === 'mem-grafo') {
+        const f = state.filters.memoria || (state.filters.memoria = { lente: '', modo: 'elenco', livello: 0 });
+        f.modo = 'grafo'; f.livello = 1; f.lente = ''; state.sel.memoria = act.dataset.nome; await route();
+      } else if (name === 'grafo-livello') {
+        const f = state.filters.memoria; f.livello = +act.dataset.v;
+        $$('[data-act="grafo-livello"]').forEach((b) => b.classList.toggle('on', +b.dataset.v === f.livello));
+        if (state.grafo) state.grafo.setLivello(f.livello);
+      } else if (name === 'grafo-zoom') {
+        if (state.grafo) state.grafo.zoom(+act.dataset.v);
+      } else if (name === 'task-cycle') {
         const next = { aperto: 'in corso', 'in corso': 'fatto', bloccato: 'in corso' }[act.dataset.status] || 'aperto';
         await api('/api/tasks/' + id, { method: 'PATCH', body: { status: next } });
         state.overview = null; await route();
@@ -2340,6 +2688,8 @@ document.addEventListener('click', async (ev) => {
         } else if (act.dataset.azione === 'manda-nuovo') {
           if (!state.progetti) state.progetti = await api('/api/projects');
           await apriRiprendi({});
+        } else if (act.dataset.vista === 'cerca') {
+          const q = $('#cerca-q'); q.focus(); q.select();
         } else if (act.dataset.vista) {
           location.hash = '#/' + act.dataset.vista;
         }
@@ -2434,11 +2784,9 @@ document.addEventListener('click', async (ev) => {
         await navigator.clipboard.writeText($('#briefing-raw').value);
         toast(T('briefing copiato'));
       } else if (name === 'prossimi-altri') {
-        // Le righe oltre il tetto sono già nel markup (panelloProssimi),
-        // solo nascoste con [hidden]: si rivelano senza una seconda
-        // chiamata, e il bottone stesso sparisce (non c'è più "altro" da
-        // aprire per quest'area).
-        $$(`.prossimi-riga[data-area="${CSS.escape(act.dataset.area)}"][hidden]`).forEach((el) => { el.hidden = false; });
+        // Le righe oltre il tetto sono gia' nel markup (panelloProssimi), solo
+        // nascoste: si rivelano senza una seconda chiamata, e il pulsante sparisce.
+        $$('.prossimi [data-extra]').forEach((el) => { el.hidden = false; });
         act.remove();
       } else if (name === 'albero-toggle') {
         const padre = act.closest('.albero-padre');
@@ -2446,6 +2794,7 @@ document.addEventListener('click', async (ev) => {
         const chiusa = !padre.classList.contains('chiusa');
         padre.classList.toggle('chiusa', chiusa);
         figli.hidden = chiusa;
+        if (chiusa) chiusiAlbero.add(padre.dataset.key); else chiusiAlbero.delete(padre.dataset.key);
       } else if (name === 'cassetto-dopo') {
         // Chiuso di default, carica al primo click (punto 3 del lotto): la
         // lista non si rifà una seconda volta se l'utente chiude e riapre.
@@ -2464,23 +2813,37 @@ document.addEventListener('click', async (ev) => {
     } catch (err) { toast(err.message, true); }
     return;
   }
-  // LOTTO-L4-MEMORIA (obbligatoria del critico, punto 2 "mai vuota"): queste
-  // due chiamate non passano dal try/catch qui sopra (quello è solo per
-  // [data-act]) e sono async senza await - senza .catch, un click su una
-  // card/wikilink a server spento non faceva NIENTE (nessun toast, nessun
-  // errore in console: la promessa rifiutata restava inosservata). La vista
-  // di memoria deve restare interattiva e dire quando un'azione fallisce,
-  // non restare muta.
+  // Le righe scelte nell'elenco (task, progetti, post, memorie): cambia solo il
+  // dettaglio a destra, la vista non si ridisegna.
+  const riga = ev.target.closest('[data-lista] [data-sel]');
+  if (riga && !ev.target.closest('a, select, input, textarea')) {
+    const cont = riga.closest('[data-lista]');
+    seleziona(cont.dataset.lista, riga.dataset.sel).catch((err) => toast(err.message, true));
+    return;
+  }
+  // Un rinvio a una memoria o a un progetto da un altro posto (un legame, la
+  // proposta di una riga di Prossimi): porta nella vista giusta con la voce
+  // gia' scelta. Nella stessa vista si limita a cambiare il dettaglio.
   if (mem && mem.dataset.memory) {
     ev.preventDefault();
-    openMemory(mem.dataset.memory).catch((err) => toast(err.message, true));
+    if (state.view === 'memoria' && $('[data-lista="memoria"]')) {
+      seleziona('memoria', mem.dataset.memory).catch((err) => toast(err.message, true));
+    } else {
+      location.hash = '#/memoria/' + encodeURIComponent(mem.dataset.memory);
+    }
     return;
   }
   if (proj && proj.dataset.project) {
     ev.preventDefault();
-    openProject(proj.dataset.project).catch((err) => toast(err.message, true));
+    if (state.view === 'progetti' && $('[data-lista="progetti"]')) {
+      seleziona('progetti', proj.dataset.project).catch((err) => toast(err.message, true));
+    } else {
+      location.hash = '#/progetti/' + encodeURIComponent(proj.dataset.project);
+    }
     return;
   }
+  const risultato = ev.target.closest('[data-vai]');
+  if (risultato) { vaiA(risultato.dataset.vai); return; }
 
   const vai = ev.target.closest('[data-goto]');
   if (vai) { location.hash = '#/' + vai.dataset.goto; return; }
@@ -2491,16 +2854,6 @@ document.addEventListener('click', async (ev) => {
     state.filters[view][key] = chip.dataset.value;
     await route();
     return;
-  }
-
-  // I chip della ricerca fanno interruttore: lo stesso progetto due volte
-  // riallarga, altrimenti per tornare a vedere tutto bisognerebbe ricancellare
-  // la domanda.
-  const prog = ev.target.closest('[data-progetto]');
-  if (prog) {
-    const f = state.filters.cerca || (state.filters.cerca = { q: '', progetto: '' });
-    f.progetto = f.progetto === prog.dataset.progetto ? '' : prog.dataset.progetto;
-    await route();
   }
 });
 
@@ -2557,114 +2910,103 @@ document.addEventListener('submit', async (ev) => {
   } catch (err) { toast(err.message, true); }
 });
 
-/* ---------------------------------------------------------------- palette */
-const palette = $('#palette'), pinput = $('#palette-input'), presults = $('#palette-results');
 
-function openPalette() {
-  palette.hidden = false; pinput.value = ''; presults.innerHTML = ''; pinput.focus();
-}
-function closePalette() { palette.hidden = true; }
-
-let ptimer;
-pinput.addEventListener('input', () => {
-  clearTimeout(ptimer);
-  ptimer = setTimeout(async () => {
-    const q = pinput.value.trim();
-    if (q.length < 2) { presults.innerHTML = ''; return; }
-    try {
-      /* Dal 9 agosto /api/search torna un oggetto e non piu' un array: qui c'era
-         un `hits.length` su un oggetto, quindi la palette diceva sempre niente
-         senza sbagliare rumorosamente. I turni entrano come prima riga, perche'
-         e' li' che sta quello che si cerca; le schede restano sotto. */
-      const d = await api('/api/search?q=' + encodeURIComponent(q));
-      const dai_turni = (d.turni || []).slice(0, 5).map((t) => ({
-        kind: 'turno', title: (t.frammento || '').split('«').join('').split('»').join(''),
-        snip: '', project: t.progetto, turno: t,
-      }));
-      const hits = dai_turni.concat(d.schede || []);
-      state.paletteHits = hits; state.paletteIndex = 0;
-      presults.innerHTML = hits.length ? hits.map((h, i) => `
-        <div class="pres ${i === 0 ? 'sel' : ''}" data-i="${i}">
-          <div class="k">${esc(h.kind)}</div>
-          <div class="t"><div class="truncate">${esc(h.title) || T('senza titolo')}</div>
-          <small>${(h.snip || '').replace(/[<>]/g, '').replace(/«/g, '<b class="hl">').replace(/»/g, '</b>')}${h.project ? ' · ' + esc(h.project) : ''}</small></div>
-        </div>`).join('') : `<div class="empty">${T('niente')}</div>`;
-    } catch (err) { presults.innerHTML = `<div class="empty">${esc(err.message)}</div>`; }
-  }, 190);
-});
-
-presults.addEventListener('click', (ev) => {
-  const row = ev.target.closest('.pres');
-  if (row) choosePalette(state.paletteHits[+row.dataset.i]);
-});
-
-function choosePalette(hit) {
-  if (!hit) return;
-  closePalette();
-  // Scegliere un turno porta nella vista Cerca con la stessa domanda: li' c'e'
-  // il testo intero e il file da cui viene, che nella palette non ci starebbero.
-  if (hit.kind === 'turno') {
-    state.filters.cerca = { q: pinput.value.trim(), progetto: '' };
-    // Se ci si e' gia' dentro l'hash non cambia e hashchange non scatta: senza
-    // questo, cercare dalla palette stando in Cerca non faceva niente.
-    if (location.hash === '#/cerca') route(); else location.hash = '#/cerca';
-  }
-  else if (hit.kind === 'memoria') openMemory(hit.title).catch((err) => toast(err.message, true));
-  else if (hit.kind === 'sessione') { state.filters.sessioni = { q: hit.title || '', project: '' }; location.hash = '#/sessioni'; }
-  else if (hit.kind === 'task') location.hash = '#/task';
-  else if (hit.kind === 'post') location.hash = '#/social';
-  else toast(hit.title || '');
-}
-
-/* Lo slash apre la ricerca, come in mezzo mondo. Solo se non stai gia' scrivendo
-   da qualche parte, altrimenti chi scrive una data si ritrova altrove. */
+/* ---------------------------------------------------------------- tastiera */
+/* Lo slash e Cmd/Ctrl+K portano al campo di ricerca, come in mezzo mondo. Lo
+   slash solo se non si sta gia' scrivendo da qualche parte, altrimenti chi
+   scrive una data si ritrova altrove. */
 const SCRIVE = (el) => el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA'
-                              || el.isContentEditable);
+                              || el.tagName === 'SELECT' || el.isContentEditable);
 
 document.addEventListener('keydown', (ev) => {
-  if (ev.key === '/' && !SCRIVE(document.activeElement) && palette.hidden) {
+  const inp = $('#cerca-q');
+  if ((ev.key === '/' && !SCRIVE(document.activeElement) && !ev.metaKey && !ev.ctrlKey)
+      || ((ev.metaKey || ev.ctrlKey) && ev.key.toLowerCase() === 'k')) {
     ev.preventDefault();
-    if (state.view === 'cerca') { const c = $('.cercabox'); if (c) c.focus(); }
-    else location.hash = '#/cerca';
+    inp.focus(); inp.select();
     return;
   }
-  if ((ev.metaKey || ev.ctrlKey) && ev.key.toLowerCase() === 'k') { ev.preventDefault(); openPalette(); return; }
-  if (palette.hidden) return;
-  if (ev.key === 'Escape') closePalette();
-  if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
-    ev.preventDefault();
-    const rows = $$('.pres', presults);
-    if (!rows.length) return;
-    state.paletteIndex = (state.paletteIndex + (ev.key === 'ArrowDown' ? 1 : rows.length - 1)) % rows.length;
-    rows.forEach((r, i) => r.classList.toggle('sel', i === state.paletteIndex));
-    rows[state.paletteIndex].scrollIntoView({ block: 'nearest' });
+  // Da tastiera: Invio o Spazio aprono la riga a fuoco, le frecce passano alla vicina
+  const riga = document.activeElement && document.activeElement.closest
+    ? document.activeElement.closest('[data-sel],[data-project],[data-memory],[data-vai],[data-act][role="button"]') : null;
+  if (riga && document.activeElement === riga && (ev.key === 'Enter' || ev.key === ' ')) {
+    ev.preventDefault(); riga.click(); return;
   }
-  if (ev.key === 'Enter') choosePalette(state.paletteHits[state.paletteIndex]);
+  if (riga && riga.matches('[data-sel]') && (ev.key === 'ArrowDown' || ev.key === 'ArrowUp')) {
+    const lista = $$('[data-sel]', riga.closest('[data-lista]'));
+    const vicina = lista[lista.indexOf(riga) + (ev.key === 'ArrowDown' ? 1 : -1)];
+    if (vicina) { ev.preventDefault(); vicina.focus(); vicina.click(); }
+    return;
+  }
+  if (ev.key === 'Escape') {
+    if (!$('#menu-imp').hidden) { chiudiMenuImp(); return; }
+    if (!$('#drawer').hidden) { $('#drawer').hidden = true; return; }
+    if (ric.aperta) { chiudiRicerca(true); inp.blur(); }
+  }
 });
 
-palette.addEventListener('click', (ev) => { if (ev.target === palette) closePalette(); });
-$('#btn-search').addEventListener('click', openPalette);
-// La scorciatoia di ricerca e' Cmd+K sul Mac e Ctrl+K altrove (il gestore accetta
-// tutte e due): il suggerimento nella barra dice quella giusta.
-(function suggerimentoScorciatoia() {
-  const fuoriMac = !/mac|iphone|ipad/i.test(
-    (navigator.userAgentData && navigator.userAgentData.platform)
-    || navigator.platform || navigator.userAgent || '');
-  const kbd = $('#btn-search kbd');
-  if (kbd && fuoriMac) kbd.textContent = 'Ctrl+K';
-})();
-$('#btn-lang').addEventListener('click', async () => {
-  UILANG = UILANG === 'it' ? 'en' : 'it';
-  storageSet('plancia-ui', UILANG);
-  $('#btn-lang').textContent = UILANG.toUpperCase();
-  traduciShell();
-  disegnaSelettore();
-  state.overview = null;
-  await route();
-});
-$('#btn-lang').textContent = UILANG.toUpperCase();
+$('.rail nav').addEventListener('click', () => { if (ric.aperta) chiudiRicerca(true); });
+
 $('#drawer').addEventListener('click', (ev) => { if (ev.target.id === 'drawer') $('#drawer').hidden = true; });
 $('#drawer-close').addEventListener('click', () => { $('#drawer').hidden = true; });
+
+/* ---------------------------------------------------------------- impostazioni */
+/* Aspetto, lingua e dimensione del testo stanno in un menu, non in tre
+   pulsanti della barra: sono cose che si scelgono una volta. */
+const SCALE = [0.85, 1, 1.15, 1.3, 1.5];
+function applicaScala(i) {
+  i = Math.max(0, Math.min(SCALE.length - 1, i));
+  storageSet('plancia-scala', String(i));
+  document.documentElement.style.setProperty('--scala', SCALE[i]);
+  const v = $('#scala-val'); if (v) v.textContent = Math.round(SCALE[i] * 100) + '%';
+  state.scala = i;
+  window.dispatchEvent(new Event('plancia-tema')); // il grafo ridisegna con la nuova dimensione
+}
+function statoMenuImp() {
+  const modo = storageGet('plancia-theme') || 'auto';
+  $$('#seg-tema button').forEach((b) => b.classList.toggle('on', b.dataset.tema === modo));
+  $$('#seg-lingua button').forEach((b) => b.classList.toggle('on', b.dataset.lingua === UILANG));
+}
+function chiudiMenuImp() {
+  $('#menu-imp').hidden = true;
+  $('#btn-imp').setAttribute('aria-expanded', 'false');
+}
+$('#btn-imp').addEventListener('click', (ev) => {
+  ev.stopPropagation();
+  const m = $('#menu-imp');
+  m.hidden = !m.hidden;
+  $('#btn-imp').setAttribute('aria-expanded', String(!m.hidden));
+  if (!m.hidden) statoMenuImp();
+});
+document.addEventListener('click', (ev) => {
+  if (!ev.target.closest('#menu-imp') && !ev.target.closest('#btn-imp')) chiudiMenuImp();
+  else if (ev.target.closest('#menu-imp a')) chiudiMenuImp();
+});
+$('#seg-tema').addEventListener('click', (ev) => {
+  const b = ev.target.closest('[data-tema]');
+  if (b) { applyTheme(b.dataset.tema); statoMenuImp(); }
+});
+$('#seg-lingua').addEventListener('click', async (ev) => {
+  const b = ev.target.closest('[data-lingua]');
+  if (!b || b.dataset.lingua === UILANG) return;
+  UILANG = b.dataset.lingua;
+  storageSet('plancia-ui', UILANG);
+  traduciShell();
+  statoMenuImp();
+  disegnaSelettore();
+  state.overview = null; state.recap = null; ric.indiceP = null;
+  await route();
+});
+$('#seg-scala').addEventListener('click', (ev) => {
+  const b = ev.target.closest('[data-scala]');
+  if (!b) return;
+  const passo = +b.dataset.scala;
+  applicaScala(passo === 0 ? 1 : (state.scala ?? 1) + passo);
+});
+(function () {
+  const g = parseInt(storageGet('plancia-scala'), 10);
+  applicaScala(Number.isNaN(g) ? 1 : g);
+})();
 
 /* ---------------------------------------------------------------- tema e sync */
 function applyTheme(mode) {
@@ -2673,36 +3015,33 @@ function applyTheme(mode) {
   document.documentElement.dataset.theme = mode;
   document.documentElement.dataset.resolved = resolved;
   storageSet('plancia-theme', mode);
-  // Addendum del coordinatore (26/09): contratto con L4-VETRO-2
-  // (mac/Sources/main.swift, che registra il gestore 'tema'). Fuori
-  // dall'app nativa `window.webkit` non esiste e la `?.` si ferma lì senza
-  // fare niente; dentro l'app il materiale dietro la finestra prende lo
-  // stesso chiaro/scuro della pagina, anche al primo giro e ogni volta che
-  // l'automatico segue un cambio di `prefers-color-scheme`.
-  window.webkit?.messageHandlers?.tema?.postMessage(resolved);
+  window.dispatchEvent(new Event('plancia-tema'));
 }
-$('#btn-theme').addEventListener('click', () => {
-  const order = ['auto', 'light', 'dark'];
-  const next = order[(order.indexOf(storageGet('plancia-theme') || 'auto') + 1) % 3];
-  applyTheme(next);
-  toast(T('tema: ') + next);
+// `?tema=chiaro|scuro` nell'indirizzo forza l'aspetto senza toccare quello salvato:
+// serve alle istantanee, che ripartono ogni volta da un profilo vuoto
+const TEMAPARAM = new URLSearchParams(location.search).get('tema');
+if (TEMAPARAM === 'scuro' || TEMAPARAM === 'dark') {
+  document.documentElement.dataset.resolved = 'dark'; document.documentElement.dataset.theme = 'dark';
+} else if (TEMAPARAM === 'chiaro' || TEMAPARAM === 'light') {
+  document.documentElement.dataset.resolved = 'light'; document.documentElement.dataset.theme = 'light';
+} else {
+  applyTheme(storageGet('plancia-theme') || 'auto');
+}
+matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => {
+  if ((storageGet('plancia-theme') || 'auto') === 'auto') applyTheme('auto');
 });
-applyTheme(storageGet('plancia-theme') || 'auto');
-matchMedia('(prefers-color-scheme: light)').addEventListener('change', () =>
-  applyTheme(storageGet('plancia-theme') || 'auto'));
 
 $('#btn-sync').addEventListener('click', async () => {
-  // LOTTO-L3-RITOCCO punto 4 + L3-RIPRENDI-UI-4 (regressione trovata dal
-  // critico): /api/sync risponde {avviato:false} in DUE casi diversi, e solo
-  // uno dei due porta anche "motivo":"--no-sync". Se un sync è già in corso
-  // (quello d'avvio, o un giro del ticker) `avviato` è false ma non c'è
-  // nessun motivo: il bottone NON deve dire "disattivato per --no-sync"
-  // (sarebbe falso), deve dire che un aggiornamento è già in corso e
-  // continuare a seguirlo con pollSync(), come faceva prima di questo lotto.
+  // /api/sync risponde {avviato:false} in DUE casi diversi, e solo uno dei due
+  // porta anche "motivo":"--no-sync". Se un sync e' gia' in corso `avviato` e'
+  // false ma non c'e' nessun motivo: il pulsante NON deve dire "disattivato
+  // per --no-sync" (sarebbe falso), deve dire che un aggiornamento e' gia' in
+  // corso e continuare a seguirlo con pollSync().
+  ric.indiceP = null;
   try {
     const r = await api('/api/sync', { method: 'POST', body: {} });
     if (r.avviato) { toast(T('aggiornamento avviato')); pollSync(); }
-    else if (r.motivo === '--no-sync') toast(T('sync disattivato per questa sessione (--no-sync)'));
+    else if (r.motivo === '--no-sync') { toast(T('sync disattivato per questa sessione (--no-sync)')); state.overview = null; route(); }
     else { toast(T('aggiornamento già in corso')); pollSync(); }
   } catch (err) { toast(err.message, true); }
 });
@@ -2711,22 +3050,23 @@ let syncWasRunning = false;
 async function pollSync() {
   try {
     const st = await api('/api/status');
-    const dot = $('#sync-dot'), text = $('#sync-text');
+    const btn = $('#btn-sync');
     if (st.sync.running) {
-      dot.className = 'dot busy';
-      text.textContent = (st.sync.message || T('aggiorno')).slice(0, 34);
+      btn.classList.add('gira');
       syncWasRunning = true;
       setTimeout(pollSync, 1200);
     } else {
-      dot.className = 'dot' + (st.sessione_viva ? ' live' : '');
-      text.textContent = T('aggiornato ') + ago(st.ultimo_sync);
-      if (syncWasRunning) { syncWasRunning = false; state.overview = null; route(); }
+      btn.classList.remove('gira');
+      if (syncWasRunning) { syncWasRunning = false; state.overview = null; ric.indiceP = null; route(); }
     }
-  } catch (e) { $('#sync-text').textContent = T('server non raggiungibile'); }
+  } catch (e) {
+    // il server non risponde: la riga di stato lo dice con l'ora dei dati che si vedono
+    spiaAggiorna('rotto', state.ultimoOk || state.overviewQuando || new Date());
+  }
 }
 
 /* Il selettore di compartimento (E1-PLANCIA). Si disegna solo se il server dice
-   che ci sono compartimenti nominati: senza, la topbar e' quella di sempre. */
+   che ci sono compartimenti nominati: senza, la barra e' quella di sempre. */
 function disegnaSelettore() {
   const c = state.compartimenti;
   let sel = $('#sel-compartimento');
@@ -2734,15 +3074,11 @@ function disegnaSelettore() {
   if (!sel) {
     sel = document.createElement('select');
     sel.id = 'sel-compartimento';
-    // larghezza e ingombro stanno in style.css (sotto i 500 px il selettore va
-    // a capo e non esce dallo schermo)
     sel.addEventListener('change', async () => {
       state.compartimento = sel.value;
       // quello che la pagina teneva a mente e' del compartimento di prima
       state.overview = null; state.progetti = null; state.lav = null;
-      state.recap = null; state.filters = {};
-      // il drawer aperto mostra un progetto o un task del compartimento di
-      // prima: si chiude, la vista nuova si ridisegna senza
+      state.recap = null; state.filters = {}; state.sel = {}; ric.indiceP = null;
       $('#drawer').hidden = true;
       await route();
     });
@@ -2769,13 +3105,14 @@ async function caricaCompartimenti() {
   disegnaSelettore();
 }
 
-window.addEventListener('hashchange', route);
+window.addEventListener('hashchange', () => { if (ric.aperta) chiudiRicerca(false); route(); });
 traduciShell();
 // prima di disegnare la prima vista si sa se ci sono compartimenti: una vista
 // disegnata senza il parametro mostrerebbe il predefinito e poi cambierebbe
 caricaCompartimenti().then(route);
 pollSync();
 setInterval(pollSync, 30000);
+
 
 /* ------------------------------------------------------------ service worker */
 /* LOTTO-U1-APPWEB: la dashboard si installa come app (Chrome, Edge, Safari
@@ -2808,3 +3145,4 @@ setInterval(pollSync, 30000);
     console.warn('plancia: service worker non registrato:', e && e.message ? e.message : e);
   }
 })();
+
