@@ -27,8 +27,8 @@ struct Radice: View {
             contenuto
                 .ispettoreFinestra()
                 .stileVista()
-                .navigationTitle(Sper.titoloFisso ? "Plancia" : (archivio.ricerca.trimmed.isEmpty ? archivio.sezione.titolo : tr("Ricerca", "Search")))
-                .navigationSubtitle(Sper.titoloFisso ? "" : archivio.sottotitolo)
+                .navigationTitle(archivio.ricerca.trimmed.isEmpty ? archivio.sezione.titolo : tr("Ricerca", "Search"))
+                .navigationSubtitle(archivio.sottotitolo)
         }
         .searchable(text: $a.ricerca, isPresented: $a.ricercaAperta, placement: .toolbar, prompt: Text(tr("Cerca", "Search")))
         .searchScopes($a.ambito, activation: .onSearchPresentation) {
@@ -72,31 +72,16 @@ struct Radice: View {
 /// La barra degli strumenti della finestra: la stessa in ogni sezione (Guscio/Controlli.swift).
 struct BarraStrumenti: ViewModifier {
     @Environment(Archivio.self) private var archivio
-    @ViewBuilder func body(content: Content) -> some View {
-        if Sper.barraId {
-            content.toolbar(id: "principale") {
-                if archivio.compartimenti.attivi {
-                    ToolbarItem(id: "compartimento", placement: .automatic) { selettoreCompartimento }
-                }
-                ToolbarItem(id: "aggiorna", placement: .automatic) { pulsanteAggiorna }
-                if !Sper.senzaToolbar {
-                    ToolbarItem(id: "primo", placement: .automatic) { PrimoControllo() }
-                    ToolbarItem(id: "secondo", placement: .automatic) { SecondoControllo() }
-                    ToolbarItem(id: "azione", placement: .primaryAction) { AzioneSezione() }
-                }
+
+    func body(content: Content) -> some View {
+        content.toolbar {
+            if archivio.compartimenti.attivi {
+                ToolbarItem(placement: .automatic) { selettoreCompartimento }
             }
-        } else {
-            content.toolbar {
-                if archivio.compartimenti.attivi {
-                    ToolbarItem(placement: .automatic) { selettoreCompartimento }
-                }
-                ToolbarItem(placement: .automatic) { pulsanteAggiorna }
-                if !Sper.senzaToolbar {
-                    ToolbarItem(placement: .automatic) { PrimoControllo() }
-                    ToolbarItem(placement: .automatic) { SecondoControllo() }
-                    ToolbarItem(placement: .primaryAction) { AzioneSezione() }
-                }
-            }
+            ToolbarItem(placement: .automatic) { pulsanteAggiorna }
+            ToolbarItem(placement: .automatic) { PrimoControllo() }
+            ToolbarItem(placement: .automatic) { SecondoControllo() }
+            ToolbarItem(placement: .primaryAction) { AzioneSezione() }
         }
     }
 

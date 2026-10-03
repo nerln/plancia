@@ -31,9 +31,11 @@ fi
 LUCCHETTO="${PLANCIA_LUCCHETTO:-/tmp/plancia-swiftc-$(id -u).lock}"
 mkdir -p "$(dirname "$LUCCHETTO")"
 
-echo "==> compilo il Core"
+echo "==> compilo il Core (con i dati puri della Memoria)"
 SORGENTI=()
 while IFS= read -r f; do SORGENTI+=("$f"); done < <(find "$RADICE/mac/Sources/Core" -name '*.swift' | sort)
+# Core/ArchivioDati.swift tiene in cache DatiMemoria, che sta con i dati puri della Memoria
+SORGENTI+=("$RADICE/mac/Sources/Viste/MemoriaDati.swift")
 python3 "$RADICE/mac/lucchetto.py" "$LUCCHETTO" xcrun swiftc \
   -swift-version 5 -parse-as-library -Onone \
   -target "$(uname -m)-apple-macosx26.0" \

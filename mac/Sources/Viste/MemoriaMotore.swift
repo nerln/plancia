@@ -1,7 +1,7 @@
 // Memoria, la mappa globale: il motore.
 //
 // Fa girare la simulazione (MemoriaFisica.swift) FUORI dal thread principale, a passi
-// fissi di 1/60 di secondo, e lascia l'ultima istantanea a chi disegna. Solo Foundation.
+// fissi di 1/120 di secondo, e lascia l'ultima istantanea a chi disegna. Solo Foundation.
 //
 //   - i comandi (trascina, zoom, cambia livello...) arrivano dal thread principale in una
 //     coda protetta da un lucchetto e non aspettano niente: il gesto non si blocca mai;
@@ -22,9 +22,18 @@ enum ComandoFisica: Sendable {
     case inquadra(subito: Bool)
     case zoom(Float, ancora: P2?)
     case panora(P2)
+    /// Uno spostamento senza gesto da seguire (la rotella e il trackpad): niente inerzia nostra.
+    case sposta(P2)
+    /// Il dito si stacca dopo un pan: la scena continua per inerzia.
+    case rilasciaPanoramica
     case scalda(Float)
     case centra(P2, zoom: Float)
     case centraNodo(Int, zoom: Float)
+    /// Mette in luce un nodo con i suoi vicini, o un gruppo, e attenua il resto.
+    case illumina(nodo: Int?, gruppo: Int?)
+    case inquadraGruppo(Int)
+    /// "Riduci movimento": camera e luci arrivano subito.
+    case ridotto(Bool)
     /// Porta subito la scena a riposo (le istantanee, le prove).
     case assesta
 }
@@ -37,7 +46,7 @@ final class PonteFisica: @unchecked Sendable {
     private var acceso = false
     private var generazione = 0
 
-    // misure (solo per --memoria-misura e per le prove)
+    // misure (solo per --mappa-misura (Sistema/MisuraMappa.swift) e per le prove)
     private var passiTotali = 0
     private var nsPassi: UInt64 = 0
     private var nsPassoMax: UInt64 = 0
@@ -102,8 +111,9 @@ actor MotoreFisica {
     nonisolated let ponte = PonteFisica()
     private var sim: SimulazioneGrafo
     private var versione = 0
-    /// Il passo fisso, in nanosecondi (1/60 s).
-    private let passoNs: UInt64 = 16_666_667
+    /// Il passo fisso, in nanosecondi (1/120 s: uno schermo a 120 Hz vede una posizione nuova a
+    /// ogni fotogramma, uno a 60 Hz ne salta uno su due senza che il moto cambi).
+    private let passoNs: UInt64 = 8_333_333
 
     init(topologia: TopologiaGrafo, parametri: ParametriFisica = .standard) {
         sim = SimulazioneGrafo(topologia: topologia, parametri: parametri)
@@ -132,6 +142,11 @@ actor MotoreFisica {
         case .inquadra(let subito): sim.inquadra(subito: subito)
         case .zoom(let f, let a): sim.zoom(fattore: f, ancoraSchermo: a)
         case .panora(let d): sim.panora(schermo: d)
+        case .sposta(let d): sim.panora(schermo: d, dito: false)
+        case .rilasciaPanoramica: sim.rilasciaPanoramica()
+        case .illumina(let n, let g): sim.illumina(nodo: n, gruppo: g)
+        case .inquadraGruppo(let g): sim.inquadra(gruppo: g)
+        case .ridotto(let r): sim.imposta(ridotto: r)
         case .scalda(let v): sim.scalda(v)
         case .centra(let p, let z): sim.centra(su: p, zoom: z)
         case .centraNodo(let i, let z):
@@ -161,7 +176,7 @@ actor MotoreFisica {
 
             var fatti = 0
             let inizio = DispatchTime.now().uptimeNanoseconds
-            while accumulo >= passoNs && fatti < 6 {
+            while accumulo >= passoNs && fatti < 12 {
                 sim.passo()
                 accumulo -= passoNs
                 fatti += 1

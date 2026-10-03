@@ -1,14 +1,21 @@
 // Memoria, la mappa globale: la vista.
 //
-// Tutti i fatti come nodi colorati per tipo, i legami come archi, con una fisica vera
-// (MemoriaFisica.swift) che gira fuori dal thread principale (MemoriaMotore.swift):
-//   - si trascina un nodo e il resto reagisce; si trascina lo sfondo per spostarsi;
-//   - zoom col pizzico, con la rotella e con i pulsanti; dentro la vista anche con
-//     ⌘+ e ⌘- (⌘0 inquadra tutto), a passi, con la camera che segue con una molla;
-//   - livelli "1", "2" e "Tutto": il fatto scelto e i legami a uno o due passi, oppure
-//     tutta la memoria, con una transizione fisica fra l'uno e l'altro;
-//   - le etichette compaiono secondo lo zoom e l'importanza del nodo;
-//   - un clic sceglie il fatto (si apre l'Inspector), un doppio clic entra a due livelli.
+// Tutti i fatti come nodi colorati per tipo, raggruppati in isole (un progetto, un tipo di
+// memoria): ogni gruppo ha la sua regione morbida nel suo colore e il suo nome, i ponti fra
+// i gruppi sono nastri e fasci di curve. Una fisica vera (MemoriaFisica.swift) gira fuori
+// dal thread principale (MemoriaMotore.swift), il disegno e' in MappaDisegno.swift, i dati
+// dei gruppi in MappaDati.swift e MappaGrafo.swift:
+//   - si trascina un nodo e il resto reagisce, il suo gruppo lo segue con un filo di ritardo;
+//     si trascina lo sfondo per spostarsi, e la scena continua per inerzia e rimbalza ai bordi;
+//   - zoom col pizzico, con la rotella e con i pulsanti, verso il puntatore, con una molla
+//     smorzata; dentro la vista anche con + e - (0 inquadra tutto), a passi;
+//   - il passaggio del mouse mette in luce il nodo, i suoi vicini e i suoi ponti e attenua il
+//     resto; un clic su un gruppo lo inquadra; un doppio clic su un nodo entra a due livelli;
+//   - livelli "1", "2" e "Tutto": il fatto scelto e i legami a uno o due passi, oppure tutta
+//     la memoria, con una transizione fisica fra l'uno e l'altro;
+//   - da lontano si leggono i nomi dei gruppi, avvicinandosi i titoli dei nodi piu'
+//     importanti e poi di tutti;
+//   - un clic sceglie il fatto (si apre l'Inspector).
 //
 // Si disegna con un Canvas dentro un TimelineView che gira SOLO mentre qualcosa si muove:
 // a scena ferma non c'e' nessun timer e nessun Task.
@@ -41,8 +48,11 @@ enum LivelloMappa: String, CaseIterable, Identifiable {
 
 // MARK: - argomenti per le istantanee e per la misura
 
-/// `--memoria-scena tutto|uno|due|zoom` apre la mappa in quello stato, senza scrivere le
-/// preferenze e con la scena gia' a riposo (per le istantanee).
+/// `--memoria-scena tutto|uno|due|zoom|gruppo|hover` apre la mappa in quello stato, senza
+/// scrivere le preferenze e con la scena gia' a riposo (per le istantanee):
+///   tutto  tutta la memoria da lontano     gruppo  il gruppo piu' grosso inquadrato
+///   uno    il fatto piu' collegato, 1 passo   hover  il passaggio del mouse sul nodo piu' collegato
+///   due    lo stesso, a 2 passi               zoom   il nodo piu' collegato da vicino
 enum ScenaMappa {
     static func argomento(_ nome: String) -> String? {
         let a = CommandLine.arguments
@@ -59,83 +69,12 @@ enum ScenaMappa {
         switch nome {
         case "uno": return .uno
         case "due": return .due
-        case "tutto", "zoom": return .tutto
+        case "tutto", "zoom", "gruppo", "hover": return .tutto
         default: return nil
         }
     }
 
     static var zoom: Bool { nome == "zoom" }
-}
-
-// MARK: - i dati del grafo, calcolati una volta per ogni forma della memoria
-
-struct InfoGrafo: Sendable {
-    let firma: Int
-    let nomi: [String]
-    let tipi: [TipoMemoria]
-    let grado: [Int]
-    /// 0...1: 1 e' il nodo piu' collegato. Decide quali etichette si vedono per prime.
-    let rango: [Float]
-    let archi: [(Int, Int)]
-    let indice: [String: Int]
-    let vicini: [[Int32]]
-    let hub: Int?
-    let topologia: TopologiaGrafo
-
-    static func firma(_ dati: DatiMemoria) -> Int {
-        var h = Hasher()
-        h.combine(dati.fatti.count)
-        for f in dati.fatti {
-            h.combine(f.nome)
-            h.combine(f.tipo.rawValue)
-            h.combine(dati.vicini[f.nome]?.count ?? 0)
-        }
-        return h.finalize()
-    }
-
-    init(dati: DatiMemoria) {
-        let fatti = dati.fatti
-        let n = fatti.count
-        nomi = fatti.map { $0.nome }
-        tipi = fatti.map { $0.tipo }
-        var ind: [String: Int] = [:]
-        for (i, nome) in nomi.enumerated() { ind[nome] = i }
-        indice = ind
-        var lista: [(Int, Int)] = []
-        for (i, nome) in nomi.enumerated() {
-            for v in dati.vicini[nome] ?? [] {
-                if let j = ind[v], j > i { lista.append((i, j)) }
-            }
-        }
-        archi = lista
-        var vic = [[Int32]](repeating: [], count: n)
-        for (a, b) in lista { vic[a].append(Int32(b)); vic[b].append(Int32(a)) }
-        vicini = vic
-        let gr = vic.map { $0.count }
-        grado = gr
-        let nm = nomi
-        let ordine = (0..<n).sorted { (gr[$0], nm[$1]) > (gr[$1], nm[$0]) }
-        var r = [Float](repeating: 0, count: n)
-        for (pos, i) in ordine.enumerated() { r[i] = 1 - Float(pos) / Float(max(n, 1)) }
-        rango = r
-        hub = ordine.first
-        firma = InfoGrafo.firma(dati)
-
-        // si parte dalla forma che ha gia' calcolato il server, portata alla scala della
-        // simulazione; chi non ce l'ha va su una spirale
-        let scala = 62 * Float(max(n, 1)).squareRoot()
-        var iniziali: [P2] = []
-        for (i, f) in fatti.enumerated() {
-            if let x = f.x, let y = f.y {
-                iniziali.append(P2(Float(x) - 0.5, Float(y) - 0.5) * scala)
-            } else {
-                let ang = 2.399963 * Float(i)
-                let raggio = 22 * (Float(i) + 0.5).squareRoot()
-                iniziali.append(P2(raggio * cos(ang), raggio * sin(ang)))
-            }
-        }
-        topologia = TopologiaGrafo(n: n, archi: lista, iniziali: iniziali)
-    }
 }
 
 // MARK: - la misura dei fotogrammi
@@ -185,6 +124,8 @@ final class ModelloMappa {
     private(set) var info: InfoGrafo?
     private(set) var inMoto = false
     private(set) var hover: Int?
+    private(set) var hoverGruppo: Int?
+    private(set) var gruppoScelto: Int?
 
     @ObservationIgnored private(set) var motore: MotoreFisica?
     @ObservationIgnored private var ultimiVisibili: [Bool]?
@@ -192,26 +133,37 @@ final class ModelloMappa {
     @ObservationIgnored private var inizializzato = false
     @ObservationIgnored let misura = MisuraDisegno()
     @ObservationIgnored var alFine: (() -> Void)?
+    @ObservationIgnored private var nodoSceltoLuce: Int?
+    @ObservationIgnored private var ultimaLuce: (Int?, Int?)?
+    @ObservationIgnored private var ridotto = false
 
     init() { Self.attivo = self }
 
-    var pronto: Bool { dimensioni.width > 8 && dimensioni.height > 8 }
+    /// La mappa parte quando la vista ha una misura vera: al primo giro del layout e' di pochi
+    /// punti (16 x 16), e inquadrare tutto o un gruppo con quella misura darebbe uno zoom sbagliato.
+    var pronto: Bool { dimensioni.width > 120 && dimensioni.height > 120 }
     var ponte: PonteFisica? { motore?.ponte }
 
     // MARK: dati
 
-    /// Nuova forma della memoria: si tengono le posizioni di chi c'era gia'.
+    /// Nuova forma della memoria: si tengono le posizioni di chi c'era gia' e nel suo gruppo.
     func imposta(info nuova: InfoGrafo) {
         var topo = nuova.topologia
         if let vecchio = info, let m = motore {
             let foto = m.ponte.foto()
             var iniz = nuova.topologia.iniziali
             for (j, nome) in nuova.nomi.enumerated() {
-                if let i = vecchio.indice[nome], i < foto.pos.count { iniz[j] = foto.pos[i] }
+                if let i = vecchio.indice[nome], i < foto.pos.count,
+                   vecchio.gruppi[vecchio.gruppo[i]].chiave == nuova.gruppi[nuova.gruppo[j]].chiave {
+                    iniz[j] = foto.pos[i]
+                }
             }
-            topo = TopologiaGrafo(n: nuova.nomi.count, archi: nuova.archi, iniziali: iniz)
+            topo = TopologiaGrafo(n: nuova.nomi.count, archi: nuova.archi, iniziali: iniz,
+                                  gruppo: nuova.gruppo, centri: nuova.topologia.centri)
             manda(.sostituisci(topo))
             ultimiVisibili = nil
+            ultimaLuce = nil
+            if let g = gruppoScelto, g >= nuova.gruppi.count { gruppoScelto = nil }
         } else {
             let m = MotoreFisica(topologia: topo)
             m.ponte.allaFine = { [weak self] _ in
@@ -219,9 +171,17 @@ final class ModelloMappa {
             }
             motore = m
             ultimiVisibili = nil
+            ultimaLuce = nil
             inizializzato = false
         }
         info = nuova
+        diag("info n=\(nuova.nomi.count) gruppi=\(nuova.gruppi.count) dalServer=\(nuova.dalServer)")
+    }
+
+    /// Una riga sul log delle istantanee (solo con --memoria-scena): cosa ha fatto la mappa.
+    private func diag(_ testo: String) {
+        guard ScenaMappa.nome != nil else { return }
+        FileHandle.standardOutput.write(Data(("mappa: " + testo + "\n").utf8))
     }
 
     func impostaDimensioni(_ s: CGSize) {
@@ -233,10 +193,43 @@ final class ModelloMappa {
         }
     }
 
-    func impostaHover(_ i: Int?) {
+    func impostaRiduciMovimento(_ r: Bool) {
+        guard r != ridotto else { return }
+        ridotto = r
+        manda(.ridotto(r))
+    }
+
+    // MARK: la luce: passaggio del mouse, gruppo scelto
+
+    func impostaHover(_ i: Int?, gruppo: Int? = nil) {
         // nelle istantanee il puntatore vero e' dove capita: non deve cambiare la scena
         if ScenaMappa.nome != nil { return }
+        forzaHover(i, gruppo: gruppo)
+    }
+
+    func forzaHover(_ i: Int?, gruppo: Int? = nil) {
+        let g = i == nil ? gruppo : nil
         if hover != i { hover = i }
+        if hoverGruppo != g { hoverGruppo = g }
+        inviaLuce()
+    }
+
+    /// Chi e' in luce: il nodo sotto il puntatore, altrimenti il gruppo sotto il puntatore o
+    /// quello scelto, altrimenti il fatto scelto (solo a "Tutto": a uno e due livelli si vede gia' lui).
+    private func inviaLuce() {
+        guard motore != nil else { return }
+        let nodo = hover ?? (hoverGruppo == nil && gruppoScelto == nil ? nodoSceltoLuce : nil)
+        let gruppo = hover == nil ? (hoverGruppo ?? gruppoScelto) : gruppoScelto
+        if let u = ultimaLuce, u.0 == nodo, u.1 == gruppo { return }
+        ultimaLuce = (nodo, gruppo)
+        manda(.illumina(nodo: nodo, gruppo: gruppo))
+    }
+
+    /// Scegliere un gruppo lo inquadra e lascia in luce solo lui; `nil` toglie la scelta.
+    func scegliGruppo(_ g: Int?) {
+        gruppoScelto = g
+        if let g = g { manda(.inquadraGruppo(g)) }
+        inviaLuce()
     }
 
     // MARK: comandi
@@ -269,8 +262,10 @@ final class ModelloMappa {
                 nodoCentro = h
             }
         }
+        nodoSceltoLuce = livello == .tutto ? centro.flatMap { info.indice[$0] } : nil
         if !inizializzato {
             inizializzato = true
+            manda(.ridotto(ridotto))
             manda(.dimensioni(Float(dimensioni.width), Float(dimensioni.height)))
             manda(.visibili(voluti, scalda: false))
             manda(.inquadra(subito: true))
@@ -281,6 +276,7 @@ final class ModelloMappa {
             manda(.visibili(voluti, scalda: true))
             if senzaAnimazione { manda(.assesta) }
         }
+        inviaLuce()
         if zoomScena, let h = centro.flatMap({ info.indice[$0] }) ?? nodoCentro ?? info.hub {
             manda(.assesta)
             manda(.centraNodo(h, zoom: 2.4))
@@ -288,15 +284,39 @@ final class ModelloMappa {
         }
     }
 
+    /// Le scene delle istantanee che non sono solo un livello: un gruppo inquadrato, il mouse su un nodo.
+    func scena(_ nome: String?) {
+        guard nome != nil, let info = info, motore != nil, pronto else { return }
+        switch nome {
+        case "gruppo":
+            manda(.assesta)
+            scegliGruppo(0)
+            manda(.assesta)
+        case "hover":
+            if let h = info.hub { forzaHover(h); manda(.assesta) }
+        default:
+            break
+        }
+        diag("scena \(nome ?? "-")")
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 800_000_000)
+            guard let f = self?.ponte?.foto() else { return }
+            self?.diag("gruppo0 baricentro=\(f.baricentri.first ?? .zero) raggio=\(f.raggiGruppo.first ?? 0) quanti=\(f.quantiGruppo.first ?? 0) inLuce=\(String(describing: f.gruppoInLuce)) c=\(f.camera.c) tc=\(f.camera.tc)")
+            self?.diag("camera z=\(f.camera.z) tz=\(f.camera.tz) zoomTutto=\(f.zoomTutto) vista=\(f.camera.vista) segui=\(f.camera.segui) ferma=\(f.ferma)")
+        }
+    }
+
     func inquadra() {
+        gruppoScelto = nil
         manda(.inquadra(subito: false))
+        inviaLuce()
     }
 
     func zoomPasso(_ fattore: Float, ancora: CGPoint? = nil) {
         manda(.zoom(fattore, ancora: ancora.map { P2(Float($0.x), Float($0.y)) }))
     }
 
-    // MARK: il nodo sotto un punto
+    // MARK: il nodo o il gruppo sotto un punto
 
     /// Il nodo piu' vicino al punto (coordinate della vista), se ce n'e' uno a portata di clic.
     func nodo(in p: CGPoint, foto: FotoScena, centro: Int?) -> Int? {
@@ -310,150 +330,18 @@ final class ModelloMappa {
         }
         return migliore?.0
     }
-}
 
-// MARK: - il disegno
-
-struct StatoDisegno {
-    var scelto: Int?
-    var hover: Int?
-    var livello: LivelloMappa
-    /// Il nodo in evidenza e i suoi vicini.
-    var evidenziati: Set<Int>
-    var centro: Int?
-}
-
-enum DisegnoMappa {
-    /// Il raggio a schermo cresce meno dello zoom: da lontano i nodi restano visibili, da
-    /// vicino non diventano dischi enormi.
-    static func raggioSchermo(_ r: Float, _ zoom: Float) -> CGFloat {
-        CGFloat(max(r * pow(zoom, 0.6), 2.4))
-    }
-
-    private static func cerchio(_ c: CGPoint, _ r: CGFloat) -> Path {
-        Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r))
-    }
-
-    static func disegna(_ ctx: inout GraphicsContext, _ size: CGSize, foto: FotoScena,
-                        info: InfoGrafo, stato: StatoDisegno) {
-        let n = info.nomi.count
-        guard n > 0, foto.pos.count == n, foto.presenza.count == n else { return }
-        let zoom = foto.camera.z
-        var punti = [CGPoint](repeating: .zero, count: n)
-        for i in 0..<n {
-            let s = foto.camera.schermo(foto.pos[i])
-            punti[i] = CGPoint(x: CGFloat(s.x), y: CGFloat(s.y))
+    /// Il gruppo la cui isola contiene il punto (il piu' centrato, se ce n'e' piu' d'uno).
+    func gruppo(in p: CGPoint, foto: FotoScena) -> Int? {
+        guard let info = info, foto.baricentri.count == info.gruppi.count else { return nil }
+        var migliore: (Int, CGFloat)?
+        for g in 0..<info.gruppi.count where foto.quantiGruppo[g] > 0 && foto.presenzaGruppo[g] > 0.5 {
+            let c = foto.schermo(foto.baricentri[g])
+            let r = CGFloat(foto.raggiGruppo[g] * foto.camera.z) + 8
+            let d = hypot(CGFloat(c.x) - p.x, CGFloat(c.y) - p.y) / max(r, 1)
+            if d <= 1, migliore == nil || d < migliore!.1 { migliore = (g, d) }
         }
-        let area = CGRect(origin: .zero, size: size).insetBy(dx: -60, dy: -60)
-        let focus = stato.hover ?? stato.scelto
-        let sfuma = focus != nil && (stato.livello == .tutto || stato.hover != nil)
-        let pochi = stato.livello != .tutto
-
-        // i legami: tutti insieme, salvo quelli che stanno entrando o uscendo
-        var normali = Path(), evidenza = Path()
-        var incerti: [(Int, Int, Double)] = []
-        for (a, b) in info.archi {
-            let pa = foto.presenza[a], pb = foto.presenza[b]
-            if pa <= 0 || pb <= 0 { continue }
-            let p1 = punti[a], p2 = punti[b]
-            if !area.contains(p1) && !area.contains(p2) { continue }
-            if pa < 1 || pb < 1 || !foto.voluto[a] || !foto.voluto[b] {
-                incerti.append((a, b, Double(min(pa, pb))))
-                continue
-            }
-            if let f = focus, a == f || b == f {
-                evidenza.move(to: p1); evidenza.addLine(to: p2)
-            } else {
-                normali.move(to: p1); normali.addLine(to: p2)
-            }
-        }
-        let opacitaBase: Double = sfuma ? 0.07 : (pochi ? 0.28 : 0.16)
-        ctx.stroke(normali, with: .color(.primary.opacity(opacitaBase)), lineWidth: pochi ? 1.2 : 0.8)
-        for (a, b, p) in incerti {
-            var t = Path()
-            t.move(to: punti[a]); t.addLine(to: punti[b])
-            ctx.stroke(t, with: .color(.primary.opacity(opacitaBase * p)), lineWidth: 0.8)
-        }
-        ctx.stroke(evidenza, with: .color(.accentColor.opacity(0.8)), lineWidth: 1.6)
-
-        // i nodi: prima quelli sfumati, poi gli evidenziati, in cima il centro
-        var ordine: [Int] = []
-        ordine.reserveCapacity(n)
-        for i in 0..<n where foto.presenza[i] > 0.01 && area.contains(punti[i]) { ordine.append(i) }
-        func peso(_ i: Int) -> Int {
-            if i == focus { return 3 }
-            if i == stato.centro { return 2 }
-            return stato.evidenziati.contains(i) ? 1 : 0
-        }
-        ordine.sort { peso($0) < peso($1) }
-        for i in ordine {
-            let p = foto.presenza[i]
-            let e = stato.evidenziati.contains(i)
-            let spento = sfuma && !e
-            let grande = (i == stato.centro) ? 1.35 : 1.0
-            let r = raggioSchermo(info.topologia.raggio[i] * Float(grande), zoom)
-                * CGFloat(p) + (i == stato.hover ? 2 : 0)
-            let c = cerchio(punti[i], r)
-            ctx.fill(c, with: .color(info.tipi[i].colore.opacity(Double(p) * (spento ? 0.3 : 1))))
-            if zoom > 0.45 {
-                ctx.stroke(c, with: .style(.background), lineWidth: 1.2)
-            }
-            if i == stato.scelto || i == stato.centro && pochi {
-                ctx.stroke(cerchio(punti[i], r + 3.5), with: .color(.accentColor), lineWidth: 2)
-            }
-        }
-
-        etichette(&ctx, size, foto: foto, info: info, stato: stato, punti: punti, focus: focus, area: area)
-    }
-
-    private static func etichette(_ ctx: inout GraphicsContext, _ size: CGSize, foto: FotoScena,
-                                  info: InfoGrafo, stato: StatoDisegno, punti: [CGPoint],
-                                  focus: Int?, area: CGRect) {
-        let n = info.nomi.count
-        let zoom = foto.camera.z
-        let pochi = stato.livello != .tutto
-        // chi ha diritto a un'etichetta, in ordine di importanza
-        var candidati: [(Int, Float)] = []
-        for i in 0..<n where foto.presenza[i] > 0.6 && foto.voluto[i] && area.contains(punti[i]) {
-            var pr = info.rango[i]
-            if i == focus { pr += 4 } else if i == stato.centro { pr += 3 } else if stato.evidenziati.contains(i) { pr += 2 }
-            candidati.append((i, pr))
-        }
-        candidati.sort { $0.1 > $1.1 }
-
-        var occupati: [CGRect] = []
-        var messe = 0
-        let visibile = CGRect(origin: .zero, size: size)
-        for (i, pr) in candidati {
-            if messe >= 90 { break }
-            let importante = pr >= 1.5 || (pochi && candidati.count <= 60)
-            // le etichette compaiono con lo zoom: prima i nodi piu' collegati
-            let soglia: Float = importante ? 0.3 : 0.35 + 1.45 * (1 - info.rango[i])
-            let alfa = min(max((zoom - soglia) / 0.18, 0), 1)
-            if alfa <= 0.02 { continue }
-
-            let evidente = i == focus || i == stato.centro
-            var t = Text(accorcia(info.nomi[i], 30))
-            t = evidente ? t.font(.callout.weight(.semibold)) : t.font(.caption)
-            let ris = ctx.resolve(t.foregroundStyle(.primary))
-            let misura = ris.measure(in: CGSize(width: 320, height: 40))
-            let r = raggioSchermo(info.topologia.raggio[i] * (i == stato.centro ? 1.35 : 1), zoom)
-            var rect = CGRect(x: punti[i].x + r + 4, y: punti[i].y - misura.height / 2 - 1,
-                              width: misura.width + 8, height: misura.height + 2)
-            if rect.maxX > visibile.maxX - 4 {
-                rect.origin.x = punti[i].x - r - 4 - rect.width
-            }
-            let ingombro = rect.insetBy(dx: -2, dy: -1)
-            if !evidente && occupati.contains(where: { $0.intersects(ingombro) }) { continue }
-            occupati.append(ingombro)
-            messe += 1
-
-            var strato = ctx
-            strato.opacity = Double(alfa) * ((focus != nil && !stato.evidenziati.contains(i) && stato.livello == .tutto) ? 0.35 : 1)
-            let targhetta = Path(roundedRect: rect, cornerRadius: 5)
-            strato.fill(targhetta, with: .style(.background.opacity(0.82)))
-            strato.draw(ris, at: CGPoint(x: rect.minX + 4, y: rect.midY), anchor: .leading)
-        }
+        return migliore?.0
     }
 }
 
@@ -551,10 +439,17 @@ struct VistaMappa: View {
 
     @Environment(Archivio.self) private var archivio
     @Environment(\.accessibilityReduceMotion) private var riduciMovimento
+    @Environment(\.colorScheme) private var schema
+    @Environment(\.legno) private var legno
     @AppStorage("memoriaLivello") private var livelloGuardato = LivelloMappa.tutto.rawValue
 
     @State private var modello = ModelloMappa()
     @State private var gesto = StatoGesto()
+    /// I gruppi come li dice il server, e se si e' gia' provato a chiederli (o e' passato
+    /// il tempo che si aspetta: la mappa non resta vuota per un server lento).
+    @State private var serverGruppi: MappaGruppi?
+    @State private var improntaServer = 0
+    @State private var gruppiPronti = false
 
     private var livello: LivelloMappa {
         ScenaMappa.livello ?? LivelloMappa(rawValue: livelloGuardato) ?? .tutto
@@ -566,12 +461,19 @@ struct VistaMappa: View {
         var scelto: String?
         var pronto: Bool
         var ridotto: Bool
+        var gruppiPronti: Bool
+    }
+
+    private struct ChiaveGruppi: Hashable {
+        var firma: Int
+        var compartimento: String?
     }
 
     var body: some View {
-        let firma = InfoGrafo.firma(dati)
+        let firmaDati = InfoGrafo.firma(dati)
+        let firma = InfoGrafo.firma(firmaDati, improntaServer: improntaServer)
         let chiave = Chiave(firma: firma, livello: livello, scelto: scelto,
-                            pronto: modello.pronto, ridotto: riduciMovimento)
+                            pronto: modello.pronto, ridotto: riduciMovimento, gruppiPronti: gruppiPronti)
         VStack(spacing: 0) {
             Group {
                 if let info = modello.info, let ponte = modello.ponte {
@@ -587,11 +489,27 @@ struct VistaMappa: View {
                 barra(info)
             }
         }
+        .task(id: ChiaveGruppi(firma: firmaDati, compartimento: archivio.compartimento)) { await caricaGruppi() }
         .task(id: chiave) { allinea(firma: firma) }
     }
 
+    /// Chiede i gruppi al server; se non arrivano in mezzo secondo parte lo stesso coi gruppi
+    /// ricavati dalle schede, e quando arrivano la mappa si riorganizza da sola.
+    private func caricaGruppi() async {
+        let attesa = Task {
+            if (try? await Task.sleep(nanoseconds: 600_000_000)) != nil { gruppiPronti = true }
+        }
+        let m = await CaricaGruppi.carica(compartimento: archivio.compartimento)
+        attesa.cancel()
+        let nuova = m?.impronta ?? 0
+        if nuova != improntaServer { serverGruppi = m; improntaServer = nuova }
+        gruppiPronti = true
+    }
+
     private func allinea(firma: Int) {
-        if modello.info?.firma != firma { modello.imposta(info: InfoGrafo(dati: dati)) }
+        guard gruppiPronti else { return }
+        modello.impostaRiduciMovimento(riduciMovimento)
+        if modello.info?.firma != firma { modello.imposta(info: InfoGrafo(dati: dati, server: serverGruppi)) }
         guard let info = modello.info else { return }
         // a uno o due livelli serve un fatto al centro: se non c'e', il piu' collegato
         if livello != .tutto && scelto == nil, let h = info.hub {
@@ -601,6 +519,7 @@ struct VistaMappa: View {
         modello.allinea(livello: livello, centro: scelto,
                         senzaAnimazione: riduciMovimento || ScenaMappa.nome != nil,
                         zoomScena: ScenaMappa.zoom)
+        modello.scena(ScenaMappa.nome)
     }
 
     private var livelloBinding: Binding<LivelloMappa> {
@@ -615,14 +534,8 @@ struct VistaMappa: View {
     private func superficie(info: InfoGrafo, ponte: PonteFisica) -> some View {
         let centro = livello == .tutto ? nil : scelto.flatMap { info.indice[$0] }
         let indiceScelto = scelto.flatMap { info.indice[$0] }
-        let focus = modello.hover ?? indiceScelto
-        var evid = Set<Int>()
-        if let f = focus {
-            evid.insert(f)
-            for v in info.vicini[f] { evid.insert(Int(v)) }
-        }
-        let stato = StatoDisegno(scelto: indiceScelto, hover: modello.hover, livello: livello,
-                                 evidenziati: evid, centro: centro)
+        let stato = StatoDisegno(scelto: indiceScelto, hover: modello.hover, livello: livello, centro: centro,
+                                 gruppoScelto: modello.gruppoScelto, scuro: schema == .dark, legno: legno != nil)
         let misura = modello.misura
         let inMoto = modello.inMoto
 
@@ -640,29 +553,36 @@ struct VistaMappa: View {
         .onContinuousHover { fase in
             switch fase {
             case .active(let p):
-                let i = modello.nodo(in: p, foto: ponte.foto(), centro: centro)
-                modello.impostaHover(i)
+                let foto = ponte.foto()
+                if let i = modello.nodo(in: p, foto: foto, centro: centro) {
+                    modello.impostaHover(i)
+                } else {
+                    modello.impostaHover(nil, gruppo: modello.gruppo(in: p, foto: foto))
+                }
             case .ended:
                 modello.impostaHover(nil)
             }
         }
-        .pointerStyle(modello.hover != nil ? .link : .default)
+        .pointerStyle(modello.hover != nil || modello.hoverGruppo != nil ? .link : .default)
         .background(AscoltoInput(rotella: { punto, dx, dy, precisa, zoom in
+            // nelle istantanee il puntatore e la tastiera veri non devono cambiare la scena
+            guard ScenaMappa.nome == nil else { return }
             if !precisa || zoom {
                 let f = precisa ? exp(Float(dy) * 0.012) : pow(1.12, Float(max(min(dy, 6), -6)))
                 modello.zoomPasso(f, ancora: punto)
             } else {
-                modello.manda(.panora(P2(Float(dx), Float(dy))))
+                modello.manda(.sposta(P2(Float(dx), Float(dy))))
             }
         }, tasto: { verso in
+            guard ScenaMappa.nome == nil else { return }
             if verso == 0 { modello.inquadra() } else { modello.zoomPasso(verso > 0 ? 1.4 : 1 / 1.4) }
         }))
         .accessibilityElement(children: .contain)
-        .accessibilityLabel(tr("Mappa della memoria, \(info.nomi.count) fatti",
-                               "Memory map, \(info.nomi.count) facts"))
+        .accessibilityLabel(tr("Mappa della memoria, \(info.nomi.count) fatti in \(info.gruppi.count) gruppi",
+                               "Memory map, \(info.nomi.count) facts in \(info.gruppi.count) groups"))
         .accessibilityChildren {
             ForEach(Array((0..<info.nomi.count).sorted { info.rango[$0] > info.rango[$1] }.prefix(40)), id: \.self) { i in
-                Button(info.nomi[i]) { archivio.memoriaScelta = info.nomi[i] }
+                Button(info.titoli[i]) { archivio.memoriaScelta = info.nomi[i] }
             }
         }
     }
@@ -698,7 +618,7 @@ struct VistaMappa: View {
                     modello.manda(.panora(P2(Float(dx), Float(dy))))
                 }
             }
-            .onEnded { _ in
+            .onEnded { v in
                 defer { gesto.azzera() }
                 guard let fase = gesto.fase else { return }
                 switch fase {
@@ -709,7 +629,11 @@ struct VistaMappa: View {
                         clic(su: i, info: info)
                     }
                 case .sfondo:
-                    if !gesto.mosso, livello == .tutto { archivio.memoriaScelta = nil }
+                    if gesto.mosso {
+                        modello.manda(.rilasciaPanoramica)
+                    } else {
+                        clicSfondo(in: v.location, ponte: ponte)
+                    }
                 }
             }
     }
@@ -720,6 +644,16 @@ struct VistaMappa: View {
         gesto.ultimoClic = doppio ? nil : (i, adesso)
         archivio.memoriaScelta = info.nomi[i]
         if doppio && livello != .due && ScenaMappa.livello == nil { livelloGuardato = LivelloMappa.due.rawValue }
+    }
+
+    /// Un clic sul vuoto: dentro un'isola inquadra il gruppo (di nuovo, lo lascia), fuori toglie la scelta.
+    private func clicSfondo(in p: CGPoint, ponte: PonteFisica) {
+        if let g = modello.gruppo(in: p, foto: ponte.foto()) {
+            modello.scegliGruppo(modello.gruppoScelto == g ? nil : g)
+        } else {
+            if modello.gruppoScelto != nil { modello.scegliGruppo(nil) }
+            if livello == .tutto { archivio.memoriaScelta = nil }
+        }
     }
 
     private var pizzico: some Gesture {
@@ -734,24 +668,56 @@ struct VistaMappa: View {
             .onEnded { _ in gesto.ultimaMagnificazione = 1 }
     }
 
-    // MARK: pezzi sopra il disegno
+    // MARK: pezzi sotto il disegno
 
-    /// La barra sotto la mappa: a sinistra cosa vogliono dire i colori, a destra il livello e lo
-    /// zoom. Se la larghezza non basta i due gruppi vanno uno sopra l'altro.
+    /// La barra sotto la mappa: i gruppi (un clic li inquadra), cosa vogliono dire i colori, a
+    /// destra il livello e lo zoom. Se la larghezza non basta i due gruppi vanno uno sopra l'altro.
     private func barra(_ info: InfoGrafo) -> some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 16) {
-                legenda(info)
-                Spacer(minLength: 12)
-                controlli
-            }
-            VStack(alignment: .leading, spacing: 8) {
-                legenda(info)
-                controlli
+        VStack(spacing: 6) {
+            gruppi(info)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 16) {
+                    legenda(info)
+                    Spacer(minLength: 12)
+                    controlli
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    legenda(info)
+                    controlli
+                }
             }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
+    }
+
+    /// Un pulsante per gruppo: il colore dell'isola, il nome, quante memorie. Porta la camera li'.
+    private func gruppi(_ info: InfoGrafo) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(Array(info.gruppi.enumerated()), id: \.offset) { g, gi in
+                    let scelto = modello.gruppoScelto == g
+                    Button { modello.scegliGruppo(scelto ? nil : g) } label: {
+                        HStack(spacing: 5) {
+                            Circle().fill(ColoreGruppo.colore(gi.colore)).frame(width: 8, height: 8)
+                            Text(gi.nome).font(.caption)
+                            Text("\(gi.membri.count)").font(.caption).foregroundStyle(.secondary)
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(scelto ? ColoreGruppo.colore(gi.colore).opacity(0.22) : Color.clear, in: Capsule())
+                        .overlay(Capsule().strokeBorder(ColoreGruppo.colore(gi.colore).opacity(scelto ? 0.8 : 0.35), lineWidth: 1))
+                        .contentShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(tr("Gruppo \(gi.nome), \(gi.membri.count) memorie",
+                                           "Group \(gi.nome), \(gi.membri.count) memories"))
+                    .help(tr("Inquadra il gruppo", "Frame the group"))
+                }
+            }
+        }
+        .scrollClipDisabled()
+        .frame(height: 24)
     }
 
     private func legenda(_ info: InfoGrafo) -> some View {
@@ -766,8 +732,7 @@ struct VistaMappa: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             }
-            Text(tr("\(info.nomi.count) fatti, \(info.archi.count) legami",
-                    "\(info.nomi.count) facts, \(info.archi.count) links"))
+            Text(tr("il colore è il tipo, l'area è il gruppo", "colour is the type, the area is the group"))
                 .font(.caption)
                 .foregroundStyle(.tertiary)
         }

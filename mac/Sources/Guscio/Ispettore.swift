@@ -1,23 +1,37 @@
-// L'Inspector della finestra: uno solo, in Radice, con il contenuto scelto dalla sezione.
-// Un `.inspector` per vista costava 10-25 ms a ogni cambio di sezione (misurato): qui la
-// colonna resta la stessa e cambia solo quello che ci sta dentro.
+// L'Inspector della finestra: uno solo, in Radice, con il contenuto scelto dalla sezione. Le
+// viste non ne hanno uno loro: la sezione sceglie solo cosa mostrarci dentro.
 //
 // Il contenuto viene dai dati dello Store (la selezione di ogni sezione sta li') e da
 // ControlliVista (l'evento del registro, il dettaglio di un risultato di ricerca).
 
 import SwiftUI
 
-/// Aggiunge l'Inspector al contenuto della finestra.
+/// Aggiunge l'Inspector al contenuto della finestra. L'Inspector sta sul contenuto vero (e' lui che
+/// deve restringersi quando la colonna si apre) e cambia identita' a ogni sezione, come il
+/// contenuto, che e' gia' una vista diversa per sezione: la colonna nasce nello stato giusto invece
+/// di chiudersi con l'animazione di AppKit quando si lascia una sezione con l'Inspector aperto
+/// (NSSplitViewItem collapse, misurato con sample: 700-1700 milioni di istruzioni a cambio).
+/// Costo in piu' rispetto a non averlo: nessuno, la sezione si ricostruisce comunque.
 struct IspettoreFinestra: ViewModifier {
     @Environment(Archivio.self) private var archivio
     private let c = ControlliVista.condiviso
 
-    @ViewBuilder func body(content: Content) -> some View {
-        if Sper.senzaInspector { content } else {
-        content.inspector(isPresented: Binding(get: { presente }, set: { if !$0 { chiudi() } })) {
-            ContenutoIspettore()
-                .inspectorColumnWidth(min: 260, ideal: 330, max: 480)
-        }
+    func body(content: Content) -> some View {
+        content
+            .inspector(isPresented: Binding(get: { presente }, set: { if !$0 { chiudi() } })) {
+                ContenutoIspettore()
+                    .inspectorColumnWidth(min: larghezze.min, ideal: larghezze.ideale, max: larghezze.max)
+            }
+            .id(inRicerca ? "ricerca" : archivio.sezione.rawValue)
+    }
+
+    /// Le larghezze di prima: Social e Memoria hanno un dettaglio piu' largo.
+    private var larghezze: (min: CGFloat, ideale: CGFloat, max: CGFloat) {
+        guard !inRicerca else { return (260, 320, 460) }
+        switch archivio.sezione {
+        case .social: return (280, 340, 480)
+        case .memoria: return (280, 340, 480)
+        default: return (260, 320, 460)
         }
     }
 

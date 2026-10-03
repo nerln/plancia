@@ -96,7 +96,7 @@ enum ErroreCliente: Error, LocalizedError {
 // MARK: - contatori
 
 /// Quante richieste ha fatto il cliente, quanti byte ha scaricato, quante ne ha in volo.
-/// Servono alla misura (Core/Misura.swift) e alle prove; costano un lucchetto per richiesta.
+/// Servono alla misura (Sistema/Misura.swift) e alle prove; costano un lucchetto per richiesta.
 final class ContatoriRete: @unchecked Sendable {
     private let l = NSLock()
     private var _richieste = 0, _byte = 0, _inVolo = 0, _picco = 0
