@@ -3,6 +3,11 @@ on one board. 2.0 is the Mac app rebuilt from scratch as a native app, a
 search that no longer makes you wait, a Jarvis you can trust, work that resumes in
 the session that saved it, and a redrawn web dashboard.
 
+The pictures in the README and on the website are the app and the dashboard running on
+the demonstration archive (`tools/demo-data.py`), never on anyone's data. They are made
+by `tools/scatti-mac.sh` (the app, from its own snapshot mode) and `tools/scatti.sh` (the
+dashboard, in a headless browser), so they can be redone the same way.
+
 ## Who this is for
 
 **On a Mac with macOS 26 or later:** the app is new. Update, rebuild, open it.
@@ -258,6 +263,11 @@ what it cannot see is listed in the README.
   fake worker, and its install and the real model were not run in this round. Without
   a neural voice Jarvis uses the enhanced or premium system voices, and stays
   text-only if none is installed.
+- The Jarvis panel is shown in dark only in the pictures. A snapshot of the glass panel in
+  light appearance, with nothing behind it, comes out a muddy grey; whether it looks the
+  same over a real desktop was not checked.
+- In the dashboard's memory graph the labels of the selected note and of its neighbours
+  can overlap a group name or each other. The Mac Map places its labels without overlaps.
 - Row selection in tables and lists follows the system accent (blue or grey), not the
   brass, in Wood. At 125% text, with the inspector open, long titles in tables are
   cut short; no column runs under the inspector any more.
@@ -270,18 +280,21 @@ what it cannot see is listed in the README.
 
 ## Tested
 
-4921 checks for the program, 422 for the dashboard, 153 for the Mac side (the data
-layer against a fake server, the Map physics, the colour contrast of both styles)
-and 74 for the Jarvis panel (every state in light and dark, the voice paths with
-Pocket and Kokoro fakes, the confirm card, Esc, the microphone and the server off).
+4939 checks for the program, 422 for the dashboard, 130 for the Mac side (the data
+layer against a fake server, source checks, the Map physics) and 134 for the Jarvis panel
+(every state in light and dark, the voice paths with Pocket and Kokoro fakes, the confirm
+card, Esc, the microphone and the server off). The colour contrast of the two styles has
+its own check, which needs Pillow and numpy and was skipped in the last run on the machine
+that made the pictures, so the contrast numbers under Wood are from the earlier run.
 The data layer decodes the server's answers (saved from the demo archive, so no real
 data) and checks that the token goes only with writes and that a chosen compartment
 goes with every request. The new search-speed check was seen failing on the old code
 first (6 to 7 s on one word) and passes now, including that the fast path returns
 exactly what the slow one does. The Map physics checks were red on the previous
 build and green on the new one. The app was built and photographed in System and
-Wood, light and dark, against a demo archive; nobody has clicked through it on a
-real screen yet.
+Wood, light and dark, against a demo archive. The first build was used on a real
+screen by its author; the second pass (Wood, the Map, the new Jarvis panel, the lighter
+data layer) was photographed and tested but not yet clicked through on a real screen.
 
 ## Installing
 

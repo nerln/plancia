@@ -16,6 +16,21 @@ struct GruppoInfo: Sendable {
     let ponti: [(Int, Int)]
 }
 
+extension GruppoInfo {
+    /// Il nome da mostrare: i gruppi di tipo (chi sei, preferenze...) arrivano dal server in
+    /// italiano, come nel web si traducono qui; quelli di progetto restano come il server li dice.
+    func nomeVisto(inglese: Bool) -> String {
+        switch chiave {
+        case "tipo:user": return inglese ? "About you" : "Chi sei"
+        case "tipo:feedback": return inglese ? "Preferences" : "Preferenze"
+        case "tipo:reference": return inglese ? "References" : "Riferimenti"
+        case "tipo:project": return inglese ? "Other projects" : "Altri progetti"
+        case "tipo:altro": return inglese ? "Other" : "Altro"
+        default: return nome
+        }
+    }
+}
+
 struct InfoGrafo: Sendable {
     let firma: Int
     let nomi: [String]

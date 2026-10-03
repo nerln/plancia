@@ -98,7 +98,7 @@ struct JarvisVista: View {
             Text(titoloStato)
                 .font(.headline)
                 .contentTransition(.opacity)
-            if JarvisProva.attivo {
+            if JarvisProva.attivo, !JarvisProva.senzaEtichetta {
                 Text(m.lingua == "it" ? "prova, niente audio" : "test, no audio")
                     .font(.caption).foregroundStyle(.secondary)
                     .padding(.horizontal, 6).padding(.vertical, 2)

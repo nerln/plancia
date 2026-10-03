@@ -17,7 +17,44 @@ installare: Python 3 con la sua libreria standard, Swift per l'app.
 
 [English](README.md)
 
-![La dashboard](docs/dashboard.png)
+![Plancia per Mac: Oggi, con una riga per progetto](docs/mac-oggi.png)
+
+*Ogni schermata di questo README è l'app che gira sull'archivio dimostrativo
+(`tools/demo-data.py`), mai sui dati di qualcuno.*
+
+## L'app per Mac
+
+Plancia 2.0 è un'app nativa in SwiftUI per macOS 26 o più recente: i controlli di
+sistema e i materiali Liquid Glass, una barra laterale con sei sezioni, il campo di
+ricerca di sistema nella barra degli strumenti e un Inspector a destra. Niente logo,
+niente pagina web dentro una finestra.
+
+**La memoria come mappa.** Ogni scheda è un nodo, colorato per tipo, e ogni progetto (o
+tipo di scheda, per quelle che non appartengono a nessuno) è un'isola con il nome sul
+bordo. I legami tra le isole sono nastri, così si vede a colpo d'occhio quali progetti
+condividono quello che sai. Il passaggio del mouse accende una scheda e le sue vicine,
+trascinando un nodo l'isola lo segue, pizzico o rotellina per lo zoom. La fisica gira
+fuori dal thread principale e si ferma da sola quando l'immagine sta ferma.
+
+![La mappa della memoria: isole per progetto, nastri per i legami](docs/mac-memoria.png)
+
+Avvicinandosi, i nodi portano un titolo breve e leggibile invece del nome del file:
+
+![Un'isola da vicino, con i titoli delle sue schede](docs/mac-memoria-isola.png)
+
+**Legno.** Nelle Impostazioni c'è lo Stile: Sistema, oppure Legno, una versione moderna
+della dashboard skeuomorfica dell'icona. Tavole di mogano nella barra laterale e sotto la
+barra degli strumenti, ottone pieno per la selezione, carta calda per il contenuto. I
+controlli e il vetro restano quelli di sistema.
+
+![Lo stile Legno](docs/mac-legno.png)
+
+**Chiaro e scuro**, e la dimensione del testo con ⌘+, ⌘- e ⌘0:
+
+![La mappa della memoria in scuro](docs/mac-scuro.png)
+
+Le altre sezioni hanno le loro immagini più sotto: [la ricerca](#cercare-dentro-quello-che-è-stato-detto),
+[Jarvis](#jarvis), [Tutti i task](#tutti-i-task) e [Progetti](#progetti).
 
 ## Cosa raccoglie
 
@@ -136,6 +173,23 @@ forza i comandi, per una macchina dove sono finti. I comandi che Plancia costrui
 dalla suite, ma Windows e Linux hanno avuto molto meno uso reale di macOS: `plancia doctor`
 dice cosa è collegato.
 
+## La dashboard nel browser
+
+Gli stessi dati in un browser, su qualsiasi sistema con Python: `python3 bin/plancia serve --open`
+(`python bin/plancia serve --open` su Windows). Segue l'app per Mac: font di sistema, sei
+sezioni in una barra laterale, Oggi come una colonna di lettura, Task come una tabella
+con un pannello di dettaglio, Memoria con un grafo a fisica su canvas, la ricerca nel campo
+in alto. Si installa come app web dal menu del browser. È quello che usano Windows e Linux,
+e un Mac che non può far girare l'app 2.0.
+
+![Oggi nel browser](docs/web-oggi.png)
+
+![I task nel browser, con il pannello di dettaglio](docs/web-task.png)
+
+![Il grafo della memoria nel browser](docs/web-memoria.png)
+
+![La ricerca nel browser](docs/web-cerca.png)
+
 ## Le tre porte
 
 **L'app.** Finestra nativa in SwiftUI (2.0, macOS 26 o più recente): barra
@@ -181,7 +235,7 @@ da zero in 5 secondi e tenuti aggiornati in modo incrementale, che costa una
 Ogni risultato torna com'era scritto, con il file e la riga da cui viene, così si
 riapre il momento invece di leggerne un riassunto.
 
-![La ricerca](docs/cerca.png)
+![La ricerca: task, sessioni, memoria e i turni stessi](docs/mac-ricerca.png)
 
 ```bash
 plancia cerca "il denominatore del blending"
@@ -383,6 +437,8 @@ di `plancia riordina`.
 segue la voce mentre ascolta, la risposta scorre man mano che arriva e comincia a
 parlare con la prima frase, non quando la risposta è finita.
 
+![Jarvis che chiede conferma prima di mandare un agente](docs/mac-jarvis.png)
+
 Jarvis legge e propone. Il modello dietro il pannello è in sola lettura: i tool che
 scrivono sono negati per nome, non solo lasciati fuori da un elenco. Frasi come
 "segna un task", "ho fatto", "archivia Atlas", "fallo" o "riprendi il task 4" non
@@ -437,7 +493,7 @@ quando confermi.
 
 ## Tutti i task
 
-![Tutti i task](docs/board.png)
+![Tutti i task, con Riprendi nell'Inspector](docs/mac-task.png)
 
 Claude Code tiene la sua lista di task in una cartella, Codex i suoi obiettivi in
 un altro database, Plancia ha i suoi. Nessuno dei tre sa degli altri due. Questa
@@ -566,7 +622,7 @@ video", oppure "il filmato ard è finito".
 
 ## Progetti
 
-![Progetti](docs/projects.png)
+![Progetti raggruppati per area, con quello scelto a destra](docs/mac-progetti.png)
 
 Un progetto è quello che dici tu: un repo, una cartella, un file di memoria, o
 tutti e tre. `plancia init` propone una mappa da quello che trova, tu la correggi
@@ -774,7 +830,7 @@ git config core.hooksPath .githooks
 ```
 
 Accende il gancio che fa girare `python3 tools/prova.py` prima di ogni push:
-4921 controlli in pochi minuti, su un archivio finto che non tocca
+4939 controlli in pochi minuti, su un archivio finto che non tocca
 il tuo.
 
 ## Licenza

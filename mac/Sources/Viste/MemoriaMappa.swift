@@ -535,7 +535,8 @@ struct VistaMappa: View {
         let centro = livello == .tutto ? nil : scelto.flatMap { info.indice[$0] }
         let indiceScelto = scelto.flatMap { info.indice[$0] }
         let stato = StatoDisegno(scelto: indiceScelto, hover: modello.hover, livello: livello, centro: centro,
-                                 gruppoScelto: modello.gruppoScelto, scuro: schema == .dark, legno: legno != nil)
+                                 gruppoScelto: modello.gruppoScelto, scuro: schema == .dark, legno: legno != nil,
+                                 inglese: Lingua.condivisa.codice != "it")
         let misura = modello.misura
         let inMoto = modello.inMoto
 
@@ -700,7 +701,7 @@ struct VistaMappa: View {
                     Button { modello.scegliGruppo(scelto ? nil : g) } label: {
                         HStack(spacing: 5) {
                             Circle().fill(ColoreGruppo.colore(gi.colore)).frame(width: 8, height: 8)
-                            Text(gi.nome).font(.caption)
+                            Text(gi.nomeVisto(inglese: Lingua.condivisa.codice != "it")).font(.caption)
                             Text("\(gi.membri.count)").font(.caption).foregroundStyle(.secondary)
                         }
                         .padding(.horizontal, 8)
@@ -710,8 +711,8 @@ struct VistaMappa: View {
                         .contentShape(Capsule())
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel(tr("Gruppo \(gi.nome), \(gi.membri.count) memorie",
-                                           "Group \(gi.nome), \(gi.membri.count) memories"))
+                    .accessibilityLabel(tr("Gruppo \(gi.nomeVisto(inglese: Lingua.condivisa.codice != "it")), \(gi.membri.count) memorie",
+                                           "Group \(gi.nomeVisto(inglese: Lingua.condivisa.codice != "it")), \(gi.membri.count) memories"))
                     .help(tr("Inquadra il gruppo", "Frame the group"))
                 }
             }

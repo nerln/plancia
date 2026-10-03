@@ -12,15 +12,19 @@
 # finestra e' sempre la stessa e il fattore di scala e' 2: 2400x1830 fisici, come i
 # file gia' nel repo.
 #
-# Le viste sono quelle della dashboard di oggi (web/app.js, `views.*`): Oggi, Task
-# (`#/lavagna`), Progetti, Memoria (l'elenco e il grafo, `?memoria=grafo`) e la
-# ricerca (`#/cerca?q=`). Nessun ritaglio: uno scatto e' la finestra, non un pezzo di
-# una pagina piu' alta che si tagliava a un offset misurato una volta a mano.
+# Gli scatti sono del WEB (quelli dell'app Mac si fanno con tools/scatti-mac.sh). Le viste
+# sono quelle della dashboard di oggi (web/app.js, `views.*`): Oggi, Task (`#/lavagna`),
+# Memoria col grafo (`?memoria=grafo`) e la ricerca (`#/cerca?q=`). Nessun ritaglio: uno
+# scatto e' la finestra, non un pezzo di una pagina piu' alta che si tagliava a un offset
+# misurato una volta a mano.
 #
 # Dove scrive (tutte facoltative):
 #   PLANCIA_SCATTI_OUT    cartella degli scatti          (default: docs/ del repo)
 #   PLANCIA_SCATTI_SITE   cartella delle copie a 1600 px (default: site/img/ del repo;
 #                         vuota per non farle)
+#   PLANCIA_CHROME        il browser: di default chrome-headless-shell di puppeteer se c'e'
+#                         (non e' un'app: niente portachiavi, niente copie in /private/var),
+#                         altrimenti Google Chrome
 #   PLANCIA_DEMO_HOME     l'archivio finto               (default: $TMPDIR/plancia-demo)
 #   PLANCIA_DEMO_PORT     la porta del server finto      (default: 7844)
 #   PLANCIA_DEMO_LANG     la lingua della dashboard      (default: en)
@@ -57,8 +61,15 @@ if [ "$(cd "$CASA" && pwd -P)" = "$VERO" ]; then
 fi
 
 if [ "$CONTROLLA" = 0 ]; then
-  CHROME="${PLANCIA_CHROME:-/Applications/Google Chrome.app/Contents/MacOS/Google Chrome}"
-  [ -x "$CHROME" ] || { echo "serve Google Chrome per gli scatti" >&2; exit 1; }
+  CHROME="${PLANCIA_CHROME:-}"
+  if [ -z "$CHROME" ]; then
+    # l'ultima versione di chrome-headless-shell di puppeteer, se ce n'e' una
+    for c in "$(ls -d "${PLANCIA_CHROME_CACHE:-$HOME/.cache/puppeteer}"/chrome-headless-shell/*/*/chrome-headless-shell 2>/dev/null | sort | tail -1)"; do
+      [ -x "$c" ] && CHROME="$c"
+    done
+  fi
+  [ -n "$CHROME" ] || CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+  [ -x "$CHROME" ] || { echo "serve Google Chrome (o chrome-headless-shell) per gli scatti" >&2; exit 1; }
   mkdir -p "$FUORI"
 fi
 
@@ -138,7 +149,7 @@ if [ "$CONTROLLA" = 1 ]; then
   for coppia in "Oggi:/api/overview:d['stats']['progetti_attivi']" \
                 "Task:/api/tasks:len(d)" \
                 "Progetti:/api/projects:len(d)" \
-                "Ricerca:/api/search?q=incremental%20rebuild:len(d) if isinstance(d, list) else len(d.get('risultati', d))"; do
+                "Ricerca:/api/search?q=rollback:len(d) if isinstance(d, list) else len(d.get('risultati', d))"; do
     nome="${coppia%%:*}"; resto="${coppia#*:}"; url="${resto%%:*}"; espr="${resto#*:}"
     n="$(leggi "$url" | numero "$espr" 2>/dev/null || echo 0)"
     echo "    $nome: $n"
@@ -192,25 +203,22 @@ scatta() {  # scatta <vista> <file> [query-string, es. "&memoria=grafo"]
 }
 
 echo "==> scatti in $FUORI"
-scatta oggi dashboard.png
-scatta lavagna board.png
-scatta progetti projects.png
-scatta memoria memoria.png
-scatta memoria grafo.png "&memoria=grafo"
+scatta oggi web-oggi.png
+scatta lavagna web-task.png
+scatta memoria web-memoria.png "&memoria=grafo"
 # Con la casella vuota lo scatto della ricerca non mostra niente: la domanda si passa
 # nell'indirizzo, che e' la stessa cosa che serve per salvarsi una ricerca.
-scatta 'cerca?q=incremental%20rebuild' cerca.png
+scatta 'cerca?q=rollback' web-cerca.png
 
 # Il sito usa le stesse immagini a meta' risoluzione. Farlo qui e non a mano e' il
-# motivo per cui le sue erano rimaste indietro di una settimana.
+# motivo per cui le sue erano rimaste indietro di una settimana. Solo quelle che il
+# sito mostra davvero.
 if [ -n "$SITO" ]; then
   echo "==> copie per il sito, a 1600 px, in $SITO"
   mkdir -p "$SITO"
-  for coppia in dashboard.png:today.png board.png:board.png projects.png:projects.png \
-                memoria.png:memoria.png grafo.png:grafo.png cerca.png:cerca.png; do
-    da="${coppia%%:*}"; a="${coppia##*:}"
-    sips -Z 1600 "$FUORI/$da" --out "$SITO/$a" >/dev/null
-    echo "    $a"
+  for f in web-memoria.png; do
+    sips -Z 1600 "$FUORI/$f" --out "$SITO/$f" >/dev/null
+    echo "    $f"
   done
 fi
 

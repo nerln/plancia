@@ -24,6 +24,7 @@ struct StatoDisegno {
     var scuro: Bool
     /// Stile Legno: lo sfondo e' la texture, le regioni vogliono un po' piu' di corpo.
     var legno: Bool
+    var inglese: Bool
 }
 
 enum DisegnoMappa {
@@ -313,7 +314,7 @@ enum DisegnoMappa {
             if quanti == 0 { continue }
             let gi = info.gruppi[g]
             // il corpo cambia con lo zoom: si risolve il testo con un font semantico e lo si scala
-            let titolo = Text(gi.nome).font(.title3.weight(.semibold))
+            let titolo = Text(gi.nomeVisto(inglese: stato.inglese)).font(.title3.weight(.semibold))
                 .foregroundStyle(ColoreGruppo.testo(gi.colore, scuro: stato.scuro))
             let numero = Text("\(quanti)").font(.callout)
                 .foregroundStyle(Color.secondary)

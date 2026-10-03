@@ -64,13 +64,15 @@ def esegui(reale) -> None:
 
 def _esegui(prova) -> None:
     sh = (RADICE / "tools" / "scatti.sh").read_text("utf-8")
+    sh_mac = (RADICE / "tools" / "scatti-mac.sh").read_text("utf-8")
     app = (RADICE / "web" / "app.js").read_text("utf-8")
     viste = set(re.findall(r"^views\.(\w+)\s*=", app, re.M))
     fotografate = re.findall(r"^scatta\s+'?([a-z]+)", sh, re.M)
     file_scritti = re.findall(r"^scatta\s+\S+\s+(\S+\.png)", sh, re.M)
+    file_scritti_mac = re.findall(r"^metti\s+\S+\s+\S+\s+(\S+\.png)", sh_mac, re.M)
 
-    prova("scatti: lo script fotografa almeno le cinque viste di oggi",
-          {"oggi", "lavagna", "progetti", "memoria", "cerca"} <= set(fotografate), str(fotografate))
+    prova("scatti: lo script fotografa le quattro viste del web (oggi, task, memoria col grafo, ricerca)",
+          {"oggi", "lavagna", "memoria", "cerca"} <= set(fotografate), str(fotografate))
     prova("scatti: ogni vista fotografata esiste nel web di oggi (la ricerca e' un indirizzo)",
           all(v in viste or v == "cerca" for v in fotografate), str(sorted(set(fotografate) - viste)))
     prova("scatti: niente ritagli di una pagina piu' alta (crop, offset misurati a mano)",
@@ -81,8 +83,26 @@ def _esegui(prova) -> None:
           "memoria=grafo" in sh and "get('memoria') === 'grafo'" in app)
     readme = (RADICE / "README.md").read_text("utf-8") + (RADICE / "README.it.md").read_text("utf-8")
     mostrati = set(re.findall(r"\(docs/([\w-]+\.png)\)", readme))
-    prova("scatti: i file che i due README mostrano li scrive lo script",
-          bool(mostrati) and mostrati <= set(file_scritti), str(sorted(mostrati - set(file_scritti))))
+    prova("scatti: i file che i due README mostrano li scrivono tools/scatti.sh (web) e tools/scatti-mac.sh (app)",
+          bool(mostrati) and mostrati <= set(file_scritti) | set(file_scritti_mac),
+          str(sorted(mostrati - set(file_scritti) - set(file_scritti_mac))))
+    prova("scatti: ogni immagine che scrivono gli script e' mostrata da entrambi i README (nessuna orfana in docs/)",
+          set(file_scritti) | set(file_scritti_mac) <= mostrati
+          and {f.name for f in (RADICE / "docs").glob("*.png")} == mostrati,
+          str(sorted({f.name for f in (RADICE / "docs").glob("*.png")} ^ mostrati)))
+    in_it = set(re.findall(r"\(docs/([\w-]+\.png)\)", (RADICE / "README.it.md").read_text("utf-8")))
+    in_en = set(re.findall(r"\(docs/([\w-]+\.png)\)", (RADICE / "README.md").read_text("utf-8")))
+    prova("scatti: i due README mostrano le stesse immagini", in_it == in_en, str(sorted(in_it ^ in_en)))
+    prova("scatti: nessun PNG di docs/ pesa piu' di 1 MB",
+          all(f.stat().st_size <= 1_000_000 for f in (RADICE / "docs").glob("*.png")),
+          str([f.name for f in (RADICE / "docs").glob("*.png") if f.stat().st_size > 1_000_000]))
+    prova("scatti: scatti-mac.sh non lancia l'app senza un ambiente suo (HOME, PLANCIA_HOME, CLAUDE_CONFIG_DIR, CODEX_HOME), "
+          "si rifiuta della 7773 e dell'archivio vero",
+          all(x in sh_mac for x in ('export PLANCIA_HOME=', 'export HOME=', 'export CLAUDE_CONFIG_DIR=',
+                                    'export CODEX_HOME=', '"7773"', 'archivio vero', '--istantanee'))
+          and sh_mac.index("export HOME=") < sh_mac.index('"$APP/Contents/MacOS/Plancia" --istantanee'))
+    prova("scatti: scatti-mac.sh fissa lingua, stile e dimensione del testo sulla riga di comando",
+          all(x in sh_mac for x in ("--lingua en", "--stile", "--testo 3")))
     prova("scatti: l'archivio finto si rifiuta di essere quello vero e non tocca ~/.plancia",
           "archivio vero" in sh and "7773" in sh and "plancia.db" in sh)
 

@@ -54,7 +54,7 @@ struct ProvaJarvis {
 
     @MainActor static func esegui() async {
         let args = CommandLine.arguments
-        guard args.count >= 4 else { print("uso: prova-jarvis <cartella> chiaro|scuro tutto|spento"); exit(2) }
+        guard args.count >= 4 else { print("uso: prova-jarvis <cartella> chiaro|scuro tutto|spento|scene"); exit(2) }
         let cartella = URL(fileURLWithPath: args[1])
         let aspetto = args[2] == "scuro" ? "scuro" : "chiaro"
         let modo = args[3]
@@ -62,11 +62,12 @@ struct ProvaJarvis {
 
         // aspetto e lingua solo per questa esecuzione, mai nelle preferenze vere
         var dominio = UserDefaults.standard.volatileDomain(forName: UserDefaults.argumentDomain)
-        dominio["lingua"] = "it"
+        let lingua = ProcessInfo.processInfo.environment["PLANCIA_PROVA_LINGUA"] == "en" ? "en" : "it"
+        dominio["lingua"] = lingua
         dominio["jarvisAscoltaSubito"] = true
         dominio["jarvisConversazione"] = false
         UserDefaults.standard.setVolatileDomain(dominio, forName: UserDefaults.argumentDomain)
-        Lingua.condivisa.codice = "it"
+        Lingua.condivisa.codice = lingua
         NSApp.appearance = NSAppearance(named: aspetto == "scuro" ? .darkAqua : .aqua)
 
         let pannello = JarvisPanel()
@@ -102,6 +103,8 @@ struct ProvaJarvis {
         }
         if let a = altezze[.lunga] { prova("una risposta lunga scorre e non fa esplodere il pannello", a < 640, "\(a)") }
 
+        // "scene": solo le scene fisse, senza server (servono alle schermate del README)
+        if modo == "scene" { return }
         await sicurezza(pannello, cartella, aspetto, &azioni)
     }
 

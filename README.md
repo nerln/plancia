@@ -18,7 +18,42 @@ Swift for the app.
 
 [Italiano](README.it.md)
 
-![The dashboard](docs/dashboard.png)
+![Plancia for Mac: Today, with one row per project](docs/mac-oggi.png)
+
+*Every screenshot in this README is the app running on the demonstration archive
+(`tools/demo-data.py`), never on anyone's real data.*
+
+## The Mac app
+
+Plancia 2.0 is a native SwiftUI app for macOS 26 or later: the system controls and the
+Liquid Glass materials, a sidebar with six sections, the system search field in the
+toolbar and an inspector on the right. No logo, no web page inside a window.
+
+**Memory as a map.** Every note is a node, coloured by kind, and every project (or kind
+of note, for the ones that belong to none) is an island with its name on the edge. The
+links between islands are drawn as ribbons, so you see at a glance which projects share
+what you know. Hover lights a note and its neighbours, drag a node and its island follows,
+pinch or scroll to zoom. The physics runs off the main thread and stops by itself when
+the picture is still.
+
+![The memory map: islands per project, ribbons for the links between them](docs/mac-memoria.png)
+
+Zoom in and the nodes carry a short human title instead of their file name:
+
+![One island up close, with the titles of its notes](docs/mac-memoria-isola.png)
+
+**Wood.** Settings has a Style: System, or Wood, a modern take on the skeuomorphic dashboard
+of the app icon. Mahogany boards in the sidebar and under the toolbar, solid brass for the
+selection, warm paper for the content. Controls and glass stay the system's.
+
+![The Wood style](docs/mac-legno.png)
+
+**Light and dark**, and text size on ⌘+, ⌘- and ⌘0:
+
+![The memory map in dark](docs/mac-scuro.png)
+
+The sections have their own pictures further down: [Search](#search-inside-what-was-said),
+[Jarvis](#jarvis), [All tasks](#all-tasks) and [Projects](#projects).
 
 ## What it reads
 
@@ -138,6 +173,23 @@ The commands Plancia builds for each system are covered by the suite, but Window
 Linux have had far less real use than macOS: `plancia doctor` tells you what is
 connected.
 
+## The dashboard in the browser
+
+The same data in a browser, on any system with Python: `python3 bin/plancia serve --open`
+(`python bin/plancia serve --open` on Windows). It follows the Mac app: system fonts, six
+sections in a sidebar, Today as one reading column, Tasks as a table with a detail panel,
+Memory with a physics graph on canvas, search in the top field. It installs as a web app
+from the browser menu. This is what Windows and Linux use, and a Mac that cannot run the
+2.0 app.
+
+![Today in the browser](docs/web-oggi.png)
+
+![Tasks in the browser, with the detail panel](docs/web-task.png)
+
+![The memory graph in the browser](docs/web-memoria.png)
+
+![Search in the browser](docs/web-cerca.png)
+
 ## The three ways in
 
 **The app.** A native SwiftUI window (2.0, macOS 26 or later): a sidebar with
@@ -183,7 +235,7 @@ unchanged file.
 Every hit comes back verbatim with the file and the line it came from, so you
 reopen the moment instead of reading a summary of it.
 
-![Search](docs/cerca.png)
+![Search: tasks, sessions, memory and the turns themselves](docs/mac-ricerca.png)
 
 ```bash
 plancia cerca "the blending denominator"
@@ -274,6 +326,8 @@ group by anything but a flat list.
 your voice while it listens, the answer scrolls in as it arrives, and it starts
 speaking with the first sentence, not when the whole answer is done.
 
+![Jarvis asking for confirmation before it sends an agent](docs/mac-jarvis.png)
+
 Jarvis reads, and proposes. The model behind the panel is read-only: the tools that
 write are denied by name, not just left off a list. Phrases like "note a task", "I
 did that", "archive Atlas", "do it" or "resume task 4" never run on their own. Each
@@ -327,7 +381,7 @@ hands-free mode. This is the other half: it speaks back, and it can act once you
 
 ## All tasks
 
-![All tasks](docs/board.png)
+![All tasks, with Resume in the inspector](docs/mac-task.png)
 
 Claude Code keeps its task list in one folder, Codex keeps its goals in a
 different database, Plancia has its own. None of the three knows the other two
@@ -454,7 +508,7 @@ declared yourself is never touched. By voice: "archive the video project", or
 
 ## Projects
 
-![Projects](docs/projects.png)
+![Projects grouped by area, with the selected one on the right](docs/mac-progetti.png)
 
 A project is whatever you say it is: a GitHub repo, a folder, a memory note, or
 all three. `plancia init` proposes a map from what it finds; you correct it in
@@ -657,7 +711,7 @@ warning each time). The full list is in the docstring of `plancia/compartimenti.
 git config core.hooksPath .githooks
 ```
 
-Turns on the hook that runs `python3 tools/prova.py` before every push: 4921
+Turns on the hook that runs `python3 tools/prova.py` before every push: 4939
 checks in a few minutes, against a throwaway archive that never touches
 yours. They cover the schema, the board, the proposals, the search index, the
 recap, the MCP surface and its token budget, every read route of the HTTP API,

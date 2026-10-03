@@ -15,6 +15,11 @@ enum JarvisProva {
     static var attivo: Bool {
         !(ProcessInfo.processInfo.environment["PLANCIA_JARVIS_PROVA"] ?? "").isEmpty
     }
+    /// PLANCIA_JARVIS_PROVA_SENZA_ETICHETTA=1 toglie dal pannello la sigla "prova": serve a chi
+    /// fotografa le scene per il README.
+    static var senzaEtichetta: Bool {
+        !(ProcessInfo.processInfo.environment["PLANCIA_JARVIS_PROVA_SENZA_ETICHETTA"] ?? "").isEmpty
+    }
     static var frase: String {
         let f = ProcessInfo.processInfo.environment["PLANCIA_JARVIS_PROVA_FRASE"] ?? ""
         return f.isEmpty ? "ricordami di chiamare Mario" : f
