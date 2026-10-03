@@ -231,10 +231,13 @@ always works. The other passes the same data to Claude Code in headless mode
 (`claude -p`) and gets a better told version in about eight seconds. If Claude
 does not answer in time, the template takes over and you never notice.
 
-Two engines for the voice. [Voicebox](https://github.com/jamiepine/voicebox) if
-its local backend is up, so you get your own cloned voice. Otherwise the macOS
-system voices, which are always there, need no setup and start instantly. Both
-handle Italian, English, Spanish, French, German and Portuguese.
+Two kinds of voice. A local neural one when it answers: Kokoro (not installed by
+default, see Jarvis below), then Pocket, then
+[Voicebox](https://github.com/jamiepine/voicebox) if its backend is up, which is how
+you get your own cloned voice. Otherwise the macOS system voices, which are always
+there, need no setup and start instantly. The system voices handle Italian,
+English, Spanish, French, German and Portuguese; each neural engine covers the
+languages its own voices do.
 
 ```bash
 plancia recap --speak            # today, out loud
@@ -654,7 +657,7 @@ warning each time). The full list is in the docstring of `plancia/compartimenti.
 git config core.hooksPath .githooks
 ```
 
-Turns on the hook that runs `python3 tools/prova.py` before every push: 4483
+Turns on the hook that runs `python3 tools/prova.py` before every push: 4917
 checks in a few minutes, against a throwaway archive that never touches
 yours. They cover the schema, the board, the proposals, the search index, the
 recap, the MCP surface and its token budget, every read route of the HTTP API,

@@ -339,10 +339,13 @@ interattiva (`claude -p`) e restituisce una versione raccontata meglio in otto
 secondi circa. Se Claude non risponde in tempo si usa il primo e non te ne
 accorgi.
 
-Due motori per la voce. [Voicebox](https://github.com/jamiepine/voicebox) se il
-suo backend locale risponde, così esce la tua voce clonata. Altrimenti le voci di
-sistema di macOS, che ci sono sempre, non chiedono niente e partono subito. Tutte
-e due reggono italiano, inglese, spagnolo, francese, tedesco e portoghese.
+Due tipi di voce. Una neurale locale quando risponde: Kokoro (non installata di
+serie, vedi Jarvis più sotto), poi Pocket, poi
+[Voicebox](https://github.com/jamiepine/voicebox) se il suo backend è su, ed è così
+che esce la tua voce clonata. Altrimenti le voci di sistema di macOS, che ci sono
+sempre, non chiedono niente e partono subito. Le voci di sistema reggono italiano,
+inglese, spagnolo, francese, tedesco e portoghese; ogni motore neurale copre le
+lingue delle sue voci.
 
 ```bash
 plancia recap --speak            # oggi, ad alta voce
@@ -771,7 +774,7 @@ git config core.hooksPath .githooks
 ```
 
 Accende il gancio che fa girare `python3 tools/prova.py` prima di ogni push:
-4483 controlli in pochi minuti, su un archivio finto che non tocca
+4917 controlli in pochi minuti, su un archivio finto che non tocca
 il tuo.
 
 ## Licenza

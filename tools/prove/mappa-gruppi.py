@@ -149,8 +149,13 @@ def _prove_disposizione(prova, disposizione) -> None:
           sovrapposti == len(nomi), "%d posizioni per %d nodi" % (sovrapposti, len(nomi)))
     senza = disposizione.calcola(nomi, archi)
     giusti0, vuoto0, _, _ = _qualita(nomi, archi, gruppi, senza)
+    # Il confronto che serve e' il vuoto fra i gruppi: senza `gruppi` le isole si toccano
+    # (vuoto negativo), con `gruppi` no. La quota di nodi "giusti" senza gruppi cambia con la
+    # versione di Python (con 3.9 e' 0,97, con 3.12 e' 1,00, perche' sum() somma i float in
+    # modo diverso), quindi si chiede solo che non sia migliore.
     prova("gruppi: senza `gruppi` la disposizione di prima non separa i gruppi (il confronto che serve)",
-          giusti0 < giusti and vuoto0 < vuoto, "senza %.2f/%.3f, con %.2f/%.3f" % (giusti0, vuoto0, giusti, vuoto))
+          giusti0 <= giusti and vuoto0 < 0.01 < vuoto,
+          "senza %.2f/%.3f, con %.2f/%.3f" % (giusti0, vuoto0, giusti, vuoto))
     prova("gruppi: con un gruppo solo (o nessuno) vale la disposizione di sempre",
           disposizione.calcola(nomi, archi, gruppi={x: "tutti" for x in nomi}) == senza
           and disposizione.calcola(nomi, archi, gruppi={}) == senza)

@@ -75,6 +75,8 @@ mkdir -p "$(dirname "$LUCCHETTO")"
 echo "==> compilo il pannello"
 SORGENTI=()
 while IFS= read -r f; do SORGENTI+=("$f"); done < <(find "$RADICE/mac/Sources/Core" -name '*.swift' | sort)
+# Core/ArchivioDati.swift tiene in cache DatiMemoria, che sta con i dati puri della Memoria
+SORGENTI+=("$RADICE/mac/Sources/Viste/MemoriaDati.swift")
 SORGENTI+=("$RADICE/mac/Sources/Sistema/Conf.swift" "$RADICE/mac/Sources/Sistema/Cattura.swift")
 while IFS= read -r f; do SORGENTI+=("$f"); done < <(ls "$RADICE"/mac/Sources/Sistema/[Jj]arvis*.swift | sort)
 SORGENTI+=("$RADICE/mac/Prove/ProvaPannelloJarvis.swift")
