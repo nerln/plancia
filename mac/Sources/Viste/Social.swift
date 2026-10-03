@@ -52,7 +52,7 @@ private func nomePiattaforma(_ p: String?) -> String {
     }
 }
 
-private enum FiltroPost: String, CaseIterable, Identifiable {
+enum FiltroPost: String, CaseIterable, Identifiable {
     case inCoda, pubblicati, tutti
     var id: String { rawValue }
     @MainActor var titolo: String {
@@ -77,16 +77,24 @@ private extension Post {
     var percorsoImmagine: String { (media ?? "").trimmed }
 }
 
+extension Archivio {
+    /// Il post scelto, per l'Inspector della finestra (Guscio/Ispettore.swift).
+    func postSceltoOra() -> Post? {
+        guard let id = postScelto else { return nil }
+        return post.first { $0.identita == id }
+    }
+}
+
 // MARK: - la vista
 
 struct VistaSocial: View {
     @Environment(Archivio.self) private var archivio
 
-    @State private var filtro: FiltroPost = .inCoda
-    @State private var nuovo = false
+    private let c = ControlliVista.condiviso
 
     /// I post che passano il filtro, per stato nell'ordine della coda.
     private var gruppi: [(stato: String, post: [Post])] {
+        let filtro = c.filtroPost
         let visibili = archivio.post.filter { filtro.passa($0.stato) }
         return statiPost.compactMap { s in
             let p = visibili.filter { $0.stato == s }.sorted { ($0.updatedAt ?? "") > ($1.updatedAt ?? "") }
@@ -94,13 +102,9 @@ struct VistaSocial: View {
         }
     }
 
-    private var scelto: Post? {
-        guard let id = archivio.postScelto else { return nil }
-        return archivio.post.first { $0.identita == id }
-    }
-
     var body: some View {
         @Bindable var a = archivio
+        @Bindable var cc = c
         let elenco = gruppi
         Group {
             if elenco.isEmpty {
@@ -120,33 +124,7 @@ struct VistaSocial: View {
                 .listStyle(.inset)
             }
         }
-        .inspector(isPresented: mostraDettaglio) {
-            if let p = scelto {
-                DettaglioPost(post: p)
-                    .inspectorColumnWidth(min: 280, ideal: 340, max: 480)
-            }
-        }
-        .toolbar {
-            ToolbarItem(placement: .automatic) {
-                Picker(tr("Mostra", "Show"), selection: $filtro) {
-                    ForEach(FiltroPost.allCases) { Text($0.titolo).tag($0) }
-                }
-                .pickerStyle(.segmented)
-            }
-            ToolbarItem(placement: .primaryAction) {
-                Button { nuovo = true } label: {
-                    Label(tr("Nuova bozza", "New draft"), systemImage: "plus")
-                }
-                .keyboardShortcut("n", modifiers: .command)
-                .help(tr("Nuova bozza", "New draft"))
-            }
-        }
-        .sheet(isPresented: $nuovo) { NuovaBozza() }
-    }
-
-    private var mostraDettaglio: Binding<Bool> {
-        Binding(get: { scelto != nil },
-                set: { if !$0 { archivio.postScelto = nil } })
+        .sheet(isPresented: $cc.nuovaBozza) { NuovaBozza() }
     }
 
     @ViewBuilder private var vuoto: some View {
@@ -162,7 +140,7 @@ struct VistaSocial: View {
             } else {
                 ContentUnavailableView(tr("Nessun post", "No posts"), systemImage: "text.bubble")
             }
-        } else if filtro == .inCoda {
+        } else if c.filtroPost == .inCoda {
             ContentUnavailableView(tr("Coda vuota", "Queue is empty"), systemImage: "checkmark.circle")
         } else {
             ContentUnavailableView.search
@@ -259,7 +237,7 @@ private enum Miniatura {
 
 // MARK: - il dettaglio (Inspector)
 
-private struct DettaglioPost: View {
+struct DettaglioPost: View {
     let post: Post
     @Environment(Archivio.self) private var archivio
 
@@ -345,7 +323,7 @@ private struct DettaglioPost: View {
 
 // MARK: - nuova bozza (⌘N)
 
-private struct NuovaBozza: View {
+struct NuovaBozza: View {
     @Environment(Archivio.self) private var archivio
     @Environment(\.dismiss) private var dismiss
 

@@ -414,6 +414,8 @@ struct Scheda: Decodable, Hashable {
     @Lax var links: String?
     @Lax var progetto: String?
     @Lax var projectKey: String?
+    /// Il titolo umano della memoria (non la sigla del file).
+    @Lax var titolo: String?
     // solo /api/knowledge?name=
     @Lax var body: String?
     @Lax var path: String?
@@ -438,6 +440,7 @@ struct NodoMemoria: Decodable, Hashable {
     @LaxLista var cartelle: [String]?
     @LaxLista var dove: [String]?
     @Lax var richiamabile: Bool?
+    @Lax var titolo: String?
     @Lax var x: Double?
     @Lax var y: Double?
     var identita: String { nome ?? "?" }
@@ -654,6 +657,8 @@ struct SchedaTrovata: Decodable, Hashable {
     @Lax var project: String?
     @Lax var ts: String?
     @Lax var snip: String?
+    /// Solo per le memorie: la sigla del file (il `title` e' il titolo umano).
+    @Lax var nome: String?
     var identita: String { "\(kind ?? "?")-\(refId ?? 0)" }
 }
 

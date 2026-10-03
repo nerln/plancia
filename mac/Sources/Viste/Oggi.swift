@@ -31,16 +31,6 @@ private struct PropostaCompleta: Decodable {
     @Lax var azione: AzioneCompleta?
 }
 
-/// Un lancio in background in attesa del "si" dell'utente.
-private struct LancioDaConfermare: Identifiable {
-    let id = UUID()
-    let titolo: String
-    let progetto: String?
-    let agente: String
-    let cwd: String?
-    let taskId: Int?
-}
-
 private struct Esito: Identifiable {
     let id = UUID()
     let testo: String
@@ -74,7 +64,7 @@ struct VistaOggi: View {
     @State private var lettura: Task<Void, Never>?
     @State private var occupate: Set<String> = []
     @State private var esito: Esito?
-    @State private var daConfermare: LancioDaConfermare?
+    @State private var daConfermare: LancioPronto?
 
     var body: some View {
         Group {
@@ -90,18 +80,16 @@ struct VistaOggi: View {
             if !Task.isCancelled { esito = nil }
         }
         .confirmationDialog(
-            tr("Avviare un lancio in background?", "Start a background run?"),
+            daConfermare?.titolo ?? "",
             isPresented: Binding(get: { daConfermare != nil },
                                  set: { if !$0 { daConfermare = nil } }),
             titleVisibility: .visible,
             presenting: daConfermare) { l in
-            Button(tr("Avvia senza modificare file", "Start without changing files")) {
-                Task { await lancia(l) }
-            }
+            Button(l.azione) { Task { await lancia(l) } }
             Button(tr("Annulla", "Cancel"), role: .cancel) {}
         } message: { l in
-            Text(tr("Parte \(nomeAgente(l.agente)) in background, in sola lettura.",
-                    "\(nomeAgente(l.agente)) starts in the background, read-only."))
+            // il piano PRIMA di partire: la sessione originale, una copia, o una nuova
+            Text(l.testo)
         }
     }
 
@@ -206,7 +194,7 @@ struct VistaOggi: View {
                     Button(tr("Mostra altri \(totale - mostrate)", "Show \(totale - mostrate) more")) {
                         mostraTutti = true
                     }
-                    .buttonStyle(.link)
+                    .collegamento()
                 }
             } header: {
                 VStack(alignment: .leading, spacing: 12) {
@@ -306,13 +294,9 @@ struct VistaOggi: View {
     private func etichetta(_ p: Proposta) -> String {
         switch p.azione?.tipo {
         case "manda": return tr("Riprendi", "Resume")
-        case "rilancia": return tr("Rilancia", "Retry")
+        case "rilancia": return tr("Rilancia", "Relaunch")
         default: return tr("Apri", "Open")
         }
-    }
-
-    private func nomeAgente(_ a: String) -> String {
-        a.lowercased() == "codex" ? "Codex" : "Claude"
     }
 
     // MARK: stati vuoti
@@ -396,6 +380,12 @@ struct VistaOggi: View {
 
         case "manda":
             if let t = az?.taskId {
+                // nel Terminale, nella sessione del task; se non c'e' piu' lo dice prima
+                if let piano = await archivio.pianoRipresa(task: t), piano.modo == "nuova" {
+                    daConfermare = LancioPronto(nuovaNelTerminale: "/api/riprendi/\(t)", piano: piano,
+                                                agente: az?.agente ?? "claude")
+                    return
+                }
                 let r = await archivio.scriviRisposta("POST", "/api/riprendi/\(t)", corpo: ["apri": true])
                 switch r {
                 case .success(let j):
@@ -408,39 +398,51 @@ struct VistaOggi: View {
                 // senza un task di Plancia non c'e' una sessione da riprendere: parte un lancio
                 let titolo = (az?.titolo ?? p.azione?.titolo ?? p.testo ?? "").trimmed
                 guard !titolo.isEmpty else { return }
-                daConfermare = LancioDaConfermare(
-                    titolo: titolo, progetto: az?.progetto ?? p.azione?.progetto,
-                    agente: az?.agente ?? "claude", cwd: nil, taskId: nil)
+                var corpo: [String: Any] = ["titolo": titolo, "agente": az?.agente ?? "claude",
+                                            "scrive": false, "lang": Lingua.condivisa.codice]
+                if let k = az?.progetto ?? p.azione?.progetto, !k.isEmpty { corpo["progetto"] = k }
+                await mostraPiano(percorso: "/api/cantiere", corpo: corpo, agente: az?.agente ?? "claude")
             }
 
         case "rilancia":
+            // il lancio riprende la conversazione in cui era girato (o quella del suo task);
+            // il server lo sa dall'id del lancio
             guard let id = az?.run ?? p.azione?.run else { return }
-            do {
-                let l = try await archivio.cliente.ottieni(
-                    Lancio.self, "/api/runs/\(id)", compartimento: archivio.compartimento)
-                let titolo = String((l.prompt ?? p.testo ?? "").trimmed.prefix(200))
-                guard !titolo.isEmpty else { return }
-                daConfermare = LancioDaConfermare(
-                    titolo: titolo, progetto: nil, agente: l.agente ?? "claude",
-                    cwd: l.cwd, taskId: l.taskId)
-            } catch {
-                esito = Esito(testo: error.localizedDescription, errore: true)
-            }
+            let corpo: [String: Any] = ["run": id, "scrive": false, "lang": Lingua.condivisa.codice]
+            await mostraPiano(percorso: "/api/cantiere", corpo: corpo, agente: "claude")
 
         default:
             break
         }
     }
 
-    private func lancia(_ l: LancioDaConfermare) async {
-        var corpo: [String: Any] = ["titolo": l.titolo, "agente": l.agente, "scrive": false,
-                                    "lang": Lingua.condivisa.codice]
-        if let k = l.progetto, !k.isEmpty { corpo["progetto"] = k }
-        if let c = l.cwd, !c.isEmpty { corpo["cwd"] = c }
-        if let t = l.taskId { corpo["task_id"] = t }
-        let r = await archivio.scriviRisposta("POST", "/api/cantiere", corpo: corpo)
+    /// Chiede al server cosa farebbe il lancio (anteprima) e lo mostra prima di partire.
+    private func mostraPiano(percorso: String, corpo: [String: Any], agente: String) async {
+        guard let piano = await archivio.anteprima(percorso, corpo) else {
+            esito = Esito(testo: tr("Non riesco a sapere cosa farebbe il lancio: il server non risponde.",
+                                    "Can't tell what the run would do: the server isn't answering."),
+                          errore: true)
+            return
+        }
+        if !piano.parte {
+            esito = Esito(testo: piano.frase, errore: false)
+            return
+        }
+        daConfermare = LancioPronto(percorso: percorso, corpo: corpo, piano: piano, agente: agente)
+    }
+
+    private func lancia(_ l: LancioPronto) async {
+        let r = await archivio.scriviRisposta("POST", l.percorso, corpo: l.corpo)
         switch r {
-        case .success: esito = Esito(testo: tr("Lancio avviato", "Run started"), errore: false)
+        case .success(let j):
+            if j["lanciato"]?.testo == "false" {
+                esito = Esito(testo: l.piano.frase, errore: false)   // nel frattempo si e' aperta
+            } else if l.corpo["apri"] != nil {
+                esito = Esito(testo: j["riga"]?.testo ?? j["messaggio"]?.testo ?? tr("Avviato", "Started"),
+                              errore: false)
+            } else {
+                esito = Esito(testo: tr("Lancio avviato. ", "Run started. ") + l.piano.frase, errore: false)
+            }
         case .failure(let e): esito = Esito(testo: e.localizedDescription, errore: true)
         }
     }

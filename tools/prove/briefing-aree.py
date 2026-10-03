@@ -339,7 +339,7 @@ def _prova_proposta_task_stagnante(prova):
 
 def _prova_azione_task_stagnante_eseguibile(prova):
     """L'azione della proposta task_stagnante deve essere uno dei tipi che
-    jarvis._esegui_proposta sa davvero eseguire (vai/rilancia/manda): non un
+    jarvis.conferma sa davvero eseguire (vai/rilancia/manda): non un
     tipo nuovo ('archivia') che nessuno gestisce e che jarvis.esegui('fallo')
     risponderebbe con un generico 'Fatto.' senza fare niente.
 
@@ -369,12 +369,18 @@ def _prova_azione_task_stagnante_eseguibile(prova):
     jarvis.cantiere.avvia = lambda conn, titolo, **kw: (
         chiamate.append((titolo, kw)) or {"run": 999})
     try:
-        esito = jarvis.esegui("fallo", lang="it", conn=conn)
+        # 22-SERVER: "fallo" prepara la scheda; l'agente parte con la conferma
+        scheda = jarvis.esegui("fallo", lang="it", conn=conn)
+        prima = len(chiamate)
+        esito = jarvis.conferma(scheda["proposta"]["id"], "it", conn=conn) \
+            if scheda.get("proposta") else scheda
     finally:
         jarvis.cantiere.avvia = originale
+    prova("jarvis.esegui('fallo') su task_stagnante prepara la scheda e non lancia niente da solo",
+          bool(scheda.get("proposta")) and prima == 0, str(scheda))
     prova("jarvis.esegui('fallo') su task_stagnante non torna la risposta generica 'Fatto.'",
           esito.get("risposta") != "Fatto.", str(esito))
-    prova("jarvis.esegui('fallo') su task_stagnante manda davvero un agente (cantiere.avvia)",
+    prova("confermata, la proposta task_stagnante manda davvero un agente (cantiere.avvia)",
           len(chiamate) == 1, str(chiamate))
 
 

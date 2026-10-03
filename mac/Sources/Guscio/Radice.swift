@@ -1,4 +1,4 @@
-// La finestra: barra laterale di sistema con le sei sezioni, il contenuto, la barra degli
+// La finestra: barra laterale (Guscio/Barra.swift) con le sei sezioni, il contenuto, la barra degli
 // strumenti (compartimento se attivi, Aggiorna), il campo di ricerca di sistema e lo stato
 // nel sottotitolo. Niente logo, niente pulsanti Tema o lingua, niente sfondi propri: i
 // materiali li danno i controlli standard.
@@ -9,7 +9,15 @@ struct Radice: View {
     @Environment(Archivio.self) private var archivio
     @Environment(Lingua.self) private var lingua
     @AppStorage("aspetto") private var aspetto = Aspetto.sistema.rawValue
+    @AppStorage(StileApp.chiave) private var stile = StileApp.sistema.rawValue
+    @AppStorage(DimensioneTesto.chiave) private var passoTesto = DimensioneTesto.predefinito
 
+    // La dimensione del testo scala il CONTENUTO di ogni colonna (barra laterale, vista, Inspector),
+    // non la finestra intera: la divisione fra le colonne e' di AppKit (NSSplitViewController),
+    // e dentro una vista ridimensionata con scaleEffect i suoi minimi e massimi non tornavano con
+    // quelli della finestra, e a certe misure (testo 85% o 95%, finestra 880x600) AppKit
+    // ricalcolava i vincoli senza fine e chiudeva l'app. Cosi' le colonne sono a misura vera e
+    // ognuna contiene una sola vista flessibile.
     var body: some View {
         @Bindable var a = archivio
         let sezione = Binding<Sezione?>(
@@ -18,17 +26,15 @@ struct Radice: View {
             set: { if let s = $0 { archivio.vai(s) } })
 
         NavigationSplitView {
-            List(selection: sezione) {
-                ForEach(Sezione.allCases) { s in
-                    Label(s.titolo, systemImage: s.simbolo)
-                        .badge(archivio.conteggio(s) ?? 0)
-                        .tag(s)
-                }
-            }
-            .listStyle(.sidebar)
-            .navigationSplitViewColumnWidth(min: 170, ideal: 200, max: 260)
+            BarraLaterale(selezione: sezione)
+                .listStyle(.sidebar)
+                .scalaTesto(passoTesto)
+                .navigationSplitViewColumnWidth(min: 170 * fattore, ideal: 200 * fattore, max: 260 * fattore)
         } detail: {
             contenuto
+                .scalaTesto(passoTesto)
+                .ispettoreFinestra()
+                .stileVista()
                 .navigationTitle(archivio.ricerca.trimmed.isEmpty ? archivio.sezione.titolo : tr("Ricerca", "Search"))
                 .navigationSubtitle(archivio.sottotitolo)
         }
@@ -36,22 +42,24 @@ struct Radice: View {
         .searchScopes($a.ambito, activation: .onSearchPresentation) {
             ForEach(AmbitoRicerca.allCases) { Text($0.titolo).tag($0) }
         }
-        .toolbar {
-            if archivio.compartimenti.attivi {
-                ToolbarItem(placement: .automatic) { selettoreCompartimento }
-            }
-            ToolbarItem(placement: .automatic) {
-                Button {
-                    Task { await archivio.aggiorna() }
-                } label: {
-                    Label(tr("Aggiorna", "Refresh"), systemImage: "arrow.clockwise")
-                }
-                .help(tr("Aggiorna", "Refresh"))
-            }
-        }
+        .modifier(BarraStrumenti())
         .onChange(of: archivio.ricerca) { archivio.avviaRicerca() }
         .task(id: archivio.sezione) { await archivio.carica(archivio.sezione) }
-        .preferredColorScheme((Aspetto(rawValue: aspetto) ?? .sistema).schema)
+        // Legno: la finestra e' sempre scura, la carta del contenuto e' chiara o scura (StileVista)
+        .preferredColorScheme(stile == StileApp.legno.rawValue ? .dark : (Aspetto(rawValue: aspetto) ?? .sistema).schema)
+        .background(FondoFinestra(legno: stile == StileApp.legno.rawValue, scuro: fondoScuro))
+    }
+
+    /// Di quanto sono ingrandite le colonne (1 = dimensione reale).
+    private var fattore: CGFloat { DimensioneTesto.fattore(passoTesto) }
+
+    /// Il legno della finestra: chiaro o scuro come la carta.
+    private var fondoScuro: Bool {
+        switch Aspetto(rawValue: aspetto) ?? .sistema {
+        case .scuro: return true
+        case .chiaro: return false
+        case .sistema: return AspettoSistema.condiviso.scuro
+        }
     }
 
     @ViewBuilder private var contenuto: some View {
@@ -68,6 +76,24 @@ struct Radice: View {
             }
         }
     }
+}
+
+
+/// La barra degli strumenti della finestra: la stessa in ogni sezione (Guscio/Controlli.swift).
+struct BarraStrumenti: ViewModifier {
+    @Environment(Archivio.self) private var archivio
+
+    func body(content: Content) -> some View {
+        content.toolbar {
+            if archivio.compartimenti.attivi {
+                ToolbarItem(placement: .automatic) { selettoreCompartimento }
+            }
+            ToolbarItem(placement: .automatic) { pulsanteAggiorna }
+            ToolbarItem(placement: .automatic) { PrimoControllo() }
+            ToolbarItem(placement: .automatic) { SecondoControllo() }
+            ToolbarItem(placement: .primaryAction) { AzioneSezione() }
+        }
+    }
 
     private var selettoreCompartimento: some View {
         let corrente = Binding<String>(
@@ -80,5 +106,14 @@ struct Radice: View {
         }
         .pickerStyle(.menu)
         .help(tr("Compartimento", "Compartment"))
+    }
+
+    private var pulsanteAggiorna: some View {
+        Button {
+            Task { await archivio.aggiorna() }
+        } label: {
+            Label(tr("Aggiorna", "Refresh"), systemImage: "arrow.clockwise")
+        }
+        .help(tr("Aggiorna", "Refresh"))
     }
 }

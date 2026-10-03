@@ -4,10 +4,11 @@
 //     problemi (doppie, senza legami, link rotti, quasi vuote, da scrivere);
 //   - a destra l'Inspector col fatto per intero, la cartella da cui viene e i legami
 //     cliccabili;
-//   - il grafo non e' la vista principale: e' il modo "Vicinato" (segmentato nella barra
-//     degli strumenti), che mette il fatto scelto al centro e i suoi legami su due
-//     livelli, al massimo una quindicina di nodi, con un layout radiale calcolato in un
-//     colpo solo (niente simulazione di forze);
+//   - il grafo non e' la vista principale: sono due modi (segmentati nella barra degli
+//     strumenti). "Vicinato" mette il fatto scelto al centro e i suoi legami su due livelli,
+//     al massimo una quindicina di nodi, con un layout radiale calcolato in un colpo solo.
+//     "Mappa" e' tutta la memoria con una fisica vera (MemoriaMappa.swift, MemoriaFisica.swift,
+//     MemoriaMotore.swift): nodi da trascinare, zoom a passi, livelli 1, 2 e Tutto;
 //   - "Prova la memoria" e' un pannello a comparsa nella barra degli strumenti.
 //
 // I dati vengono dallo Store (schede e mappa). Il corpo di un fatto si chiede al server
@@ -17,207 +18,16 @@
 import SwiftUI
 import AppKit
 
-// MARK: - tipi di fatto
-
-private enum TipoMemoria: String, CaseIterable {
-    case user, feedback, reference, project, altro
-
-    init(_ testo: String?) {
-        self = TipoMemoria(rawValue: (testo ?? "").lowercased()) ?? .altro
-    }
-
-    @MainActor var titolo: String {
-        switch self {
-        case .user: return tr("Chi sei", "About you")
-        case .feedback: return tr("Preferenze", "Preferences")
-        case .reference: return tr("Riferimenti", "References")
-        case .project: return tr("Progetti", "Projects")
-        case .altro: return tr("Altro", "Other")
-        }
-    }
-
-    @MainActor var singolare: String {
-        switch self {
-        case .user: return tr("Chi sei", "About you")
-        case .feedback: return tr("Preferenza", "Preference")
-        case .reference: return tr("Riferimento", "Reference")
-        case .project: return tr("Progetto", "Project")
-        case .altro: return tr("Altro", "Other")
-        }
-    }
-
-    var colore: Color {
-        switch self {
-        case .user: return .blue
-        case .feedback: return .orange
-        case .reference: return .green
-        case .project: return .purple
-        case .altro: return .gray
-        }
-    }
-}
-
-// MARK: - un fatto
-
-private struct FattoMemoria: Identifiable, Hashable {
-    let nome: String
-    let tipo: TipoMemoria
-    let descrizione: String
-    let aggiornata: String?
-    let progetto: String?
-    let progettoChiave: String?
-    let peso: Int?
-    let cartelle: [String]
-    let percorso: String?
-    let richiamabile: Bool?
-
-    var id: String { nome }
-
-    init(scheda: Scheda?, nodo: NodoMemoria?) {
-        nome = scheda?.name ?? nodo?.nome ?? "?"
-        tipo = TipoMemoria(scheda?.type ?? nodo?.tipo)
-        descrizione = ((scheda?.description ?? nodo?.descrizione) ?? "").trimmed
-        aggiornata = scheda?.updatedAt ?? nodo?.aggiornata
-        progetto = scheda?.progetto
-        progettoChiave = scheda?.projectKey
-        peso = nodo?.peso
-        cartelle = nodo?.dove ?? nodo?.cartelle ?? []
-        percorso = nodo?.path ?? scheda?.path
-        richiamabile = nodo?.richiamabile
-    }
-}
-
-private enum FiltroMemoria: String, CaseIterable, Identifiable {
-    case tutte, dueCartelle, senzaLegami, linkRotti, quasiVuote, daScrivere
-    var id: String { rawValue }
-
-    @MainActor var titolo: String {
-        switch self {
-        case .tutte: return tr("Tutte", "All")
-        case .dueCartelle: return tr("Doppie", "Duplicates")
-        case .senzaLegami: return tr("Senza legami", "No links")
-        case .linkRotti: return tr("Link rotti", "Broken links")
-        case .quasiVuote: return tr("Quasi vuote", "Nearly empty")
-        case .daScrivere: return tr("Da scrivere", "To write")
-        }
-    }
-
-    var simbolo: String {
-        switch self {
-        case .tutte: return "brain"
-        case .dueCartelle: return "doc.on.doc"
-        case .senzaLegami: return "link.badge.plus"
-        case .linkRotti: return "link"
-        case .quasiVuote: return "text.alignleft"
-        case .daScrivere: return "square.and.pencil"
-        }
-    }
-}
-
-private enum ModoMemoria: String, CaseIterable, Identifiable {
-    case elenco, vicinato
+enum ModoMemoria: String, CaseIterable, Identifiable {
+    case elenco, vicinato, mappa
     var id: String { rawValue }
     @MainActor var titolo: String {
-        self == .elenco ? tr("Elenco", "List") : tr("Vicinato", "Neighbours")
-    }
-}
-
-// MARK: - i dati, calcolati una volta per ogni disegno
-
-private struct DatiMemoria {
-    let fatti: [FattoMemoria]
-    let perNome: [String: FattoMemoria]
-    /// Legami in entrambe le direzioni, ordinati.
-    let vicini: [String: [String]]
-    /// Per ogni fatto, i legami che puntano a niente.
-    let rotti: [String: [String]]
-    let doppie: Set<String>
-    let orfane: Set<String>
-    let vuote: Set<String>
-    let conRotti: Set<String>
-    let daScrivere: [String]
-    let richiamabili: Int
-    let haMappa: Bool
-
-    init(schede: [Scheda], mappa: MappaMemoria?) {
-        var nodi: [String: NodoMemoria] = [:]
-        for n in mappa?.nodi ?? [] { nodi[n.identita] = n }
-
-        // una scheda per nome: se e' in due cartelle si tiene la piu' recente
-        var perScheda: [String: Scheda] = [:]
-        for s in schede {
-            let k = s.identita
-            if let v = perScheda[k], (v.updatedAt ?? "") >= (s.updatedAt ?? "") { continue }
-            perScheda[k] = s
-        }
-        var elenco = perScheda.values.map { FattoMemoria(scheda: $0, nodo: nodi[$0.identita]) }
-        for (k, n) in nodi where perScheda[k] == nil { elenco.append(FattoMemoria(scheda: nil, nodo: n)) }
-        elenco.sort {
-            let a = $0.aggiornata ?? "", b = $1.aggiornata ?? ""
-            return a == b ? $0.nome < $1.nome : a > b
-        }
-        fatti = elenco
-        var per: [String: FattoMemoria] = [:]
-        for f in elenco { per[f.nome] = f }
-        perNome = per
-
-        var v: [String: Set<String>] = [:]
-        if let archi = mappa?.archi {
-            for a in archi {
-                guard let da = a.da, let verso = a.a, da != verso, per[da] != nil, per[verso] != nil else { continue }
-                v[da, default: []].insert(verso)
-                v[verso, default: []].insert(da)
-            }
-        } else {
-            for s in perScheda.values {
-                guard let da = s.name else { continue }
-                for verso in s.legami where verso != da && per[verso] != nil {
-                    v[da, default: []].insert(verso)
-                    v[verso, default: []].insert(da)
-                }
-            }
-        }
-        vicini = v.mapValues { $0.sorted() }
-
-        let d = mappa?.diagnosi
-        var r: [String: [String]] = [:]
-        for x in d?.rotti ?? [] {
-            if let da = x.da, let verso = x.verso { r[da, default: []].append(verso) }
-        }
-        rotti = r
-        conRotti = Set(r.keys)
-        doppie = Set((d?.doppie ?? []).compactMap { $0.nome })
-        orfane = Set(d?.orfane ?? [])
-        vuote = Set(d?.vuote ?? [])
-        daScrivere = d?.daScrivere ?? []
-        richiamabili = d?.richiamabili ?? elenco.filter { $0.richiamabile == true }.count
-        haMappa = mappa != nil
-    }
-
-    func insieme(_ f: FiltroMemoria) -> Set<String>? {
-        switch f {
-        case .tutte, .daScrivere: return nil
-        case .dueCartelle: return doppie
-        case .senzaLegami: return orfane
-        case .linkRotti: return conRotti
-        case .quasiVuote: return vuote
+        switch self {
+        case .elenco: return tr("Elenco", "List")
+        case .vicinato: return tr("Vicinato", "Neighbours")
+        case .mappa: return tr("Mappa", "Map")
         }
     }
-
-    func conteggio(_ f: FiltroMemoria) -> Int {
-        switch f {
-        case .tutte: return fatti.count
-        case .daScrivere: return daScrivere.count
-        default: return insieme(f)?.count ?? 0
-        }
-    }
-}
-
-private func accorcia(_ s: String, _ massimo: Int = 26) -> String {
-    guard s.count > massimo else { return s }
-    let testa = (massimo - 1) / 2 + 1
-    let coda = massimo - 1 - testa
-    return String(s.prefix(testa)) + "…" + String(s.suffix(coda))
 }
 
 // MARK: - la vista
@@ -227,20 +37,23 @@ struct VistaMemoria: View {
     @AppStorage("memoriaModo") private var modoGuardato = ModoMemoria.elenco.rawValue
 
     @State private var filtro: FiltroMemoria = .tutte
-    @State private var provaAperta = false
 
-    private var modo: ModoMemoria { ModoMemoria(rawValue: modoGuardato) ?? .elenco }
+    /// Nelle istantanee con --memoria-scena la mappa si apre da sola, senza scrivere le preferenze.
+    private var modo: ModoMemoria {
+        if ScenaMappa.nome != nil { return .mappa }
+        return ModoMemoria(rawValue: modoGuardato) ?? .elenco
+    }
 
     var body: some View {
         @Bindable var a = archivio
-        let dati = DatiMemoria(schede: archivio.schede, mappa: archivio.mappa)
-        let modoBinding = Binding<ModoMemoria>(
-            get: { modo }, set: { modoGuardato = $0.rawValue })
+        let dati = archivio.datiMemoria
         let scelto = archivio.memoriaScelta.flatMap { dati.perNome[$0] }
 
         Group {
             if dati.fatti.isEmpty {
                 vuoto
+            } else if modo == .mappa {
+                VistaMappa(dati: dati, scelto: scelto?.nome)
             } else if modo == .vicinato {
                 if let centro = scelto {
                     PannelloVicinato(centro: centro, dati: dati)
@@ -250,32 +63,6 @@ struct VistaMemoria: View {
                 }
             } else {
                 elenco(dati)
-            }
-        }
-        .inspector(isPresented: Binding(
-            get: { scelto != nil },
-            set: { if !$0 { archivio.memoriaScelta = nil } })) {
-            if let f = scelto {
-                DettaglioMemoria(fatto: f, dati: dati)
-                    .inspectorColumnWidth(min: 280, ideal: 340, max: 480)
-            }
-        }
-        .toolbar {
-            ToolbarItem(placement: .automatic) {
-                Picker(tr("Modo", "Mode"), selection: modoBinding) {
-                    ForEach(ModoMemoria.allCases) { Text($0.titolo).tag($0) }
-                }
-                .pickerStyle(.segmented)
-                .help(tr("Elenco o vicinato del fatto scelto", "List, or the neighbourhood of the chosen fact"))
-            }
-            ToolbarItem(placement: .primaryAction) {
-                Button { provaAperta.toggle() } label: {
-                    Label(tr("Prova la memoria", "Try memory"), systemImage: "text.magnifyingglass")
-                }
-                .labelStyle(.titleAndIcon)
-                .help(tr("Scrivi una frase e guarda cosa ti direbbe la memoria",
-                         "Write a sentence and see what memory would tell you"))
-                .popover(isPresented: $provaAperta, arrowEdge: .bottom) { ProvaRichiamo() }
             }
         }
         .task(id: dati.fatti.count) { assicuraScelta(dati) }
@@ -458,7 +245,7 @@ private struct RigaMemoria: View {
 
 // MARK: - il fatto per intero (Inspector)
 
-private struct DettaglioMemoria: View {
+struct DettaglioMemoria: View {
     let fatto: FattoMemoria
     let dati: DatiMemoria
     @Environment(Archivio.self) private var archivio
@@ -477,7 +264,10 @@ private struct DettaglioMemoria: View {
                     }
                     .font(.callout)
                     .foregroundStyle(.secondary)
-                    Text(fatto.nome).font(.headline).textSelection(.enabled)
+                    Text(fatto.titolo).font(.headline).textSelection(.enabled)
+                    if fatto.titolo != fatto.nome {
+                        Text(fatto.nome).font(.caption).foregroundStyle(.tertiary).textSelection(.enabled)
+                    }
                     if !fatto.descrizione.isEmpty {
                         Text(fatto.descrizione).font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
                     }
@@ -487,7 +277,7 @@ private struct DettaglioMemoria: View {
 
             Section {
                 if let c = corpo, !c.isEmpty {
-                    TestoMemoria(testo: c, noti: Set(dati.perNome.keys))
+                    TestoMemoria(testo: c, noti: Set(dati.perNome.keys), titolo: { dati.titolo($0) })
                 } else if carico {
                     ProgressView().controlSize(.small)
                 } else {
@@ -503,7 +293,7 @@ private struct DettaglioMemoria: View {
                 if let p = fatto.progetto, !p.isEmpty {
                     LabeledContent(tr("Progetto", "Project")) {
                         if let k = fatto.progettoChiave, !k.isEmpty {
-                            Button(p) { archivio.vai(.progetti, progetto: k) }.buttonStyle(.link)
+                            Button(p) { archivio.vai(.progetti, progetto: k) }.collegamento()
                         } else {
                             Text(p)
                         }
@@ -532,13 +322,13 @@ private struct DettaglioMemoria: View {
                 ForEach(vicini, id: \.self) { nome in
                     Button { archivio.memoriaScelta = nome } label: {
                         Label {
-                            Text(nome)
+                            Text(dati.titolo(nome))
                         } icon: {
                             Image(systemName: "circle.fill")
                                 .foregroundStyle(dati.perNome[nome]?.tipo.colore ?? .gray)
                         }
                     }
-                    .buttonStyle(.link)
+                    .collegamento()
                 }
                 ForEach(rotti, id: \.self) { nome in
                     Label {
@@ -616,6 +406,8 @@ private struct DettaglioMemoria: View {
 private struct TestoMemoria: View {
     let testo: String
     let noti: Set<String>
+    /// Il testo con cui si scrive un legame: il titolo umano della memoria, non la sigla.
+    let titolo: (String) -> String
 
     private enum Blocco { case titolo(String), voce(String), paragrafo(String) }
 
@@ -653,7 +445,8 @@ private struct TestoMemoria: View {
                 risultato += ns.substring(with: NSRange(location: ultimo, length: m.range.location - ultimo))
                 let nome = ns.substring(with: m.range(at: 1))
                 if noti.contains(nome), let enc = nome.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) {
-                    risultato += "[\(nome)](plancia-memoria:\(enc))"
+                    let visto = titolo(nome).replacingOccurrences(of: "[", with: "(").replacingOccurrences(of: "]", with: ")")
+                    risultato += "[\(visto)](plancia-memoria:\(enc))"
                 } else {
                     risultato += nome
                 }
@@ -993,7 +786,7 @@ private struct PannelloVicinato: View {
 
 // MARK: - prova del richiamo
 
-private struct ProvaRichiamo: View {
+struct ProvaRichiamo: View {
     @Environment(Archivio.self) private var archivio
     @Environment(\.dismiss) private var dismiss
 

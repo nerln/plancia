@@ -140,7 +140,7 @@ def _testi():
     testi["indizi del dispatcher MCP"] = "\n".join(_stringhe(mcp.INDIZI))
     testi["istruzioni del server MCP"] = _istruzioni_del_server(mcp)
     testi["prompt dell'assistente vocale (agente)"] = agente.ISTRUZIONI
-    testi["prompt di Jarvis"] = jarvis.PROMPT
+    testi["prompt di Jarvis"] = jarvis.ISTRUZIONI_SICURE
     testi["prompt del riepilogo"] = recap.PROMPT
     testi["prompt della domanda a voce"] = recap.DOMANDA
     testi["briefing"] = _briefing()

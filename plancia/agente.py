@@ -1,184 +1,64 @@
-"""Un processo Claude tenuto caldo, invece di riaccenderlo a ogni frase.
+"""Il processo Claude tenuto caldo: adesso e' quello in SOLA LETTURA di Jarvis.
 
-Ogni `claude -p` costa cinque secondi di avvio prima ancora di pensare. In una
-conversazione a voce sono cinque secondi di silenzio a domanda. Qui il processo
-resta aperto in modalità stream: si avvia una volta e poi ogni turno costa solo
-il tempo del modello, circa quattro secondi, con le prime parole a uno.
+Fino al 30/09/2026 qui viveva un secondo processo, con i tool di scrittura
+`plancia_*` aperti ("se ti chiede di segnare o chiudere qualcosa, fallo: non serve
+chiedere il permesso"), che rispondeva alla dashboard web, al terminale e agli
+strumenti a voce. Era l'altra porta: una frase trascritta male poteva chiudere un
+task o archiviare un progetto senza che nessuno avesse premuto niente. Non esiste
+piu': c'e' un solo processo caldo per lingua, `jarvis.SessioneLettura`, con i tool
+di scrittura negati per nome, e tutto quello che scrive passa da una proposta con
+la sua scheda (vedi jarvis.py).
 
-Tiene anche il filo del discorso, quindi "e ieri?" funziona.
+Resta questo modulo perche' c'e' chi chiede "il processo caldo" per nome
+(`agente.scalda`, `agente.stato`, `agente.spegni`, `agente.chiedi`): sono le stesse
+funzioni di prima, ma dietro c'e' il processo sicuro.
 """
 
-import json
-import os
-import subprocess
-import threading
-import time
+from . import jarvis
 
-from . import config, piattaforma, recap
+#: Il processo caldo di una lingua: quello in sola lettura di Jarvis.
+Agente = jarvis.SessioneLettura
 
-# Dopo tanti turni la conversazione è lunga e costosa: si ricomincia.
-MAX_TURNI = 20
-# Dopo tanto silenzio non serve tenere un processo aperto.
-SCADENZA = 900
+#: Le istruzioni di sistema del processo caldo: quelle di Jarvis in sola lettura.
+ISTRUZIONI = jarvis.ISTRUZIONI_SICURE
 
-ISTRUZIONI = """Sei l'assistente vocale di chi ti parla, dentro Plancia, l'archivio
-di lavoro con l'IA dell'utente. Ti arrivano frasi dette a voce e trascritte,
-quindi possono avere errori: interpretale con buon senso.
-
-Hai i tool `plancia_*` sull'archivio: progetti, task, post, sessioni di Claude
-Code e Codex, memoria. Usali invece di tirare a indovinare. Se ti chiede di
-segnare, chiudere o aggiornare qualcosa, fallo: è l'archivio dell'utente, non
-serve chiedere il permesso.
-
-Rispondi sempre in {lingua}, al massimo quaranta parole, scritte per essere
-ascoltate: una o due frasi, niente elenchi, niente markdown, niente trattini
-lunghi, niente percorsi di file o sigle lette a voce. Se hai fatto qualcosa,
-dillo corto e diretto."""
-
-TOOL = [
-    "mcp__plancia__plancia_briefing", "mcp__plancia__plancia_search",
-    "mcp__plancia__plancia_projects", "mcp__plancia__plancia_project_update",
-    "mcp__plancia__plancia_tasks", "mcp__plancia__plancia_task_add",
-    "mcp__plancia__plancia_task_update", "mcp__plancia__plancia_posts",
-    "mcp__plancia__plancia_post_add", "mcp__plancia__plancia_post_update",
-    "mcp__plancia__plancia_sessions", "mcp__plancia__plancia_memory",
-    "mcp__plancia__plancia_log", "mcp__plancia__plancia_recap",
-]
+#: Gli unici tool che il processo caldo puo' usare: quelli di lettura.
+TOOL = jarvis.TOOL_LETTURA
 
 
-class Agente:
-    """Un processo per lingua. Non è thread safe da solo: c'è un lucchetto."""
-
-    def __init__(self, lang="it"):
-        self.lang = lang
-        self.proc = None
-        self.turni = 0
-        self.ultimo = 0.0
-        self.lucchetto = threading.Lock()
-
-    # --- ciclo di vita -----------------------------------------------------
-
-    def _vivo(self) -> bool:
-        return self.proc is not None and self.proc.poll() is None
-
-    def _scaduto(self) -> bool:
-        return self.turni >= MAX_TURNI or (time.time() - self.ultimo) > SCADENZA
-
-    def avvia(self) -> bool:
-        self.ferma()
-        exe = recap.claude_bin()
-        if not exe:
-            return False
-        cfg = config.load_config()
-        cmd = [exe, "-p",
-               "--model", cfg.get("modello_voce", "sonnet"),
-               "--input-format", "stream-json",
-               "--output-format", "stream-json",
-               "--verbose",
-               "--append-system-prompt",
-               ISTRUZIONI.format(lingua=recap.NOMI_LINGUA.get(self.lang, "English")),
-               "--allowedTools"] + TOOL
-        try:
-            self.proc = subprocess.Popen(
-                cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL, text=True, bufsize=1,
-                cwd=str(config.DATA_DIR), env=dict(os.environ),
-                **piattaforma.opzioni_figlio(), **piattaforma.opzioni_utf8())
-        except Exception:
-            self.proc = None
-            return False
-        self.turni = 0
-        self.ultimo = time.time()
-        return True
-
-    def ferma(self):
-        if self.proc is not None:
-            try:
-                if self.proc.stdin:
-                    self.proc.stdin.close()
-            except Exception:
-                pass
-            try:
-                self.proc.terminate()
-            except Exception:
-                pass
-        self.proc = None
-
-    def scalda(self):
-        """Avvia il processo senza chiedere niente, così la prima domanda vera
-        non paga l'avvio. Si chiama quando si apre il pannello."""
-        with self.lucchetto:
-            if not self._vivo():
-                self.avvia()
-
-    # --- una domanda -------------------------------------------------------
-
-    def chiedi(self, testo: str, timeout=90) -> str:
-        with self.lucchetto:
-            if self._vivo() and self._scaduto():
-                self.ferma()
-            if not self._vivo() and not self.avvia():
-                return ""
-            try:
-                return self._turno(testo, timeout)
-            except Exception:
-                # un processo rotto non si recupera: si riparte pulito
-                self.ferma()
-                return ""
-
-    def _turno(self, testo: str, timeout: float) -> str:
-        msg = {"type": "user",
-               "message": {"role": "user", "content": [{"type": "text", "text": testo}]}}
-        self.proc.stdin.write(json.dumps(msg, ensure_ascii=False) + "\n")
-        self.proc.stdin.flush()
-
-        scaduto = time.time() + timeout
-        risposta = ""
-        while time.time() < scaduto:
-            riga = self.proc.stdout.readline()
-            if not riga:
-                break
-            try:
-                d = json.loads(riga)
-            except Exception:
-                continue
-            if d.get("type") == "result":
-                risposta = (d.get("result") or "").strip()
-                break
-        self.turni += 1
-        self.ultimo = time.time()
-        return risposta
-
-
-# --------------------------------------------------------------------------
-# uno per lingua, condivisi da tutto il processo del server
-# --------------------------------------------------------------------------
-
-_agenti = {}
-_lucchetto = threading.Lock()
-
-
-def per(lang: str) -> Agente:
-    with _lucchetto:
-        if lang not in _agenti:
-            _agenti[lang] = Agente(lang)
-        return _agenti[lang]
+def per(lang: str) -> "jarvis.SessioneLettura":
+    return jarvis.sessione_lettura(lang)
 
 
 def chiedi(testo: str, lang: str, timeout=90) -> str:
-    return per(lang).chiedi(testo, timeout)
+    """La risposta del modello in sola lettura a una frase, senza la riga di
+    proposta (se il modello ne ha scritta una). Stringa vuota se il modello non
+    risponde. Non scrive e non avvia niente."""
+    finale = ""
+    turno = per(lang).turno(testo, timeout)
+    try:
+        for genere, valore in turno:
+            if genere == "fine":
+                finale = valore
+            elif genere in ("errore", "interrotto"):
+                return ""
+    finally:
+        turno.close()
+    return jarvis.senza_proposta(finale)
 
 
 def scalda(lang: str):
-    threading.Thread(target=per(lang).scalda, daemon=True).start()
+    jarvis.scalda(lang)
 
 
 def stato() -> dict:
-    return {lang: {"vivo": a._vivo(), "turni": a.turni,
-                   "inattivo_da": round(time.time() - a.ultimo) if a.ultimo else None}
-            for lang, a in _agenti.items()}
+    import time
+    with jarvis._sessioni_lucchetto:
+        elenco = dict(jarvis._sessioni)
+    return {lang: {"vivo": s._vivo(), "turni": s.turni,
+                   "inattivo_da": round(time.time() - s.ultimo) if s.ultimo else None}
+            for lang, s in elenco.items()}
 
 
 def spegni():
-    for a in _agenti.values():
-        a.ferma()
+    jarvis.spegni()

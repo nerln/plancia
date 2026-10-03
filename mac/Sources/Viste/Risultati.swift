@@ -179,6 +179,8 @@ struct VistaRisultati: View {
 
     @State private var scelto: String?
     @State private var espansi: Set<TipoRis> = []
+    /// Distingue questa istanza della vista dalle altre (vedi onDisappear).
+    @State private var identitaIstanza = UUID()
 
     private var q: String { archivio.ricerca.trimmed }
 
@@ -251,10 +253,11 @@ struct VistaRisultati: View {
             var v: [(Int, Int, RigaRis)] = []
             for (i, m) in archivio.schede.enumerated() {
                 let nome = m.name ?? ""
-                guard let rango = risCombacia(termini, titolo: nome,
-                                              altri: [m.description ?? "", m.progetto ?? ""]) else { continue }
+                let visto = (m.titolo ?? "").trimmed.isEmpty ? nome : (m.titolo ?? "").trimmed
+                guard let rango = risCombacia(termini, titolo: visto,
+                                              altri: [nome, m.description ?? "", m.progetto ?? ""]) else { continue }
                 v.append((rango, i, RigaRis(
-                    id: "memoria:\(m.identita)", tipo: .memoria, titolo: nome,
+                    id: "memoria:\(m.identita)", tipo: .memoria, titolo: visto,
                     sottotitolo: (m.description ?? "").trimmed,
                     anteprima: nil, quando: m.updatedAt, progetto: m.progetto, ruolo: nil,
                     apri: .memoria(m.identita), unione: m.id.map { "memoria:\($0)" })))
@@ -308,7 +311,7 @@ struct VistaRisultati: View {
                 case "task":
                     dest = .task((archivio.lavagna?.voci ?? []).first { $0.taskId == ref }?.identita)
                 case "memoria":
-                    dest = .memoria(archivio.schede.first { $0.id == ref }?.name ?? h.title ?? "")
+                    dest = .memoria(archivio.schede.first { $0.id == ref }?.name ?? h.nome ?? h.title ?? "")
                 case "sessione":
                     if let x = archivio.sessioni.first(where: { $0.id == ref }) {
                         dest = .sessione(x.sessionId ?? x.identita)
@@ -389,7 +392,7 @@ struct VistaRisultati: View {
                                     Text(tr("Mostra altri \(g.righe.count - limite(g.tipo))",
                                             "Show \(g.righe.count - limite(g.tipo)) more"))
                                 }
-                                .buttonStyle(.link)
+                                .collegamento()
                             }
                         } header: {
                             intestazione(g)
@@ -399,17 +402,25 @@ struct VistaRisultati: View {
                 .listStyle(.inset)
                 .contextMenu(forSelectionType: String.self) { ids in
                     if let r = tutte.first(where: { ids.contains($0.id) }), r.apri != .nessuna {
-                        Button(tr("Apri", "Open")) { apri(r) }
+                        Button(tr("Apri", "Open")) { VistaRisultati.apri(r) }
                     }
                 } primaryAction: { ids in
-                    if let r = tutte.first(where: { ids.contains($0.id) }) { apri(r) }
+                    if let r = tutte.first(where: { ids.contains($0.id) }) { VistaRisultati.apri(r) }
                 }
             }
         }
-        .inspector(isPresented: mostraDettaglio(tutte)) {
-            if let r = tutte.first(where: { $0.id == scelto }) {
-                DettaglioRisultato(riga: r, termini: risTermini(q)) { apri(r) }
-                    .inspectorColumnWidth(min: 260, ideal: 320, max: 460)
+        // l'Inspector e' della finestra (Guscio/Ispettore.swift): la riga scelta gli passa il suo dettaglio
+        .onChange(of: tutte.first(where: { $0.id == scelto }), initial: true) { _, corrente in
+            pubblica(corrente)
+        }
+        // chi se ne va toglie il dettaglio solo se e' ancora il suo: SwiftUI puo' far comparire la
+        // vista nuova prima di far sparire la vecchia (misurato nelle istantanee: il dettaglio
+        // pubblicato dalla nuova veniva cancellato dalla vecchia e l'Inspector restava chiuso)
+        .onDisappear {
+            let c = ControlliVista.condiviso
+            if c.proprietarioDettaglio == nil || c.proprietarioDettaglio == identitaIstanza {
+                c.dettaglioRisultato = nil
+                c.proprietarioDettaglio = nil
             }
         }
         // solo nelle istantanee con --primo-risultato: sceglie la prima riga, per fotografare l'Inspector
@@ -447,14 +458,21 @@ struct VistaRisultati: View {
         }
     }
 
-    private func mostraDettaglio(_ tutte: [RigaRis]) -> Binding<Bool> {
-        Binding(get: { scelto != nil && tutte.contains { $0.id == scelto } },
-                set: { if !$0 { scelto = nil } })
+    private func pubblica(_ riga: RigaRis?) {
+        let termini = risTermini(q)
+        let c = ControlliVista.condiviso
+        // una vista senza riga non cancella il dettaglio di un'altra istanza
+        if riga == nil, let p = c.proprietarioDettaglio, p != identitaIstanza { return }
+        c.proprietarioDettaglio = riga == nil ? nil : identitaIstanza
+        c.dettaglioRisultato = riga.map { r in
+            AnyView(DettaglioRisultato(riga: r, termini: termini) { VistaRisultati.apri(r) })
+        }
     }
 
     // MARK: azioni
 
-    private func apri(_ r: RigaRis) {
+    private static func apri(_ r: RigaRis) {
+        let archivio = Archivio.condiviso
         switch r.apri {
         case .task(let id):
             archivio.vai(.task)

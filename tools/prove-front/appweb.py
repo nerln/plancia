@@ -44,6 +44,12 @@ import urllib.error
 import urllib.request
 
 
+
+def _ambiente_chrome():
+    import pwd
+    return dict(os.environ, HOME=pwd.getpwuid(os.getuid()).pw_dir)
+
+
 def _leggi(radice, *parti):
     """Il testo di un file, o "" se manca: su un commit senza il lotto (dove
     manifest e sw.js non esistono) ogni prova deve risultare NO con un motivo,
@@ -122,12 +128,14 @@ def _prova_manifest(prova, radice):
           not inventati, str(inventati))
 
     stile = _leggi(radice, "web", "style.css")
-    trovato = re.search(r"--ink-0:\s*(#[0-9a-fA-F]{6})", stile)
+    # il tema scuro e' nel blocco :root[data-resolved="dark"] (--bg: il fondo della pagina)
+    blocco_scuro = re.search(r':root\[data-resolved="dark"\]\s*\{([^}]*)\}', stile)
+    trovato = re.search(r"--bg:\s*(#[0-9a-fA-F]{6})", blocco_scuro.group(1)) if blocco_scuro else None
     scuro = trovato.group(1).lower() if trovato else None
     prova("il manifest prende i colori dal tema scuro di style.css",
           scuro is not None and m.get("background_color", "").lower() == scuro
           and m.get("theme_color", "").lower() == scuro,
-          f"--ink-0={scuro} manifest={m.get('background_color')}/{m.get('theme_color')}")
+          f"--bg scuro={scuro} manifest={m.get('background_color')}/{m.get('theme_color')}")
 
     icone = m.get("icons") or []
     problemi, peso = [], 0
@@ -180,12 +188,13 @@ def _prova_index(prova, radice):
     prova("index.html ha theme-color per il tema scuro e per il chiaro (con media)",
           bool(scuro and chiaro), f"scuro={bool(scuro)} chiaro={bool(chiaro)}")
     stile = _leggi(radice, "web", "style.css")
-    ink = re.findall(r"--ink-0:\s*(#[0-9a-fA-F]{6})", stile)
-    prova("i due theme-color sono i --ink-0 dei due temi di style.css",
-          bool(scuro and chiaro and len(ink) >= 2)
-          and scuro.group(1).lower() == ink[0].lower()
-          and chiaro.group(1).lower() == ink[1].lower(),
-          f"index={scuro and scuro.group(1)}/{chiaro and chiaro.group(1)} css={ink[:2]}")
+    m_chiaro = re.search(r":root\s*\{[^}]*?--bg:\s*(#[0-9a-fA-F]{6})", stile)
+    m_scuro = re.search(r':root\[data-resolved="dark"\]\s*\{[^}]*?--bg:\s*(#[0-9a-fA-F]{6})', stile)
+    prova("i due theme-color sono i --bg dei due temi di style.css",
+          bool(scuro and chiaro and m_chiaro and m_scuro)
+          and scuro.group(1).lower() == m_scuro.group(1).lower()
+          and chiaro.group(1).lower() == m_chiaro.group(1).lower(),
+          f"index={scuro and scuro.group(1)}/{chiaro and chiaro.group(1)} css={m_scuro and m_scuro.group(1)}/{m_chiaro and m_chiaro.group(1)}")
     touch = re.search(r'<link rel="apple-touch-icon" href="(/icone/[\w.-]+\.png)">', indice)
     prova("index.html ha un apple-touch-icon che esiste su disco",
           bool(touch) and (radice / "web" / touch.group(1).lstrip("/")).is_file())
@@ -450,7 +459,7 @@ _JS_CACHE = """(async function(){try{
 }catch(e){return {errore:String(e)}}})()"""
 
 _JS_PAGINA = """(function(){try{
-  var v = document.getElementById('view'), s = document.getElementById('spia-memoria');
+  var v = document.getElementById('view'), s = document.getElementById('tb-sub');
   var a = document.querySelector('script[src*="app.js"]');
   return {href: location.href, view: !!v,
     card: v ? v.querySelectorAll('[data-chiave]').length : 0,
@@ -662,8 +671,9 @@ def _dinamica(radice, chrome):
         chrome_proc = subprocess.Popen([
             chrome, "--headless=new", "--disable-gpu", "--hide-scrollbars",
             "--no-first-run", "--no-default-browser-check",
+            "--use-mock-keychain", "--disable-features=MacAppCodeSignClone",
             f"--remote-debugging-port={porta_cdp}", f"--user-data-dir={profilo}",
-            "about:blank"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            "about:blank"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=_ambiente_chrome())
         pronto = False
         for _ in range(40):
             try:

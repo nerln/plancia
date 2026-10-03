@@ -244,17 +244,56 @@ def cmd_ask(args):
         _avvisa_se_muto(info)
 
 
+def _stampa_scheda(proposta):
+    """La scheda di una proposta di Jarvis, riga per riga, come la vede il pannello."""
+    print(f"  {proposta['titolo']}")
+    for r in proposta.get("righe") or []:
+        print(f"    {r['k']}: {r['v']}")
+    if proposta.get("avviso"):
+        print(f"  {proposta['avviso']}")
+
+
+def _conferma_a_tastiera(lang) -> bool:
+    """Chiede a chi e' davanti al terminale. Senza un terminale vero (un agente che
+    lancia il comando, una pipe, uno script) non si chiede e non si conferma: la
+    conferma e' di una persona, e una risposta preparata nello stdin non lo e'."""
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        return False
+    domanda = {"it": "Confermi? [s/N] ", "es": "Confirmas? [s/N] "}.get(lang, "Confirm? [y/N] ")
+    try:
+        risposta = input(domanda).strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        return False
+    return risposta in ("s", "si", "sì", "y", "yes")
+
+
 def cmd_jarvis(args):
-    from . import jarvis, voice
+    from . import jarvis, recap, voice
     frase = " ".join(args.frase)
+    lang = recap.lang_or_default(args.lang)
     v = _vista()
     try:
-        esito = jarvis.esegui(frase, args.lang, vista=v)
+        esito = jarvis.esegui(frase, lang, vista=v)
+        print(f"[{esito['tipo']}] {esito['risposta']}")
+        if esito.get("azione"):
+            print(f"  azione: {esito['azione']}")
+        proposta = esito.get("proposta")
+        if proposta:
+            # Niente parte da una frase: la scheda si mostra, e parte solo se la
+            # persona davanti al terminale risponde di si'.
+            _stampa_scheda(proposta)
+            if _conferma_a_tastiera(lang):
+                fatto = jarvis.conferma(proposta["id"], lang, vista=v)
+                print(f"[{fatto['tipo']}] {fatto['risposta']}")
+                if fatto.get("azione"):
+                    print(f"  azione: {fatto['azione']}")
+                esito = fatto
+            else:
+                jarvis.rifiuta(proposta["id"], (v.visore or "") if v else "")
+                print("  non eseguito: serve la conferma di una persona a un terminale "
+                      "interattivo (o il pulsante Conferma della dashboard).")
     finally:
         v.chiudi()
-    print(f"[{esito['tipo']}] {esito['risposta']}")
-    if esito.get("azione"):
-        print(f"  azione: {esito['azione']}")
     if args.speak and not esito.get("muto"):
         info = voice.parla(esito["risposta"], esito.get("lingua", "it"), attendi=True)
         _avvisa_se_muto(info)
@@ -290,6 +329,57 @@ def cmd_voice(args):
                   file=sys.stderr)
             return 1
         print(f"[{info['motore']} · {voice.voce_per(lang) or 'voce predefinita'}] ok")
+
+
+def cmd_voce(args):
+    """`plancia voce installa` e `plancia voce prova`: Kokoro, la voce neurale di Jarvis."""
+    from . import kokoro, recap, voice
+    if args.azione == "installa":
+        return kokoro.installa(si=args.si, python=args.python)
+    lang = recap.lang_or_default(args.lang)
+    spiegato = voice.spiega_neurale(lang)
+    nomi = {"kokoro": "Kokoro", "pocket": "Pocket", "voicebox": "Voicebox"}
+    if spiegato["scelto"]:
+        extra = f" (voce {spiegato['voce']}, lingua {lang})" if spiegato["scelto"] == "kokoro" else ""
+        print(f"Jarvis parlerebbe con: {nomi[spiegato['scelto']]}{extra}.")
+    else:
+        print("Jarvis non ha una voce neurale locale adesso.")
+    for n, r in enumerate(spiegato["righe"], 1):
+        print(f"  {n}. {nomi[r['motore']]:<9} {r['esito']:<24} {r['perche']}")
+    print(f"  {len(spiegato['righe']) + 1}. Voci di sistema: {spiegato['sistema']}")
+    if args.carica:
+        if spiegato["scelto"] != "kokoro":
+            print("--carica: Kokoro non e' il motore scelto, non lo carico.")
+            return 1
+        return _carica_kokoro(kokoro, voice, lang)
+    return 0 if spiegato["scelto"] else 1
+
+
+def _carica_kokoro(kokoro, voice, lang):
+    """`voce prova --carica`: avvia il lavoratore e sintetizza una frase in un file. Non
+    suona niente; alla fine chiude il lavoratore."""
+    import time
+    frase = {"it": "Plancia è pronta. Ti leggo il riepilogo quando vuoi.",
+             "en": "Plancia is ready. I can read you the recap whenever you want.",
+             "es": "Plancia está lista. Te leo el resumen cuando quieras."}.get(lang, "Plancia is ready.")
+    voice.AUDIO_DIR.mkdir(parents=True, exist_ok=True)
+    out = voice.AUDIO_DIR / "prova-kokoro.wav"
+    try:
+        inizio = time.perf_counter()
+        info = kokoro.sintetizza(frase, lang, out, attesa=120)
+        totale = time.perf_counter() - inizio
+        st = kokoro.stato()["lavoratore"]
+        rtf = (info["ms"] / 1000.0 / info["durata"]) if info.get("durata") else 0
+        print(f"Kokoro ha sintetizzato {info['durata']} s di audio in {info['ms']} ms "
+              f"(fattore {rtf:.2f}); dal lancio al file {totale:.1f} s, modello caricato in "
+              f"{st.get('caricato_ms')} ms, picco di memoria {st.get('picco_mb')} MB. "
+              f"File (non suonato): {info['file']}")
+        return 0
+    except kokoro.ErroreKokoro as exc:
+        print(f"Kokoro non ha risposto: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        kokoro.spegni()
 
 
 @_con_rifiuti
@@ -351,7 +441,6 @@ def cmd_manda(args):
     v = _vista()
     conn = v.conn
     try:
-        sessione = None
         progetto = v.progetto(args.progetto, chiave=True)
         if v.nominato and progetto is None:
             # senza un progetto l'agente partirebbe in una cartella qualunque,
@@ -359,29 +448,42 @@ def cmd_manda(args):
             raise actions.BadInput("da un compartimento nominato serve un progetto "
                                    "del compartimento (--progetto).")
         if args.task:
-            # Stessa logica del ramo background di cmd_riprendi: se il task
-            # ha già una sessione viva o chiusa, il lancio la riprende
-            # (--fork-session) invece di ripartire da un prompt scritto da
-            # zero. Senza questo, "manda" e "riprendi --background" sullo
-            # stesso task avrebbero comportamenti diversi, e non sarebbe più
-            # un vero alias.
             v.oggetto(actions.task_get, args.task, "il task")
-            task = actions.task_get(v.lettura, args.task)
-            if task:
-                s = riprendi.stato(v.lettura, task)
-                sessione = riprendi.sessione_da_riprendere(s)
-        r = cantiere.avvia(conn, " ".join(args.titolo), progetto=progetto,
-                           istruzioni=args.istruzioni or "", agente=args.agente,
-                           modo=args.modo, task_id=args.task, attendi=args.attendi,
-                           sessione=sessione, compartimento=v.tag)
+        # Stessa porta di "riprendi --background" (riprendi.lancia): con un
+        # task, il lavoro riprende la SUA sessione (chiusa: stesso id; viva:
+        # non parte niente; persa: nuova, detto qui sotto). Senza questo,
+        # "manda" e "riprendi --background" sullo stesso task avrebbero
+        # comportamenti diversi, e non sarebbe piu' un vero alias.
+        # Il lancio vive in un thread di QUESTO processo (vedi il docstring di
+        # cantiere.py): se il comando esce senza aspettarlo, il thread muore, il
+        # lancio resta "in coda" per sempre e il task resta "in corso" senza che
+        # niente lavori. Quindi qui si aspetta sempre, con o senza --attendi (che
+        # resta accettato, e non fa piu' differenza): come `riprendi --background`.
+        print("Il lavoro gira dentro questo comando: resto in attesa che finisca.",
+              file=sys.stderr)
+        r = riprendi.lancia(conn, " ".join(args.titolo), progetto=progetto,
+                            istruzioni=args.istruzioni or "", agente=args.agente,
+                            modo=args.modo, task_id=args.task, attendi=True,
+                            compartimento=v.tag, lett=v.lettura)
+        if not r.get("lanciato"):
+            return _stampa_non_lanciato(r)
         print(f"lancio #{r['run']} · {r['agente']} · {r['modo']} · {r['cwd']}")
-        if args.attendi:
-            d = cantiere.dettaglio(conn, r["run"])
-            print(f"\n[{d['stato']}] {d['esito'][:600]}")
-        else:
-            print("gira in sottofondo: `plancia lanci` per vedere com'è andata")
+        if args.task:
+            print("  " + r["piano"]["avviso"])
+        d = cantiere.dettaglio(conn, r["run"])
+        print(f"\n[{d['stato']}] {(d['esito'] or '')[:600]}")
     finally:
         v.chiudi()
+
+
+def _stampa_non_lanciato(r):
+    """Il lavoro non e' partito perche' la sessione di origine e' aperta: dirlo
+    e dare il messaggio da incollare li'. Codice di uscita 1: non e' partito."""
+    print("non lanciato: " + r["piano"]["avviso"])
+    if r.get("messaggio"):
+        print("  messaggio da incollare nella sessione: " + r["messaggio"])
+    print("  (per una copia della sessione: riprendi ID --background --copia)")
+    return 1
 
 
 @_con_rifiuti
@@ -424,6 +526,12 @@ def cmd_riprendi(args):
             return 1
         s = riprendi.stato(v.lettura, task)
         print(f"#{task['id']} {task['title']}  →  {s['stato']}: {s['motivo']}")
+        if not args.apri:
+            # cosa farebbe "--background" per questo task, detto prima
+            p = riprendi.piano(v.lettura, s.get("agent"), s.get("session_id"),
+                               s.get("cwd"), task.get("host") or "", args.copia,
+                               task.get("project_key"))
+            print("  in background: " + p["avviso"])
         if args.dove:
             print(f"  cwd: {s.get('cwd') or '(nessuna)'}")
         if args.apri:
@@ -441,12 +549,20 @@ def cmd_riprendi(args):
                     print(f"  attenzione: {esito['errore']}")
             return
         if args.background:
-            sessione = riprendi.sessione_da_riprendere(s)
-            esito = cantiere.avvia(
+            # Da qui il lavoro RESTA IN ATTESA del risultato: il lancio vive in
+            # un thread di questo processo (vedi il docstring di cantiere.py),
+            # e un comando che esce lo butta via insieme al suo agente.
+            esito = riprendi.lancia(
                 conn, task.get("title") or "", "", task.get("project_key"),
                 args.istruzioni or "", s.get("agent") or task.get("agent") or "claude",
-                args.scrive, None, task["id"], sessione=sessione, compartimento=v.tag)
+                args.scrive, None, task["id"], task=task, copia=args.copia,
+                compartimento=v.tag, lett=v.lettura, attendi=True)
+            if not esito.get("lanciato"):
+                return _stampa_non_lanciato(esito)
             print(f"lancio #{esito['run']} · {esito['agente']} · {esito['modo']} · {esito['cwd']}")
+            print("  " + esito["piano"]["avviso"])
+            d = cantiere.dettaglio(conn, esito["run"])
+            print(f"\n[{d['stato']}] {(d['esito'] or '')[:600]}")
             return
         argv = riprendi.comando(task, s, v.lettura)
         if argv:
@@ -529,6 +645,9 @@ def cmd_riordina(args):
                 # diventa 0 e uno script che controlla l'uscita non si accorge
                 # che il comando non ha fatto niente.
                 return 1
+            except riordina.FileNonValido as exc:
+                print(f"file non valido: {exc}")
+                return 1
             print(riordina.tabella(righe) if righe else "nessuna riga")
         elif args.applica:
             try:
@@ -537,9 +656,22 @@ def cmd_riordina(args):
             except FileNotFoundError:
                 print(f"file non trovato: {args.applica}")
                 return 1
+            except riordina.FileNonValido as exc:
+                print(f"file non valido: {exc}")
+                return 1
             print(f"applicate: {esito['applicate']}  rifiutate: {esito['rifiutate']}")
+            if esito["stati"] or esito["inglobati"] or esito["invariate"]:
+                print(f"  stati cambiati: {esito['stati']}  inglobati: {esito['inglobati']}  "
+                      f"invariate: {esito['invariate']}")
+            for r in esito["inglobati_senza_padre"]:
+                print(f"  inglobato senza padre {r['chiave']} -> {r['destinazione']}: "
+                      f"{r['motivo']} (stato e nota scritti)")
             for r in esito["dettagli_rifiutate"]:
                 print(f"  rifiutata {r['chiave']} -> {r['padre']}: {r['motivo']}")
+            if esito["rifiutate"]:
+                # uno script che guarda l'uscita deve accorgersi che qualcosa
+                # non e' stato applicato
+                return 1
         elif args.annulla:
             # Accetta sia il nome del batch (mappa4) sia il percorso del file
             # (mappa4.json, o l'intero percorso di --dove): lo stem è quello
@@ -887,7 +1019,7 @@ def cmd_esclusi(args):
     cfg = config.load_config_verificata()
     if not cfg.get("esclusi_ok", True):
         print(f"config.json non valido: {cfg.get('esclusi_errore')}")
-        print("fail-closed: nessun conteggio, nessuna pulizia — i dati non sono affidabili "
+        print("fail-closed: nessun conteggio, nessuna pulizia, i dati non sono affidabili "
               "finché il file non torna a leggersi e a validare.")
         return
     cartelle = cfg.get("cartelle_escluse") or []
@@ -1096,7 +1228,7 @@ def build_parser():
     s.add_argument("--speak", action="store_true", help="leggilo ad alta voce")
     s.add_argument("--notify", action="store_true", help="mandalo come notifica")
     s.add_argument("--daily", action="store_true", help="modalità automatica")
-    s.add_argument("--voce", choices=["auto", "voicebox", "say"])
+    s.add_argument("--voce", choices=["auto", "kokoro", "voicebox", "say"])
     s.add_argument("--background", action="store_true", help="non aspettare la fine")
     s.add_argument("--json", action="store_true")
     s.set_defaults(func=cmd_recap)
@@ -1105,7 +1237,7 @@ def build_parser():
     s.add_argument("domanda", nargs="+")
     s.add_argument("--lang")
     s.add_argument("--speak", action="store_true")
-    s.add_argument("--voce", choices=["auto", "voicebox", "say"])
+    s.add_argument("--voce", choices=["auto", "kokoro", "voicebox", "say"])
     s.add_argument("--background", action="store_true")
     s.set_defaults(func=cmd_ask)
 
@@ -1118,21 +1250,33 @@ def build_parser():
     s = sub.add_parser("say", help="leggi una frase con la voce configurata")
     s.add_argument("testo", nargs="+")
     s.add_argument("--lang")
-    s.add_argument("--voce", choices=["auto", "voicebox", "say"])
+    s.add_argument("--voce", choices=["auto", "kokoro", "voicebox", "say"])
     s.set_defaults(func=cmd_say)
 
     s = sub.add_parser("voice", help="stato della voce, elenco voci, prova")
     s.add_argument("azione", nargs="?", default="stato", choices=["stato", "voci", "prova"])
     s.add_argument("--lang")
-    s.add_argument("--voce", choices=["auto", "voicebox", "say"])
+    s.add_argument("--voce", choices=["auto", "kokoro", "voicebox", "say"])
     s.set_defaults(func=cmd_voice)
 
-    s = sub.add_parser("riordina", help="propone, applica e annulla la mappa dei padri")
+    s = sub.add_parser("voce", help="Kokoro, la voce neurale di Jarvis: installa e prova")
+    sv = s.add_subparsers(dest="azione", required=True)
+    i = sv.add_parser("installa", help="crea l'ambiente Python e scarica i modelli (dice prima "
+                                       "quanto scarica e chiede conferma)")
+    i.add_argument("--si", action="store_true", help="procede senza chiedere conferma")
+    i.add_argument("--python", help="il Python (fra 3.10 e 3.13) con cui creare l'ambiente")
+    pv = sv.add_parser("prova", help="dice quale motore userebbe Jarvis e perche', senza suonare")
+    pv.add_argument("--lang")
+    pv.add_argument("--carica", action="store_true",
+                    help="avvia Kokoro e sintetizza una frase in un file (non la suona)")
+    s.set_defaults(func=cmd_voce)
+
+    s = sub.add_parser("riordina", help="propone, applica e annulla il riordino: padri, stati, inglobamenti")
     g = s.add_mutually_exclusive_group(required=True)
     g.add_argument("--proponi", action="store_true", help="calcola la mappa e la scrive in un file")
-    g.add_argument("--mostra", metavar="FILE", help="stampa in tabella la mappa di un file")
-    g.add_argument("--applica", metavar="FILE", help="assegna i padri della mappa di un file")
-    g.add_argument("--annulla", metavar="BATCH", help="rimette il padre di prima di un'applicazione")
+    g.add_argument("--mostra", metavar="FILE", help="stampa in tabella la mappa di un file (padri, stati, inglobamenti)")
+    g.add_argument("--applica", metavar="FILE", help="applica la mappa di un file: padri, stati, inglobamenti (un batch)")
+    g.add_argument("--annulla", metavar="BATCH", help="rimette padre, stato e note di prima di un'applicazione")
     s.add_argument("--dove", help="dove scrivere il JSON di --proponi "
                                   "(default ~/.plancia/riordino/<data>.json)")
     s.add_argument("--resto-in-cartelle-viste", action="store_true",
@@ -1162,7 +1306,8 @@ def build_parser():
     s.add_argument("--agente", choices=["claude", "codex"], default="claude")
     s.add_argument("--modo", choices=["proposta", "esegui"], default="proposta")
     s.add_argument("--task", type=int, help="id del task di Plancia da chiudere")
-    s.add_argument("--attendi", action="store_true")
+    s.add_argument("--attendi", action="store_true",
+                   help="accettato per compatibilita': il comando aspetta sempre la fine del lavoro")
     s.set_defaults(func=cmd_manda)
 
     s = sub.add_parser("riprendi", help="riprende un task nei suoi tre stati "
@@ -1172,9 +1317,14 @@ def build_parser():
     s.add_argument("--apri", action="store_true",
                    help="lancia la ripresa in un Terminale visibile")
     s.add_argument("--background", action="store_true",
-                   help="manda in sottofondo, come 'manda' ma sulla sessione del task")
+                   help="lavoro senza testa NELLA sessione del task (chiusa: la stessa; "
+                        "aperta: non parte niente; persa: una nuova, detto prima). "
+                        "Resta in attesa del risultato: un lancio muore col comando che lo ha avviato")
     s.add_argument("--scrive", action="store_true",
                    help="con --background, puo' modificare i file del progetto")
+    s.add_argument("--copia", action="store_true",
+                   help="con --background, una COPIA della sessione (id nuovo) invece "
+                        "della sessione stessa; e' l'unico modo di proseguire una sessione aperta")
     s.add_argument("--istruzioni", help="con --background, come lo vuoi fatto")
     s.add_argument("--backfill", action="store_true",
                    help="attribuisce una sessione ai task che non ne hanno una")

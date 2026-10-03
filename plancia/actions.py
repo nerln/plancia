@@ -4,7 +4,7 @@ non divergono mai.
 
 import json
 
-from . import briefing, eventi, store
+from . import briefing, eventi, lavagna, store
 
 TASK_STATES = ["aperto", "in corso", "bloccato", "fatto", "archiviato"]
 POST_STATES = ["idea", "bozza", "approvato", "programmato", "pubblicato", "scartato"]
@@ -81,6 +81,7 @@ def task_add(conn, title, body="", project=None, priority=2, due=None, tags="",
     store.add_event(conn, ts, "task", f"task creato: {title}", body[:200], pid,
                     f"task:{tid}", source, dedup=f"task-new:{tid}")
     eventi.scrivi("task.creato", title, _chiave(conn, pid), {"id": tid, "fonte": source})
+    lavagna.aggiorna_plancia(conn, tid)
     _after_write(conn)
     return task_get(conn, tid)
 
@@ -127,6 +128,7 @@ def task_update(conn, tid, **fields) -> dict:
                         row["project_id"], f"task:{tid}", "plancia", dedup=f"task-done:{tid}")
         eventi.scrivi("task.chiuso", row["title"], _chiave(conn, row["project_id"]),
                       {"id": tid})
+    lavagna.aggiorna_plancia(conn, tid)
     _after_write(conn)
     return row
 

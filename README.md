@@ -18,7 +18,42 @@ Swift for the app.
 
 [Italiano](README.it.md)
 
-![The dashboard](docs/dashboard.png)
+![Plancia for Mac: Today, with one row per project](docs/mac-oggi.png)
+
+*Every screenshot in this README is the app running on the demonstration archive
+(`tools/demo-data.py`), never on anyone's real data.*
+
+## The Mac app
+
+Plancia 2.0 is a native SwiftUI app for macOS 26 or later: the system controls and the
+Liquid Glass materials, a sidebar with six sections, the system search field in the
+toolbar and an inspector on the right. No logo, no web page inside a window.
+
+**Memory as a map.** Every note is a node, coloured by kind, and every project (or kind
+of note, for the ones that belong to none) is an island with its name on the edge. The
+links between islands are drawn as ribbons, so you see at a glance which projects share
+what you know. Hover lights a note and its neighbours, drag a node and its island follows,
+pinch or scroll to zoom. The physics runs off the main thread and stops by itself when
+the picture is still.
+
+![The memory map: islands per project, ribbons for the links between them](docs/mac-memoria.png)
+
+Zoom in and the nodes carry a short human title instead of their file name:
+
+![One island up close, with the titles of its notes](docs/mac-memoria-isola.png)
+
+**Wood.** Settings has a Style: System, or Wood, a modern take on the skeuomorphic dashboard
+of the app icon. Mahogany boards in the sidebar and under the toolbar, solid brass for the
+selection, warm paper for the content. Controls and glass stay the system's.
+
+![The Wood style](docs/mac-legno.png)
+
+**Light and dark**, and text size on ⌘+, ⌘- and ⌘0:
+
+![The memory map in dark](docs/mac-scuro.png)
+
+The sections have their own pictures further down: [Search](#search-inside-what-was-said),
+[Jarvis](#jarvis), [All tasks](#all-tasks) and [Projects](#projects).
 
 ## What it reads
 
@@ -138,13 +173,35 @@ The commands Plancia builds for each system are covered by the suite, but Window
 Linux have had far less real use than macOS: `plancia doctor` tells you what is
 connected.
 
+## The dashboard in the browser
+
+The same data in a browser, on any system with Python: `python3 bin/plancia serve --open`
+(`python bin/plancia serve --open` on Windows). It follows the Mac app: system fonts, six
+sections in a sidebar, Today as one reading column, Tasks as a table with a detail panel,
+Memory with a physics graph on canvas, search in the top field. It installs as a web app
+from the browser menu. This is what Windows and Linux use, and a Mac that cannot run the
+2.0 app.
+
+![Today in the browser](docs/web-oggi.png)
+
+![Tasks in the browser, with the detail panel](docs/web-task.png)
+
+![The memory graph in the browser](docs/web-memoria.png)
+
+![Search in the browser](docs/web-cerca.png)
+
 ## The three ways in
 
 **The app.** A native SwiftUI window (2.0, macOS 26 or later): a sidebar with
 Today, Tasks, Projects, Social, Memory and Archive, the system search field,
-an inspector on the right for whatever you select, and Settings for language
-and appearance. Plus a menu bar item and the voice. It supervises the
-backend, so there is nothing to start by hand. On macOS 13 to 15 the 1.1.0
+an inspector on the right for whatever you select, and Settings for language,
+appearance and style. Style is System (the standard macOS look) or Wood, a warm
+skeuomorphic one with mahogany boards in the sidebar and brass for the selection,
+drawn from the app icon. Text size follows ⌘+, ⌘- and ⌘0 (seven steps, 85% to
+125%). Memory has a third mode, Map: every note as a node in a physics graph you
+can drag, with levels 1, 2 and All and a smooth zoom, running off the main thread.
+Plus a menu bar item and the voice panel. It supervises the backend, so there is
+nothing to start by hand. On macOS 13 to 15 the 1.1.0
 app is the last one that runs; the dashboard in the browser works everywhere. `plancia://recap`,
 `plancia://jarvis`, `plancia://ask?q=…`, `plancia://open?view=projects` and
 `plancia://pdf` are
@@ -178,7 +235,7 @@ unchanged file.
 Every hit comes back verbatim with the file and the line it came from, so you
 reopen the moment instead of reading a summary of it.
 
-![Search](docs/cerca.png)
+![Search: tasks, sessions, memory and the turns themselves](docs/mac-ricerca.png)
 
 ```bash
 plancia cerca "the blending denominator"
@@ -226,10 +283,13 @@ always works. The other passes the same data to Claude Code in headless mode
 (`claude -p`) and gets a better told version in about eight seconds. If Claude
 does not answer in time, the template takes over and you never notice.
 
-Two engines for the voice. [Voicebox](https://github.com/jamiepine/voicebox) if
-its local backend is up, so you get your own cloned voice. Otherwise the macOS
-system voices, which are always there, need no setup and start instantly. Both
-handle Italian, English, Spanish, French, German and Portuguese.
+Two kinds of voice. A local neural one when it answers: Kokoro (not installed by
+default, see Jarvis below), then Pocket, then
+[Voicebox](https://github.com/jamiepine/voicebox) if its backend is up, which is how
+you get your own cloned voice. Otherwise the macOS system voices, which are always
+there, need no setup and start instantly. The system voices handle Italian,
+English, Spanish, French, German and Portuguese; each neural engine covers the
+languages its own voices do.
 
 ```bash
 plancia recap --speak            # today, out loud
@@ -262,37 +322,66 @@ group by anything but a flat list.
 
 ## Jarvis
 
-Hold nothing, press nothing. `⌥Space` anywhere, or `plancia://jarvis`, opens a
-panel that listens continuously and works out you have finished speaking from the
-silence, not from a key you keep held down.
+`⌥Space` anywhere opens a glass panel and turns the microphone on. A waveform follows
+your voice while it listens, the answer scrolls in as it arrives, and it starts
+speaking with the first sentence, not when the whole answer is done.
 
-What it hears goes two ways. Phrases it can recognise with certainty (open a
-view, note a task, close one, re-read the sources, read me the recap) run
-locally in a tenth of a second. Everything else goes to Claude Code in headless
-mode with the `plancia_*` tools open, so it can actually add the task, update the
-project or search the archive, not just answer about it.
+![Jarvis asking for confirmation before it sends an agent](docs/mac-jarvis.png)
 
-There is a text field at the bottom of the panel: it covers the case where the
-microphone is unavailable, and lets you correct a misheard sentence by typing
-instead of repeating it.
+Jarvis reads, and proposes. The model behind the panel is read-only: the tools that
+write are denied by name, not just left off a list. Phrases like "note a task", "I
+did that", "archive Atlas", "do it" or "resume task 4" never run on their own. Each
+one becomes a card that says exactly what would happen (which agent, in which
+folder, whether it may edit files, which session it picks up) and nothing happens
+until you press Confirm on the card. Saying "yes" out loud does not confirm. Esc or
+Cancel throw the card away, and so does closing the panel. The only things that
+happen without a card are opening a view and changing how fast it speaks.
 
-The microphone stays open while it answers, so you can cut it off by simply
-speaking again. Echo cancellation on the input node is what makes that possible:
-without it, it hears its own voice and interrupts itself. Say "cancel" to stop a
-running dispatch, "stop" to close the panel. When a dispatched run finishes it
-tells you out loud, even if you have moved on to something else.
+The microphone opens only when you ask, with the shortcut or the microphone button,
+and you can see it: an orange dot and "Microphone on" in the panel, next to the
+system's own indicator. Recognition runs on the Mac. If dictation for your language
+is not installed for on-device use, it says so and you type; audio never goes to a
+server. It closes by itself after each sentence and reopens only if you turn on
+"Continuous conversation" in the panel menu. Esc or Stop ends everything at once.
+
+The voice is a neural one when there is one: Kokoro first, then Pocket, then
+Voicebox, all running locally, sentence by sentence, so the second sentence is being
+made while the first plays (the first sentence is cut at its commas, so the sound
+starts sooner). Without one it uses the enhanced or premium voices installed on the
+Mac and says so at the bottom of the panel. It never uses the basic robotic voice:
+with none installed it stays text-only and tells you where to download one.
+
+Kokoro is not installed by default. `plancia voce installa` builds a Python
+environment under `<PLANCIA_HOME>/voce`, tells you it will download about 354 MB of
+model files, and asks before doing it. It then runs as one warm background process of
+roughly 450 to 700 MB (about 1 GB for a moment on a long sentence) that starts when
+Jarvis opens and quits after 5 minutes of silence; if it dies or is too slow, the
+next engine speaks and the panel footer says so. The voice per language is
+`voce_kokoro` in config.json (defaults: `if_sara` for Italian, `af_heart` for
+English, `ef_dora` for Spanish; `im_nicola` is a male Italian one). `plancia voce
+prova` says which engine Jarvis would use and why, without playing anything. Tried on
+macOS only.
+
+The text field at the bottom covers the case where the microphone is unavailable.
 
 ```bash
-plancia jarvis "remind me to write the migration note"   # same thing, typed
+plancia jarvis "remind me to write the migration note"   # shows the card, asks [y/N]
 ```
+
+The terminal and the dashboard (Windows and Linux) use the same rules. There is one
+Jarvis, read-only: the old second one, which kept a model with the write tools open
+and ran what you typed, is gone. `plancia jarvis` prints the card and asks you to
+confirm at the keyboard; without a real terminal (a script, a pipe, another agent
+calling it) it never confirms. On the dashboard the card shows up with Confirm and
+Cancel, and the Relaunch button goes through it too.
 
 Claude Code has had [voice input since March 2026](https://claudefa.st/blog/guide/mechanics/voice-mode):
 you hold the spacebar and dictate. It is input only, and by design there is no
-hands-free mode. This is the other half: it speaks back, and it acts.
+hands-free mode. This is the other half: it speaks back, and it can act once you confirm.
 
 ## All tasks
 
-![All tasks](docs/board.png)
+![All tasks, with Resume in the inspector](docs/mac-task.png)
 
 Claude Code keeps its task list in one folder, Codex keeps its goals in a
 different database, Plancia has its own. None of the three knows the other two
@@ -320,12 +409,20 @@ plancia lanci                            # how a background dispatch went
 
 Sending work off in the background is the other, secondary path, for when
 resuming is not what you want: `plancia riprendi 42 --background --scrive
---istruzioni "rerun the ablation"` runs it unattended, on that task's own
-session, and records the outcome. The default is read-only; `--scrive` lets
+--istruzioni "rerun the ablation"` runs it unattended, inside that task's own
+session (`claude -p --resume <id>`, `codex exec resume <id>`, same id, its own
+folder), and records the outcome. It never opens a new session behind your
+back: if the session is still open somewhere nothing starts and you get the
+message to paste (`--copia` asks for a copy instead), and only when the
+session is really lost does a new one start, said before it does. The same
+goes for the Relaunch and Resume buttons, the MCP tool and Jarvis. If the
+ChatGPT/Codex desktop app holds a Codex thread open, the run stops and says
+so instead of failing silently. The default is read-only; `--scrive` lets
 the agent write, and that is a choice you make every time. `plancia manda
 "rerun the ablation" --agente codex --progetto atlas` is the older alias for
 the same thing without a task id: it still works but prints a deprecation
-warning on stderr and is going away in a future release. Inside Claude Code
+warning on stderr and is going away in a future release. The run lives inside
+that command, so it waits for the agent to finish before it exits. Inside Claude Code
 and Codex, the same resume lives behind the `plancia` tool with
 `azione="riprendi"` and the task's `id`.
 
@@ -411,7 +508,7 @@ declared yourself is never touched. By voice: "archive the video project", or
 
 ## Projects
 
-![Projects](docs/projects.png)
+![Projects grouped by area, with the selected one on the right](docs/mac-progetti.png)
 
 A project is whatever you say it is: a GitHub repo, a folder, a memory note, or
 all three. `plancia init` proposes a map from what it finds; you correct it in
@@ -429,12 +526,47 @@ read it before anything changes.
 ```bash
 plancia riordina --proponi                    # writes the proposed map to a file
 plancia riordina --mostra <file>              # prints it as a table
-plancia riordina --applica <file>             # assigns every parent in it
-plancia riordina --annulla <batch>            # undoes exactly that application
+plancia riordina --applica <file>             # assigns the parents, states and mergers in it
+plancia riordina --annulla <batch>            # puts back exactly what it changed
 ```
 
+The file is plain JSON, one row per project, and you can edit it by hand or
+have an agent that has studied your projects write it. Beyond `padre` (the
+parent's key) a row can carry:
+
+```json
+[
+  {"chiave": "old-experiment", "inglobato_in": "atlas",
+   "motivo": "the code now lives inside the atlas folder"},
+  {"chiave": "thesis-draft", "stato": "concluso",
+   "motivo": "handed in last June"}
+]
+```
+
+- `stato`: `attivo`, `archiviato` or `concluso`. Missing means the state is left
+  alone.
+- `inglobato_in`: the project this one was folded into. It means parent = that
+  project, state `archiviato`, and a line "Inglobato in atlas: <reason>" added
+  to the end of the project's summary. If that project cannot be a parent (it
+  is automatic, or is itself a child) the parent is left alone but the state and
+  the line are still written, and `--applica` says so.
+- `motivo`: the reason, one sentence. It is required on every row that has a
+  `stato` or an `inglobato_in`; `--applica` refuses a row without one and
+  `--mostra` marks it `[DA CORREGGERE]`.
+
+`--mostra` prints all of it as one table (key, parent, rule, state, reason).
+A row is all or nothing: if the parent is refused, the state does not change
+(an `inglobato_in` is the one exception, see above). A file that does not parse
+is one line of error, not a traceback, and `--applica` exits with 1 when it
+refused a row.
+A manual project is only touched by a row that names it with a parent, a state
+or an `inglobato_in`; a project that is not in the file is never touched. The
+format is documented in full at the top of `plancia/riordina.py`.
+
 Applying is one batch, and undoing it restores each project's previous parent,
-not just a blank one. Today (the recap view) and Next up group projects by
+state and summary, not just a blank one. Undo works field by field and only
+where the field is still what the batch left: a state you changed by hand
+afterwards, or set with a later batch, is not overwritten. Today (the recap view) and Next up group projects by
 area once this map exists; before it does, they fall back to one flat list, so
 nothing breaks for a fresh install.
 
@@ -543,7 +675,7 @@ Python 3.9+ and Claude Code, on macOS 13 or later, Windows or Linux (see above).
 needs macOS 26 or later, and the Xcode command line tools to build it. `gh` is optional and only used to read your repos.
 
 The native Mac app 2.0 is SwiftUI and needs macOS 26 or later. On macOS 13 to 15 stay on the 1.1.0 app,
-or use the dashboard in the browser (it installs as a web app). The web dashboard is unchanged in 2.0.
+or use the dashboard in the browser (it installs as a web app). The web dashboard was redrawn in 2.0 to match the Mac app (system fonts, sidebar, tables with a detail panel, a physics graph for memory, five-step text size in Settings). The memory graph is drawn as islands: each note sits in its group (the project it belongs to, or the type for who-you-are and preferences notes), a group is a coloured region with a big name, and links between groups are bridges. From far away you read the groups, up close the note titles (the link text in the folder's `MEMORY.md`, or the first sentence of the description, never the slug). The server lays the map out once per memory fingerprint, in a separate low-priority process, and reuses it until notes or links change.
 
 ## Security
 
@@ -579,7 +711,7 @@ warning each time). The full list is in the docstring of `plancia/compartimenti.
 git config core.hooksPath .githooks
 ```
 
-Turns on the hook that runs `python3 tools/prova.py` before every push: 4142
+Turns on the hook that runs `python3 tools/prova.py` before every push: 4952
 checks in a few minutes, against a throwaway archive that never touches
 yours. They cover the schema, the board, the proposals, the search index, the
 recap, the MCP surface and its token budget, every read route of the HTTP API,

@@ -49,33 +49,58 @@ def esegui(prova):
           trovata is not None)
     if trovata:
         corpo = trovata.group(1)
-        prova("la sezione riepilogo non cita più l'immagine projects",
-              "img/projects.png" not in corpo, corpo[:200])
-        prova("la sezione riepilogo non cita l'immagine di Prossimi (today.png)",
-              "img/today.png" not in corpo, corpo[:200])
-        prova("la sezione riepilogo cita davvero l'immagine del riepilogo (recap.png)",
-              "img/recap.png" in corpo, corpo[:200])
+        prova("la sezione riepilogo non cita l'immagine di Prossimi (mac-progetti.png)",
+              "img/mac-progetti.png" not in corpo, corpo[:200])
+        prova("la sezione riepilogo non cita l'immagine di Riprendi (mac-task.png)",
+              "img/mac-task.png" not in corpo, corpo[:200])
+        prova("la sezione riepilogo cita davvero il pannello Jarvis con la scheda (mac-jarvis.png)",
+              "img/mac-jarvis.png" in corpo, corpo[:200])
 
     # --------------------------------------- le sezioni Prossimi e Riprendi
     # LOTTO-L4-SITO punto 1: al posto della vecchia "lavagna" (che vendeva il
     # lancio) vanno una sezione Prossimi (con lo screenshot del pannello, gia'
-    # in img/today.png) e una sezione Riprendi (con img/board.png, la vista
-    # "Tutti i task"). Rosso sulla base, dove nessuna delle due esisteva.
+    # in img/mac-progetti.png: i progetti per area) e una sezione Riprendi (con
+    # img/mac-task.png, la vista "Task" col pulsante Riprendi). Rosso sulla base, dove
+    # nessuna delle due esisteva.
     trovata_prossimi = sezione("prossimi").search(testo)
     prova("la sezione Prossimi si trova (marcata dal commento HTML)",
           trovata_prossimi is not None)
     if trovata_prossimi:
         corpo = trovata_prossimi.group(1)
-        prova("la sezione Prossimi cita l'immagine del pannello Prossimi (today.png)",
-              "img/today.png" in corpo, corpo[:200])
+        prova("la sezione Prossimi cita l'immagine dei progetti per area (mac-progetti.png)",
+              "img/mac-progetti.png" in corpo, corpo[:200])
 
     trovata_riprendi = sezione("riprendi").search(testo)
     prova("la sezione Riprendi si trova (marcata dal commento HTML)",
           trovata_riprendi is not None)
     if trovata_riprendi:
         corpo = trovata_riprendi.group(1)
-        prova("la sezione Riprendi cita l'immagine di Tutti i task (board.png)",
-              "img/board.png" in corpo, corpo[:200])
+        prova("la sezione Riprendi cita l'immagine dei Task (mac-task.png)",
+              "img/mac-task.png" in corpo, corpo[:200])
+        prova("la sezione Riprendi dice che riprende la sessione che ha salvato il task (en e it)",
+              "that very session" in corpo and "proprio quella sessione" in corpo, corpo[:200])
+
+    # --------------------------- le sezioni della 2.0: la memoria, il legno, il web
+    for nome, immagine, parole in (
+            ("memoria", "img/mac-memoria.png", ("Islands", "Isole")),
+            ("legno", "img/mac-legno.png", ("Wood", "Legno")),
+            ("web", "img/web-memoria.png", ("browser", "browser"))):
+        trovata_n = sezione(nome).search(testo)
+        prova("la sezione %s si trova (marcata dal commento HTML)" % nome, trovata_n is not None)
+        if trovata_n:
+            corpo = trovata_n.group(1)
+            prova("la sezione %s cita la sua immagine (%s)" % (nome, immagine.split("/")[1]),
+                  immagine in corpo, corpo[:200])
+            prova("la sezione %s e' scritta in inglese e in italiano" % nome,
+                  parole[0] in corpo and parole[1] in corpo and 'data-lingua="en"' in corpo
+                  and 'data-lingua="it"' in corpo, corpo[:200])
+    prova("il sito non cita piu' le immagini della 1.x (today, board, projects, recap, cerca)",
+          not re.search(r"img/(today|board|projects|recap|cerca)\.png", testo))
+    prova("l'immagine social (og:image) e' una di quelle che il sito ha davvero",
+          'og:image" content="https://nerln.github.io/plancia/img/mac-oggi.png"' in testo
+          and (RADICE / "site" / "img" / "mac-oggi.png").exists())
+    pesanti = [f.name for f in (RADICE / "site" / "img").glob("*.png") if f.stat().st_size > 1_000_000]
+    prova("ogni PNG del sito pesa meno di 1 MB", not pesanti, str(pesanti))
 
     # -------------------------------------------------------------- gergo
     prova("\"20 tool\" non compare nel sito (sono 7 schemi dietro un dispatcher)",

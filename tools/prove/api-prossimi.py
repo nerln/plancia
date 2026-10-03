@@ -11,7 +11,7 @@ litiga con quello che tools/prova.py apre sulla 7791 né con quelli degli
 altri lotti in corso.
 
 Usa PLANCIA_HOME, il database di prova che tools/prova.py ha già aperto
-(mai ~/.plancia, il vero archivio di Eugenio): api.Handler chiama sempre
+(mai ~/.plancia, il vero archivio dell'utente): api.Handler chiama sempre
 store.connect(), quindi non si può passare un archivio in memoria a parte.
 Per non sporcare i dati di un altro file sotto tools/prove/, ogni chiave qui
 è prefissata 'vista-' (verificato con grep: nessun altro file del repo la

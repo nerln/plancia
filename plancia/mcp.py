@@ -164,7 +164,9 @@ _TUTTI = [
             "read and plan but never write; modo='esegui' lets it modify files in the "
             "project folder. Only use 'esegui' when the user asked for the work to be "
             "actually done. Returns immediately with a run id; check it with "
-            "plancia_lanci."),
+            "plancia_lanci. With task_id it continues the task's own session when it "
+            "can (closed: same session; open: nothing starts, the message to paste is "
+            "returned; lost: a new session, said in the answer)."),
         "inputSchema": _s("", titolo=STR, dettaglio=STR, progetto=STR, istruzioni=STR,
                           agente={**STR, "description": "claude or codex"},
                           modo={**STR, "description": "proposta or esegui"},
@@ -196,13 +198,17 @@ _TUTTI = [
             "persa: still open, closed with a transcript, or nothing to resume), or "
             "just check that state. id is required. apri=true launches the resume "
             "command in a visible terminal, or reports the clipboard message when the "
-            "session is still open (viva). background=true dispatches it in the "
-            "background instead, forking the existing session when there is one "
-            "(scrive=true lets it modify files, istruzioni adds instructions). Without "
-            "apri or background it only reports the state, the ready command and the "
-            "message, without launching anything."),
+            "session is still open (viva). background=true dispatches it headless "
+            "IN THE SAME session the task saved (closed: same session id, in its own "
+            "folder; open: nothing starts and the message to paste is returned, unless "
+            "copia=true asks for a copy; lost: a new session, said in the answer's "
+            "piano). scrive=true lets it modify files, istruzioni adds instructions. "
+            "Without apri or background it only reports the state, the plan (what "
+            "background would do), the ready command and the message, without "
+            "launching anything."),
         "inputSchema": _s("", id=INT, apri={"type": "boolean"}, background={"type": "boolean"},
-                          scrive={"type": "boolean"}, istruzioni=STR),
+                          scrive={"type": "boolean"}, istruzioni=STR,
+                          copia={"type": "boolean"}),
     },
 ]
 
@@ -604,11 +610,16 @@ def call_tool(name: str, args: dict) -> str:
                     raise actions.BadInput(
                         "da un compartimento nominato plancia_manda vuole un "
                         "progetto del compartimento (progetto=...).")
-            return _fmt(cantiere.avvia(
+            # LOTTO 21-RIPRENDI: con un task il lavoro riprende la SUA sessione
+            # (riprendi.lancia decide: chiusa = stessa sessione, viva = niente
+            # da lanciare, persa = nuova), non una creata apposta
+            from . import riprendi as _riprendi
+            return _fmt(_riprendi.lancia(
                 conn, titolo, args.get("dettaglio", ""), progetto,
                 args.get("istruzioni", ""), args.get("agente", "claude"),
-                args.get("modo", "proposta"), None, args.get("task_id"),
-                compartimento=tag_comp))
+                False, None, args.get("task_id"),
+                modo=args.get("modo", "proposta"), compartimento=tag_comp,
+                lett=lettura))
 
         if name == "plancia_lanci":
             if args.get("id"):
@@ -645,27 +656,21 @@ def call_tool(name: str, args: dict) -> str:
             if args.get("apri"):
                 return _fmt(_riprendi.apri(task, conn))
             if args.get("background"):
-                # Stessa logica del ramo background di api.py e cmd_riprendi:
-                # fork della sessione quando c'e' (viva o chiusa), altrimenti
-                # cantiere.avvia() scrive da solo un prompt da zero (persa).
-                # Nome locale `sessione_fork`, non `sessione`: il modulo
-                # `sessione` (plancia/sessione.py) e' importato in cima a
-                # questo file e usato piu' sopra, in plancia_task_add
-                # (`sessione.corrente()`) - una variabile locale chiamata
-                # come lui lo ombreggia per l'INTERA funzione `call_tool`
-                # (regola di scoping di Python: un'assegnazione in un punto
-                # qualsiasi del corpo rende il nome locale ovunque nel
-                # corpo), e task_add falliva con UnboundLocalError perche'
-                # leggeva quel nome prima che questo ramo lo assegnasse mai.
-                sessione_fork = _riprendi.sessione_da_riprendere(s)
-                return _fmt(cantiere.avvia(
+                # Stessa porta di api.py e cmd_riprendi (riprendi.lancia):
+                # chiusa = stessa sessione, viva = niente da lanciare,
+                # persa = sessione nuova, detto in `piano`.
+                return _fmt(_riprendi.lancia(
                     conn, task.get("title") or "", "", task.get("project_key"),
                     args.get("istruzioni", ""), s.get("agent") or task.get("agent") or "claude",
-                    bool(args.get("scrive")), None, task["id"], sessione=sessione_fork,
-                    compartimento=tag_comp))
+                    bool(args.get("scrive")), None, task["id"], task=task,
+                    copia=bool(args.get("copia")), compartimento=tag_comp))
             argv = _riprendi.comando(task, s, lettura)
+            piano = _riprendi.piano(lettura, s.get("agent"), s.get("session_id"),
+                                    s.get("cwd"), task.get("host") or "",
+                                    bool(args.get("copia")), task.get("project_key"))
             return _fmt({"stato": s.get("stato"), "motivo": s.get("motivo"),
                         "sessione": s.get("session_id"), "cwd": s.get("cwd"),
+                        "piano": piano,
                         "comando": argv, "messaggio": _riprendi.messaggio(task)})
 
         raise actions.BadInput(f"tool sconosciuto: {name}")

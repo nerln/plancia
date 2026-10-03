@@ -733,6 +733,10 @@ def main():
     chiamate = {m.split("?")[0].rstrip("/") for m in re.findall(r"/api/[a-z/_]+", js)}
     serve = set(re.findall(r'path == "(/api/[a-z_/]+)"', api_py))
     serve |= {m.rstrip("/") for m in re.findall(r'\^(/api/[a-z_/]+)/', api_py)}
+    # Le rotte di Jarvis (`/api/jarvis/...`) le smista `jarvis.rotta`, che le
+    # confronta una per una con `percorso == "..."`: si contano anche quelle.
+    jarvis_py = (RADICE / "plancia" / "jarvis.py").read_text(encoding="utf-8")
+    serve |= set(re.findall(r'percorso == "(/api/[a-z_/]+)"', jarvis_py))
     fantasma = sorted(chiamate - serve - {"/api"})
     prova("il front non chiama rotte che non esistono",
           not fantasma, ", ".join(fantasma))
@@ -757,11 +761,12 @@ def main():
     prova("app.js non legge il riepilogo prima di averlo",
           app_js.index("const d = r.data;") > app_js.index("solo_cache=1"))
     # L'altra meta' del contratto qui sopra: chi chiama /api/search deve aprire
-    # l'oggetto. Due punti di chiamata, la vista Cerca e la palette, e uno dei
-    # due era rimasto indietro.
+    # l'oggetto. Dalla seconda passata di Plancia 2.0 il punto di chiamata e' uno
+    # solo, il campo di ricerca in alto (cercaOra): la vista Cerca e la palette
+    # non esistono piu'.
     chiamate = app_js.count("'/api/search?q='")
     prova("ogni chiamata a /api/search apre l'oggetto",
-          chiamate == 2 and app_js.count("d.turni || []") == 2, f"{chiamate} chiamate")
+          chiamate == 1 and app_js.count("d.turni || []") == 1, f"{chiamate} chiamate")
     # La prova va sempre contata, con o senza node: se sparisce quando node
     # manca, il numero totale di prove eseguite cambia da una macchina
     # all'altra (188 senza node, 189 con), il README dichiara un solo numero

@@ -116,33 +116,32 @@ def _prova_albero_chiuso_solo_cartelle_viste(prova, sorgente):
     # quell'area sola. Qui si cerca il confronto esplicito su padre.key
     # vicino alla variabile 'chiusa', e si esclude che le vecchie stringhe
     # fisse siano ancora nel markup del padre.
-    inizio = sorgente.index("function alberoPadre(")
-    fine = sorgente.index("\n}", inizio)
-    corpo = sorgente[inizio:fine]
-    prova("alberoPadre confronta la chiave del padre con 'cartelle-viste' "
-          "per decidere se nasce chiuso (non tutti i padri)",
-          bool(re.search(r"chiusa\s*=\s*padre\.key\s*===\s*['\"]cartelle-viste['\"]", corpo)),
-          corpo[:400])
-    prova("il markup del padre non forza più 'card chiusa' per tutti",
-          not re.search(r"""albero-padre card chiusa["'`]""", corpo), corpo[:400])
-    prova("il markup dei figli non forza più 'hidden' per tutti",
+    # Seconda passata (WEB): il padre non e' piu' una card ma una riga con la
+    # sua disclosure (views.progetti); lo stato aperto/chiuso sta in un Set.
+    prova("solo 'cartelle-viste' nasce chiusa: chiusiAlbero = new Set(['cartelle-viste'])",
+          "const chiusiAlbero = new Set(['cartelle-viste'])" in sorgente, "")
+    inizio = sorgente.index("views.progetti = async")
+    corpo = sorgente[inizio:sorgente.index("DETTAGLI.progetti = async")]
+    prova("il blocco del padre usa chiusiAlbero.has(p.key), non una chiusura per tutti",
+          "chiusiAlbero.has(p.key)" in corpo, corpo[:300])
+    prova("il markup dei figli non forza 'hidden' per tutti",
           'class="albero-figli" hidden>' not in corpo, corpo[:400])
+    prova("il pulsante del padre usa il numero dei figli tradotto (progettiN) oppure la sola disclosure",
+          "albero-toggle" in corpo, "")
 
 
 CLASSI_CONCORDATE = (
-    "prossimi", "prossimi-area", "prossimi-area-nome", "prossimi-area-conta",
-    "prossimi-riga", "prossimi-progetto", "prossimi-cosa", "prossimi-fonte",
-    "fonte-task", "fonte-next", "fonte-vuoto", "prossimi-scadenza",
-    "prossimi-quando", "prossimi-altri", "prossimi-vuoto",
-    "albero", "albero-padre", "albero-toggle", "albero-figli", "albero-figlio",
-    "albero-totali", "chiusa",
+    "prossimi", "prossimi-area", "prossimi-area-nome",
+    "prossimi-riga", "prossimi-progetto", "prossimi-cosa", "prossimi-scadenza",
+    "prossimi-vuoto",
+    "albero-padre", "albero-figli", "chiusa",
     "cassetto-dopo", "cassetto-dopo-lista",
 )
 
 
 def _prova_classi(prova, sorgente):
     mancanti = [c for c in CLASSI_CONCORDATE if c not in sorgente]
-    prova("tutte le classi concordate con L2-GLASS compaiono nel JS",
+    prova("le classi di Prossimi, dell'albero e del cassetto compaiono ancora nel JS",
           not mancanti, str(mancanti))
 
 

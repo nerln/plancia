@@ -4,6 +4,7 @@
 // La lancia tools/prova-mac.sh (compila Core/*.swift insieme a questo file).
 
 import Foundation
+import Observation
 
 @MainActor var falliti = 0
 @MainActor var passati = 0
@@ -20,6 +21,9 @@ func decodificatore() -> JSONDecoder {
 }
 
 func dati(_ percorso: String) -> Data? { FileManager.default.contents(atPath: percorso) }
+
+/// Una scatola per sapere, da un callback, se e' scattato.
+final class Segnale: @unchecked Sendable { var scattato = false }
 
 @main
 struct ProvaCore {
@@ -124,6 +128,149 @@ struct ProvaCore {
         prova("la ricerca sul server torna risultati", a.risultatiPer == "plancia" && !(a.risultati?.schede ?? []).isEmpty)
         a.azzeraRicerca()
         prova("azzerare la ricerca svuota i risultati", a.risultati == nil && a.ricerca.isEmpty)
+
+        print("== concorrenza")
+        // il server finto scrive ogni richiesta nel registro e legge il ritardo da <registro>.ritardo
+        let registro = ProcessInfo.processInfo.environment["PLANCIA_PROVA_REGISTRO"] ?? ""
+        func ritardo(_ ms: Int) { try? Data("\(ms)".utf8).write(to: URL(fileURLWithPath: registro + ".ritardo")) }
+        func righeRegistro() -> [String] {
+            ((try? String(contentsOfFile: registro, encoding: .utf8)) ?? "").split(separator: "\n").map(String.init)
+        }
+        func quante(_ pezzo: String) -> Int { righeRegistro().filter { $0.contains(pezzo) }.count }
+        let cli = Cliente()
+
+        let r0 = Cliente.contatori.richieste
+        async let p1 = cli.ottieni(Status.self, "/api/lento", query: ["ms": "300"])
+        async let p2 = cli.ottieni(Status.self, "/api/lento", query: ["ms": "300"])
+        let (s1, s2) = (try? await p1, try? await p2)
+        prova("due letture uguali insieme fanno una richiesta sola",
+              s1 != nil && s2 != nil && Cliente.contatori.richieste - r0 == 1,
+              "\(Cliente.contatori.richieste - r0) richieste")
+
+        let annullata = Task { try? await cli.ottieni(Status.self, "/api/lento", query: ["ms": "1500"]) }
+        try? await Task.sleep(nanoseconds: 150_000_000)
+        annullata.cancel()
+        try? await Task.sleep(nanoseconds: 300_000_000)
+        prova("annullare una lettura la interrompe davvero", Cliente.contatori.inVolo == 0,
+              "\(Cliente.contatori.inVolo) in volo")
+
+        let ta = Task { try? await cli.ottieni(Status.self, "/api/lento", query: ["ms": "500"]) }
+        let tb = Task { try? await cli.ottieni(Status.self, "/api/lento", query: ["ms": "500"]) }
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        ta.cancel()
+        let rb = await tb.value
+        prova("se uno dei due che aspettano se ne va, l'altro riceve la risposta", rb != nil)
+
+        ritardo(150)
+        let q0 = Cliente.contatori.richieste
+        let solo = Archivio(cliente: Cliente())
+        await solo.carica(.task)
+        let singolo = Cliente.contatori.richieste - q0
+        prova("una sezione si carica con qualche richiesta", singolo >= 4 && singolo <= 8, "\(singolo)")
+
+        let doppio = Archivio(cliente: Cliente())
+        let q1 = Cliente.contatori.richieste
+        async let x1: Void = doppio.carica(.task)
+        async let x2: Void = doppio.carica(.task)
+        _ = await (x1, x2)
+        prova("due caricamenti insieme della stessa sezione ne fanno uno",
+              Cliente.contatori.richieste - q1 == singolo,
+              "\(Cliente.contatori.richieste - q1) richieste invece di \(singolo)")
+
+        doppio.vai(.task)
+        let q2 = Cliente.contatori.richieste
+        async let f1: Void = doppio.aggiorna()
+        async let f2: Void = doppio.aggiorna()
+        async let f3: Void = doppio.aggiorna()
+        _ = await (f1, f2, f3)
+        prova("tre ricariche forzate insieme fanno al massimo due letture della sezione",
+              Cliente.contatori.richieste - q2 <= 2 * singolo,
+              "\(Cliente.contatori.richieste - q2) richieste, una lettura ne fa \(singolo)")
+
+        ritardo(400)
+        let via = Archivio(cliente: Cliente())
+        let lasciata = Task { await via.carica(.memoria) }
+        try? await Task.sleep(nanoseconds: 120_000_000)
+        lasciata.cancel()
+        await lasciata.value
+        try? await Task.sleep(nanoseconds: 250_000_000)
+        prova("lasciare una sezione interrompe le sue richieste", Cliente.contatori.inVolo == 0,
+              "\(Cliente.contatori.inVolo) in volo")
+        prova("una sezione lasciata non conta come errore",
+              via.ultimoErrore == nil && via.raggiungibile, via.ultimoErrore ?? "raggiungibile: \(via.raggiungibile)")
+
+        ritardo(0)
+        let mem = Archivio(cliente: Cliente())
+        mem.vai(.memoria)
+        await mem.carica(.memoria)
+        let m0 = quante("/api/memoria/mappa")
+        try? await Task.sleep(nanoseconds: 3_300_000_000)   // oltre la freschezza della sezione
+        await mem.passoDiSottofondo()
+        await mem.passoDiSottofondo()
+        prova("il ciclo di sottofondo non rilegge la mappa della memoria", quante("/api/memoria/mappa") == m0,
+              "\(quante("/api/memoria/mappa") - m0) letture in piu'")
+        await mem.aggiorna()
+        prova("⌘R rilegge la mappa", quante("/api/memoria/mappa") == m0 + 1,
+              "\(quante("/api/memoria/mappa") - m0) letture in piu'")
+
+        let quieto = Archivio(cliente: Cliente())
+        await quieto.carica(.task)
+        let segnale = Segnale()
+        withObservationTracking { _ = quieto.sottotitolo; _ = quieto.ultimoAggiornamento } onChange: { segnale.scattato = true }
+        let minuto = Int(Date().timeIntervalSince1970 / 60)
+        await quieto.aggiorna()
+        prova("un ricaricamento a dati fermi non cambia il sottotitolo",
+              !segnale.scattato || Int(Date().timeIntervalSince1970 / 60) != minuto)
+
+        #if !SENZA_IMPRONTA
+        let l1 = try? await cli.leggi(Status.self, "/api/status")
+        var impronta: Int?
+        if case .nuova(_, let i)? = l1 { impronta = i }
+        prova("una lettura senza impronta torna la risposta", impronta != nil)
+        let l2 = try? await cli.leggi(Status.self, "/api/status", nota: impronta)
+        var invariata = false
+        if case .invariata? = l2 { invariata = true }
+        prova("gli stessi byte con la stessa impronta tornano invariati", invariata)
+        let l3 = try? await cli.leggi(Compartimenti.self, "/api/compartimenti", nota: impronta)
+        var nuova = false
+        if case .nuova? = l3 { nuova = true }
+        prova("un'impronta diversa torna la risposta", nuova)
+        #endif
+
+        print("== date")
+        let isoV = ISO8601DateFormatter(); isoV.formatOptions = [.withInternetDateTime]
+        let isoF = ISO8601DateFormatter(); isoF.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let giornoV = DateFormatter(); giornoV.locale = Locale(identifier: "en_US_POSIX"); giornoV.dateFormat = "yyyy-MM-dd"
+        func vecchia(_ s: String) -> Date? {
+            isoV.date(from: s) ?? isoF.date(from: s) ?? giornoV.date(from: String(s.prefix(10)))
+        }
+        var diverse: [String] = []
+        for t in ["2026-09-29T20:06:31Z", "2026-09-29T20:06:31.123Z", "2026-09-29T20:06:31.5+02:00",
+                  "2026-01-01T00:00:00-05:30", "2024-02-29T23:59:59Z", "2023-02-29T10:00:00Z",
+                  "2026-02-30T10:00:00Z", "2026-09-29T20:06:31", "2026-09-29", "garbage",
+                  "2026-13-01T00:00:00Z", "2026-09-29T24:00:00Z", "2026-09-29 20:06:31Z",
+                  "1969-12-31T23:59:59Z", "2100-02-28T12:00:00Z", "2026-09-29T20:06:31+0200"] {
+            let v = vecchia(t), n = Tempo.data(t)
+            let uguali = (v == nil && n == nil) || (v != nil && n != nil && abs(v!.timeIntervalSince(n!)) < 0.001)
+            if !uguali { diverse.append(t) }
+        }
+        prova("Tempo.data da' lo stesso risultato dei formattatori su date buone e cattive", diverse.isEmpty,
+              diverse.joined(separator: ", "))
+        let ieri = Date().addingTimeInterval(-2 * 3600)
+        let ieriISO = isoV.string(from: ieri)
+        Lingua.condivisa.codice = "it"
+        let inItaliano = Tempo.relativo(ieriISO)
+        prova("Tempo.relativo dice quanto tempo fa, uguale alla seconda volta",
+              !inItaliano.isEmpty && Tempo.relativo(ieriISO) == inItaliano, inItaliano)
+        Lingua.condivisa.codice = "en"
+        let inInglese = Tempo.relativo(ieriISO)
+        prova("Tempo.relativo segue la lingua anche con la memoria dei valori", !inInglese.isEmpty && inInglese != inItaliano,
+              "\(inItaliano) / \(inInglese)")
+        Lingua.condivisa.codice = "it"
+        prova("Tempo.relativo di niente e' vuoto", Tempo.relativo(nil) == "" && Tempo.relativo("boh") == "")
+        prova("Tempo.scaduto: ieri si', domani no",
+              Tempo.scaduto(isoV.string(from: Date().addingTimeInterval(-86400 * 2))) &&
+              !Tempo.scaduto(isoV.string(from: Date().addingTimeInterval(86400 * 2))) && !Tempo.scaduto(nil))
 
         print("== scritture e compartimento")
         let esito = await a.imposta(task: 3, stato: "fatto")

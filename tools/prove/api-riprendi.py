@@ -58,7 +58,7 @@ _finti = _carica_finti()
 if str(RADICE) not in sys.path:
     sys.path.insert(0, str(RADICE))
 
-PORTA = 7793
+PORTA = int(os.environ.get("PLANCIA_PROVA_PORTA_API", 7793))
 
 
 @contextlib.contextmanager
@@ -220,7 +220,8 @@ def esegui(prova) -> None:
         agents_json = tmp / "agents.json"
         agents_json.write_text(json.dumps([{"sessionId": "sid-viva"}]), "utf-8")
 
-        cwd_chiusa = "/tmp/prova-riprendi-chiusa"
+        cwd_chiusa = str(tmp / "cwd-chiusa")
+        os.makedirs(cwd_chiusa)
         t_chiusa = actions.task_add(conn, "prova riprendi chiusa", session_id="sid-chiusa",
                                     cwd=cwd_chiusa, agent="claude", host=host_vero)
         cartella_progetto = claude_vuota / "projects" / richiamo.cartella_sessione(cwd_chiusa)
@@ -264,7 +265,7 @@ def esegui(prova) -> None:
         prova("...e l'argv lanciato non contiene --resume (persa riparte da zero)",
               "--resume" not in contenuto, contenuto[:200])
 
-        # --- POST background: fork della sessione quando c'è ------------
+        # --- POST background: la STESSA sessione quando c'è (21-RIPRENDI) -
         # PLANCIA_AGENTS_JSON qui non serve a costruire lo stato (quello lo
         # fa già il jsonl finto: senza il file di sessione, `_claude_vivo`
         # cadrebbe sul secondo passo e lancerebbe `claude agents --json` per
@@ -282,10 +283,10 @@ def esegui(prova) -> None:
         cmd_lanciato = catturati[0] if catturati else []
         prova("POST background fa davvero lanciare un comando a cantiere",
               bool(cmd_lanciato), "nessun Popen chiamato entro 5 secondi")
-        prova("...con --fork-session, perché il task ha già una sessione da riprendere",
-              "--fork-session" in cmd_lanciato, str(cmd_lanciato))
+        prova("...SENZA --fork-session: il lavoro continua nella sessione del task, non in una copia",
+              "--fork-session" not in cmd_lanciato, str(cmd_lanciato))
         prova("...e con --resume sulla sessione DEL TASK, non su una nuova",
-              "sid-chiusa" in cmd_lanciato, str(cmd_lanciato))
+              "sid-chiusa" in cmd_lanciato and "--resume" in cmd_lanciato, str(cmd_lanciato))
 
         # --- MCP: l'azione 'riprendi' del dispatcher --------------------
         _prova_mcp(prova, claude_vuota, t_persa["id"])
@@ -421,20 +422,33 @@ def _prova_cantiere_scrive_bool(prova, cantiere, tmp) -> None:
 
 
 def _prova_cantiere_sessione_forka(prova, cantiere, tmp) -> None:
-    """L3-RIPRENDI-UI-4 (obbligatoria del critico, "occhi di Eugenio"): il
+    """L3-RIPRENDI-UI-4 (obbligatoria del critico, "occhi dell'utente"): il
     modulo "In background" senza un task_id (righe della lavagna venute da
     Claude/Codex, che una sessione la hanno già, plancia/lavagna.py) partiva
-    sempre da zero - /api/cantiere non inoltrava mai `sessione` a
-    `cantiere.avvia()`, che però la accetta già (--resume --fork-session).
-    Qui si controlla il contratto HTTP: con `sessione` nel corpo, l'argv
-    lanciato porta --resume <sessione> --fork-session; senza, non li porta."""
+    sempre da zero - /api/cantiere non inoltrava mai `sessione`.
+
+    21-RIPRENDI: con `sessione` (chiusa, con la sua cartella) l'argv lanciato
+    porta --resume <sessione> SENZA --fork-session (la stessa sessione, non
+    una copia); senza `sessione` non porta ne' l'uno ne' l'altro. Il giro
+    completo per tutti i casi (viva, persa, codex, MCP, CLI, Jarvis) sta in
+    tools/prove/riprendi-stessa-sessione.py."""
+    from plancia import config, richiamo
+    cwd = str(tmp / "cwd-da-riprendere")
+    os.makedirs(cwd)
+    cartella = config.CLAUDE_DIR / "projects" / richiamo.cartella_sessione(cwd)
+    cartella.mkdir(parents=True)
+    (cartella / "sid-da-riprendere.jsonl").write_text('{"type":"summary"}\n', "utf-8")
+    agents_vuoto = tmp / "agents-vuoto-cantiere.json"
+    agents_vuoto.write_text("[]", "utf-8")
     with _popen_finto_sicuro(cantiere, tmp, 1, prova, "POST /api/cantiere (con sessione)") as cat_con:
-        _http("/api/cantiere", "POST",
-             {"titolo": "prova cantiere sessione", "sessione": "sid-da-riprendere"})
+        with _ambiente(PLANCIA_AGENTS_JSON=str(agents_vuoto)):
+            _http("/api/cantiere", "POST",
+                 {"titolo": "prova cantiere sessione", "sessione": "sid-da-riprendere",
+                  "cwd": cwd})
     cmd_con = cat_con[0] if cat_con else []
-    prova("POST /api/cantiere con 'sessione' nel corpo fa un lancio con --resume/--fork-session",
-          "--resume" in cmd_con and "sid-da-riprendere" in cmd_con and "--fork-session" in cmd_con,
-          str(cmd_con))
+    prova("POST /api/cantiere con 'sessione' nel corpo fa un lancio con --resume, senza --fork-session",
+          "--resume" in cmd_con and "sid-da-riprendere" in cmd_con
+          and "--fork-session" not in cmd_con, str(cmd_con))
 
     with _popen_finto_sicuro(cantiere, tmp, 1, prova, "POST /api/cantiere (senza sessione)") as cat_senza:
         _http("/api/cantiere", "POST", {"titolo": "prova cantiere senza sessione"})

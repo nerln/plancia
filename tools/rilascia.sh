@@ -64,6 +64,11 @@ echo "==> controlli"
 python3 -m compileall -q plancia >/dev/null
 node --check web/app.js 2>/dev/null || echo "    (node non c'è, salto il controllo di app.js)"
 python3 tools/prova.py || { echo "il collaudo non passa: non si rilascia" >&2; exit 1; }
+# La 2.0 ha anche il web, l'app Mac e il pannello Jarvis: prova.py da sola non li copre, e il DMG
+# contiene l'app. Le tre prove sotto saltano da sole dove manca quello che serve (Chrome, macOS).
+python3 tools/prova-front.py || { echo "la prova del web non passa: non si rilascia" >&2; exit 1; }
+bash tools/prova-mac.sh || { echo "la prova dell'app Mac non passa: non si rilascia" >&2; exit 1; }
+bash tools/prova-jarvis-mac.sh || { echo "la prova del pannello Jarvis non passa: non si rilascia" >&2; exit 1; }
 
 # 3. la app
 echo "==> compilo"

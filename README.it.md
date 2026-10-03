@@ -17,7 +17,44 @@ installare: Python 3 con la sua libreria standard, Swift per l'app.
 
 [English](README.md)
 
-![La dashboard](docs/dashboard.png)
+![Plancia per Mac: Oggi, con una riga per progetto](docs/mac-oggi.png)
+
+*Ogni schermata di questo README è l'app che gira sull'archivio dimostrativo
+(`tools/demo-data.py`), mai sui dati di qualcuno.*
+
+## L'app per Mac
+
+Plancia 2.0 è un'app nativa in SwiftUI per macOS 26 o più recente: i controlli di
+sistema e i materiali Liquid Glass, una barra laterale con sei sezioni, il campo di
+ricerca di sistema nella barra degli strumenti e un Inspector a destra. Niente logo,
+niente pagina web dentro una finestra.
+
+**La memoria come mappa.** Ogni scheda è un nodo, colorato per tipo, e ogni progetto (o
+tipo di scheda, per quelle che non appartengono a nessuno) è un'isola con il nome sul
+bordo. I legami tra le isole sono nastri, così si vede a colpo d'occhio quali progetti
+condividono quello che sai. Il passaggio del mouse accende una scheda e le sue vicine,
+trascinando un nodo l'isola lo segue, pizzico o rotellina per lo zoom. La fisica gira
+fuori dal thread principale e si ferma da sola quando l'immagine sta ferma.
+
+![La mappa della memoria: isole per progetto, nastri per i legami](docs/mac-memoria.png)
+
+Avvicinandosi, i nodi portano un titolo breve e leggibile invece del nome del file:
+
+![Un'isola da vicino, con i titoli delle sue schede](docs/mac-memoria-isola.png)
+
+**Legno.** Nelle Impostazioni c'è lo Stile: Sistema, oppure Legno, una versione moderna
+della dashboard skeuomorfica dell'icona. Tavole di mogano nella barra laterale e sotto la
+barra degli strumenti, ottone pieno per la selezione, carta calda per il contenuto. I
+controlli e il vetro restano quelli di sistema.
+
+![Lo stile Legno](docs/mac-legno.png)
+
+**Chiaro e scuro**, e la dimensione del testo con ⌘+, ⌘- e ⌘0:
+
+![La mappa della memoria in scuro](docs/mac-scuro.png)
+
+Le altre sezioni hanno le loro immagini più sotto: [la ricerca](#cercare-dentro-quello-che-è-stato-detto),
+[Jarvis](#jarvis), [Tutti i task](#tutti-i-task) e [Progetti](#progetti).
 
 ## Cosa raccoglie
 
@@ -136,13 +173,35 @@ forza i comandi, per una macchina dove sono finti. I comandi che Plancia costrui
 dalla suite, ma Windows e Linux hanno avuto molto meno uso reale di macOS: `plancia doctor`
 dice cosa è collegato.
 
+## La dashboard nel browser
+
+Gli stessi dati in un browser, su qualsiasi sistema con Python: `python3 bin/plancia serve --open`
+(`python bin/plancia serve --open` su Windows). Segue l'app per Mac: font di sistema, sei
+sezioni in una barra laterale, Oggi come una colonna di lettura, Task come una tabella
+con un pannello di dettaglio, Memoria con un grafo a fisica su canvas, la ricerca nel campo
+in alto. Si installa come app web dal menu del browser. È quello che usano Windows e Linux,
+e un Mac che non può far girare l'app 2.0.
+
+![Oggi nel browser](docs/web-oggi.png)
+
+![I task nel browser, con il pannello di dettaglio](docs/web-task.png)
+
+![Il grafo della memoria nel browser](docs/web-memoria.png)
+
+![La ricerca nel browser](docs/web-cerca.png)
+
 ## Le tre porte
 
 **L'app.** Finestra nativa in SwiftUI (2.0, macOS 26 o più recente): barra
 laterale con Oggi, Task, Progetti, Social, Memoria e Archivio, il campo di
 ricerca di sistema, un Inspector a destra per quello che selezioni, e le
-Impostazioni per lingua e aspetto. Più la voce nella barra dei menu. Tiene su
-il backend da sola. Su macOS 13-15 l'ultima app che gira è la 1.1.0; la
+Impostazioni per lingua, aspetto e stile. Lo stile è Sistema (il macOS di
+sempre) oppure Legno, uno skeuomorfico moderno con tavole di mogano nella barra
+laterale e l'ottone per la selezione, preso dall'icona. La dimensione del testo
+segue ⌘+, ⌘- e ⌘0 (sette passi, da 85% a 125%). Memoria ha un terzo modo, Mappa:
+tutte le note come nodi di un grafo con fisica, da trascinare, coi livelli 1, 2 e
+Tutto e lo zoom a passi, calcolato fuori dal thread principale. Più il pannello
+vocale e la voce nella barra dei menu. Tiene su il backend da sola. Su macOS 13-15 l'ultima app che gira è la 1.1.0; la
 dashboard nel browser funziona ovunque. `plancia://recap`, `plancia://jarvis`, `plancia://ask?q=…`, `plancia://open?view=progetti` e
 `plancia://pdf` sono azioni da legare a una scorciatoia di sistema, a
 Raycast o a Comandi rapidi.
@@ -176,7 +235,7 @@ da zero in 5 secondi e tenuti aggiornati in modo incrementale, che costa una
 Ogni risultato torna com'era scritto, con il file e la riga da cui viene, così si
 riapre il momento invece di leggerne un riassunto.
 
-![La ricerca](docs/cerca.png)
+![La ricerca: task, sessioni, memoria e i turni stessi](docs/mac-ricerca.png)
 
 ```bash
 plancia cerca "il denominatore del blending"
@@ -242,8 +301,16 @@ Meglio perdere un richiamo che darne uno sbagliato.
 `#/memoria` nella dashboard. L'elenco delle memorie stava già in Archivio e
 diceva cosa c'è; questa vista dice com'è messo.
 
-La mappa disegna il grafo dei `[[link]]`, un colore per tipo e la dimensione per
-quanti legami ha. Il riempimento porta l'unica affermazione che conta: **pieno
+La mappa disegna il grafo dei `[[link]]` a isole. Ogni nota sta nel suo gruppo: il
+progetto a cui appartiene (quello di Plancia o la cartella da cui viene il file),
+oppure, per chi sei e le preferenze, il gruppo del suo tipo. Un gruppo è una regione
+colorata col nome grande; i legami fra gruppi, i ponti, si vedono dall'altra parte
+della mappa. Da lontano si leggono i gruppi, da vicino i titoli delle note (il testo
+del collegamento nel `MEMORY.md` della cartella, o la prima frase della descrizione:
+mai la sigla). La dimensione dice quanti legami ha una nota, la legenda porta la
+camera su un gruppo con un clic. Il server calcola la disposizione una volta per
+impronta della memoria, in un processo a parte, e la riusa finché le schede e i
+legami non cambiano. Il riempimento porta l'unica affermazione che conta: **pieno
 vuol dire che il richiamo può portarla in contesto**. Su questa macchina sono 13
 su 44, e vedere quarantaquattro pallini di cui trentuno vuoti dice in un colpo
 d'occhio una cosa che nessun elenco diceva.
@@ -326,10 +393,13 @@ interattiva (`claude -p`) e restituisce una versione raccontata meglio in otto
 secondi circa. Se Claude non risponde in tempo si usa il primo e non te ne
 accorgi.
 
-Due motori per la voce. [Voicebox](https://github.com/jamiepine/voicebox) se il
-suo backend locale risponde, così esce la tua voce clonata. Altrimenti le voci di
-sistema di macOS, che ci sono sempre, non chiedono niente e partono subito. Tutte
-e due reggono italiano, inglese, spagnolo, francese, tedesco e portoghese.
+Due tipi di voce. Una neurale locale quando risponde: Kokoro (non installata di
+serie, vedi Jarvis più sotto), poi Pocket, poi
+[Voicebox](https://github.com/jamiepine/voicebox) se il suo backend è su, ed è così
+che esce la tua voce clonata. Altrimenti le voci di sistema di macOS, che ci sono
+sempre, non chiedono niente e partono subito. Le voci di sistema reggono italiano,
+inglese, spagnolo, francese, tedesco e portoghese; ogni motore neurale copre le
+lingue delle sue voci.
 
 ```bash
 plancia recap --speak            # oggi, ad alta voce
@@ -363,37 +433,67 @@ di `plancia riordina`.
 
 ## Jarvis
 
-Non tieni premuto niente. `⌥Spazio` da qualsiasi app, oppure `plancia://jarvis`,
-apre un pannello che ascolta di continuo e capisce dal silenzio che hai finito di
-parlare, non da un tasto tenuto giù.
+`⌥Spazio` da qualsiasi app apre un pannello di vetro e accende il microfono. Un'onda
+segue la voce mentre ascolta, la risposta scorre man mano che arriva e comincia a
+parlare con la prima frase, non quando la risposta è finita.
 
-Quello che sente prende due strade. Le frasi che riconosce con certezza (apri una
-vista, segna un task, chiudilo, rileggi le fonti, leggimi il riepilogo) partono in
-un decimo di secondo, in locale. Tutto il resto va a Claude Code in modalità non
-interattiva con i tool `plancia_*` aperti, quindi il task lo aggiunge davvero, il
-progetto lo aggiorna davvero, l'archivio lo cerca davvero.
+![Jarvis che chiede conferma prima di mandare un agente](docs/mac-jarvis.png)
 
-In fondo al pannello c'è un campo per scrivere: serve quando il microfono non è
-disponibile e per correggere una frase capita male senza ripeterla.
+Jarvis legge e propone. Il modello dietro il pannello è in sola lettura: i tool che
+scrivono sono negati per nome, non solo lasciati fuori da un elenco. Frasi come
+"segna un task", "ho fatto", "archivia Atlas", "fallo" o "riprendi il task 4" non
+partono mai da sole. Ognuna diventa una scheda che dice esattamente cosa succede
+(quale agente, in quale cartella, se può modificare file, da quale sessione
+riparte) e non succede niente finché non premi Conferma sulla scheda. Dire "sì" a
+voce non conferma. Esc o Annulla buttano la scheda, e la butta anche chiudere il
+pannello. Le uniche cose che succedono senza scheda sono aprire una vista e cambiare
+la velocità della voce.
 
-Il microfono resta aperto anche mentre risponde, quindi lo puoi interrompere
-ricominciando a parlare. È la cancellazione dell'eco sul nodo di ingresso a
-renderlo possibile: senza, si sente da solo e si interrompe da solo. "Annulla"
-ferma un lavoro partito, "basta" chiude il pannello. Quando un lancio finisce te
-lo dice a voce anche se nel frattempo stavi facendo altro.
+Il microfono si apre solo quando lo chiedi, con la scorciatoia o col pulsante del
+microfono, e si vede: un punto arancione e "Microfono acceso" nel pannello, oltre
+all'indicatore del sistema. Il riconoscimento gira sul Mac. Se la dettatura per la
+tua lingua non è installata in locale lo dice e si scrive; l'audio non va mai a un
+server. Si chiude da solo dopo ogni frase e si riapre solo se accendi
+"Conversazione continua" dal menu del pannello. Esc o Ferma spengono tutto insieme.
+
+La voce è neurale quando ce n'è una: prima Kokoro, poi Pocket, poi Voicebox, tutte in
+locale, una frase alla volta, così la seconda si prepara mentre suona la prima (la
+prima frase si taglia alle virgole, così il suono parte prima). Senza, usa le voci
+avanzate o premium installate sul Mac e lo scrive in fondo al pannello. La voce di
+base, quella robotica, non la usa mai: se non ce n'è nessuna installata resta a
+testo e ti dice dove scaricarne una.
+
+Kokoro non è installato di serie. `plancia voce installa` crea un ambiente Python in
+`<PLANCIA_HOME>/voce`, ti dice che scaricherà circa 354 MB di modelli e chiede prima
+di farlo. Poi gira come un solo processo tenuto caldo, da circa 450 a 700 MB (circa
+1 GB per un momento su una frase lunga), che parte quando Jarvis si apre e si chiude
+dopo 5 minuti di silenzio; se muore o è troppo lento parla il motore dopo e il piede
+del pannello lo dice. La voce per lingua è `voce_kokoro` in config.json (di serie
+`if_sara` per l'italiano, `af_heart` per l'inglese, `ef_dora` per lo spagnolo;
+`im_nicola` è una voce maschile italiana). `plancia voce prova` dice quale motore
+userebbe Jarvis e perché, senza suonare niente. Provato solo su macOS.
+
+Il campo di testo in fondo serve quando il microfono non è disponibile.
 
 ```bash
-plancia jarvis "ricordami di scrivere la nota di migrazione"   # lo stesso, scritto
+plancia jarvis "ricordami di scrivere la nota di migrazione"   # mostra la scheda e chiede [s/N]
 ```
+
+Il terminale e la dashboard (Windows e Linux) seguono le stesse regole. Di Jarvis ce
+n'è uno solo, in sola lettura: il secondo di prima, che teneva un modello con i tool
+di scrittura aperti ed eseguiva quello che scrivevi, non c'è più. `plancia jarvis`
+stampa la scheda e chiede la conferma da tastiera; senza un terminale vero (uno
+script, una pipe, un altro agente che lo lancia) non conferma mai. Nella dashboard la
+scheda compare con Conferma e Annulla, e anche il pulsante Rilancia passa da lì.
 
 Claude Code ha la voce [da marzo 2026](https://claudefa.st/blog/guide/mechanics/voice-mode):
 tieni premuta la barra spaziatrice e detti. È solo dettatura in ingresso, e una
-modalità a mani libere non c'è per scelta. Questa è l'altra metà: risponde e
-agisce.
+modalità a mani libere non c'è per scelta. Questa è l'altra metà: risponde, e agisce
+quando confermi.
 
 ## Tutti i task
 
-![Tutti i task](docs/board.png)
+![Tutti i task, con Riprendi nell'Inspector](docs/mac-task.png)
 
 Claude Code tiene la sua lista di task in una cartella, Codex i suoi obiettivi in
 un altro database, Plancia ha i suoi. Nessuno dei tre sa degli altri due. Questa
@@ -421,12 +521,21 @@ plancia lanci                            # com'è andato un lancio in background
 
 Mandare un lavoro in background è l'altra strada, secondaria, per quando
 riprendere non è quello che vuoi: `plancia riprendi 42 --background --scrive
---istruzioni "rilancia l'ablation"` lo lancia senza sorveglianza, sulla
-sessione di quel task, e ne registra l'esito. Il modo predefinito è di sola
+--istruzioni "rilancia l'ablation"` lo lancia senza sorveglianza, dentro la
+sessione di quel task (`claude -p --resume <id>`, `codex exec resume <id>`,
+stesso id, stessa cartella), e ne registra l'esito. Non apre mai una sessione
+nuova di nascosto: se la sessione è ancora aperta da qualche parte non parte
+niente e ti torna il messaggio da incollare (`--copia` ne chiede invece una
+copia), e solo quando la sessione è davvero persa ne parte una nuova, detto
+prima. Vale anche per i pulsanti Rilancia e Riprendi, per il tool MCP e per
+Jarvis. Se l'app ChatGPT/Codex tiene aperto un thread di Codex, il lancio si
+ferma e lo dice invece di fallire muto. Il modo predefinito è di sola
 lettura; `--scrive` lo lascia scrivere, ed è una scelta che fai ogni volta.
 `plancia manda "rilancia l'ablation" --agente codex --progetto atlas` è il
 vecchio alias per la stessa cosa senza un id di task: funziona ancora ma
 stampa un avviso di deprecazione su stderr e sparirà in un prossimo rilascio.
+Il lavoro vive dentro quel comando, che quindi aspetta la fine dell'agente prima
+di uscire.
 Dentro Claude Code e Codex la stessa ripresa sta dietro al tool `plancia` con
 `azione="riprendi"` e l'`id` del task.
 
@@ -513,7 +622,7 @@ video", oppure "il filmato ard è finito".
 
 ## Progetti
 
-![Progetti](docs/projects.png)
+![Progetti raggruppati per area, con quello scelto a destra](docs/mac-progetti.png)
 
 Un progetto è quello che dici tu: un repo, una cartella, un file di memoria, o
 tutti e tre. `plancia init` propone una mappa da quello che trova, tu la correggi
@@ -532,12 +641,47 @@ leggi prima che cambi qualcosa.
 ```bash
 plancia riordina --proponi                    # scrive la mappa proposta in un file
 plancia riordina --mostra <file>              # la stampa in tabella
-plancia riordina --applica <file>             # assegna tutti i padri che contiene
-plancia riordina --annulla <batch>            # disfa esattamente quell'applicazione
+plancia riordina --applica <file>             # assegna padri, stati e inglobamenti che contiene
+plancia riordina --annulla <batch>            # rimette esattamente quello che ha cambiato
 ```
 
-Applicare è un batch solo, e annullarlo rimette il padre precedente di ogni
-progetto, non un padre vuoto. Oggi (il riepilogo) e Prossimi raggruppano i
+Il file è JSON semplice, una riga per progetto, e lo correggi a mano o lo fai
+scrivere a un agente che ha studiato i tuoi progetti. Oltre a `padre` (la
+chiave del padre) una riga può portare:
+
+```json
+[
+  {"chiave": "vecchio-esperimento", "inglobato_in": "atlante",
+   "motivo": "il codice vive ora dentro la cartella di atlante"},
+  {"chiave": "bozza-tesi", "stato": "concluso",
+   "motivo": "consegnata a giugno"}
+]
+```
+
+- `stato`: `attivo`, `archiviato` o `concluso`. Assente vuol dire che lo stato
+  non si tocca.
+- `inglobato_in`: il progetto dentro cui questo è confluito. Vale come padre =
+  quel progetto, stato `archiviato`, e una riga "Inglobato in atlante:
+  <motivo>" in coda al sommario del progetto. Se quel progetto non può fare da
+  padre (è automatico, o è a sua volta un figlio) il padre non si scrive, ma lo
+  stato e la riga sì, e `--applica` lo dice.
+- `motivo`: il perché, in una frase. È obbligatorio in ogni riga che ha uno
+  `stato` o un `inglobato_in`; `--applica` rifiuta la riga che ne è priva e
+  `--mostra` la segna `[DA CORREGGERE]`.
+
+`--mostra` fa vedere tutto in una tabella sola (chiave, padre, regola, stato,
+motivo). Una riga è tutto o niente: se il padre viene rifiutato, lo stato non
+cambia (l'`inglobato_in` è l'unica eccezione, vedi sopra). Un file che non si
+legge è una riga di errore, non un traceback, e `--applica` esce con 1 se ha
+rifiutato una riga. Un progetto manuale si tocca solo con una riga che lo nomina con un
+padre, uno stato o un `inglobato_in`; un progetto che nel file non c'è non si
+tocca mai. Il formato è documentato per intero in cima a
+`plancia/riordina.py`.
+
+Applicare è un batch solo, e annullarlo rimette padre, stato e sommario di
+prima di ogni progetto, non un padre vuoto. L'annullamento va campo per campo
+e solo dove il campo è ancora quello lasciato dal batch: uno stato cambiato a
+mano dopo, o da un batch successivo, non viene scavalcato. Oggi (il riepilogo) e Prossimi raggruppano i
 progetti per area appena questa mappa esiste; prima che esista, ripiegano su
 una lista piatta, così su un'installazione nuova non si rompe niente.
 
@@ -647,7 +791,7 @@ richiede macOS 26 o più recente e gli strumenti da riga di comando di Xcode per
 leggere i tuoi repo.
 
 L'app nativa per Mac 2.0 è in SwiftUI e richiede macOS 26 o più recente. Su macOS 13-15 resta la 1.1.0, oppure
-la dashboard nel browser (si installa come app web). La dashboard web non cambia nella 2.0.
+la dashboard nel browser (si installa come app web). La dashboard web è stata ridisegnata nella 2.0 sul modello dell'app Mac (font di sistema, barra laterale, tabelle con pannello di dettaglio, grafo a fisica per la memoria, dimensione del testo in cinque passi nelle Impostazioni).
 
 ## Sicurezza
 
@@ -686,7 +830,7 @@ git config core.hooksPath .githooks
 ```
 
 Accende il gancio che fa girare `python3 tools/prova.py` prima di ogni push:
-4142 controlli in pochi minuti, su un archivio finto che non tocca
+4952 controlli in pochi minuti, su un archivio finto che non tocca
 il tuo.
 
 ## Licenza

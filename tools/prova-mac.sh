@@ -31,12 +31,15 @@ fi
 LUCCHETTO="${PLANCIA_LUCCHETTO:-/tmp/plancia-swiftc-$(id -u).lock}"
 mkdir -p "$(dirname "$LUCCHETTO")"
 
-echo "==> compilo il Core"
+echo "==> compilo il Core (con i dati puri della Memoria)"
 SORGENTI=()
 while IFS= read -r f; do SORGENTI+=("$f"); done < <(find "$RADICE/mac/Sources/Core" -name '*.swift' | sort)
+# Core/ArchivioDati.swift tiene in cache DatiMemoria, che sta con i dati puri della Memoria
+SORGENTI+=("$RADICE/mac/Sources/Viste/MemoriaDati.swift")
 python3 "$RADICE/mac/lucchetto.py" "$LUCCHETTO" xcrun swiftc \
   -swift-version 5 -parse-as-library -Onone \
   -target "$(uname -m)-apple-macosx26.0" \
+  ${PROVA_SWIFT_EXTRA:-} \
   -o "$TMP/prova-core" "${SORGENTI[@]}" "$RADICE/mac/Prove/Prova.swift"
 
 echo "==> server finto"
@@ -55,7 +58,7 @@ done
 
 echo "==> prova"
 falliti=0
-PLANCIA_HOME="$CASA" "$TMP/prova-core" "$RADICE/mac/Prove/fixture" "$PORTA" || falliti=1
+PLANCIA_HOME="$CASA" PLANCIA_PROVA_REGISTRO="$TMP/registro" "$TMP/prova-core" "$RADICE/mac/Prove/fixture" "$PORTA" || falliti=1
 
 echo "==> cosa ha visto il server finto"
 controlla() {  # controlla <descrizione> <espressione grep>
@@ -67,6 +70,16 @@ controlla "le letture non portano il token" '^GET /api/lavagna\?[^ ]* token=-$'
 controlla "dopo la scelta ogni lettura porta il compartimento" '^GET /api/lavagna\?.*compartimento=Lavoro token=-$'
 controlla "dopo la scelta anche le scritture portano il compartimento" '^POST /api/sync\?compartimento=Lavoro token=token-di-prova$'
 controlla "la ricerca chiede /api/search con la parola" '^GET /api/search\?.*q=plancia'
+
+echo "==> controlli sui sorgenti: accenti, tasti del testo, mappa, colonne, collegamenti, Jarvis"
+if python3 "$RADICE/mac/Prove/controlli_sorgenti.py" "$RADICE"; then :; else falliti=1; fi
+
+echo "==> lo stile Legno: contrasti, peso della texture, passi del testo"
+if python3 -c "import PIL, numpy" 2>/dev/null; then
+  if python3 "$RADICE/mac/Sources/Tema/prova_tema.py"; then echo "  ok   Tema/prova_tema.py"; else echo "  NO   Tema/prova_tema.py"; falliti=1; fi
+else
+  echo "  saltata: serve Pillow e numpy per misurare i contrasti sulla texture"
+fi
 
 if [ "$falliti" -ne 0 ]; then
   echo "FALLITA"

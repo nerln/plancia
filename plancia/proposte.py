@@ -198,7 +198,7 @@ def calcola(conn, lang="it", limite=4) -> list:
 
     fuori.sort(key=lambda p: p["urgenza"])
 
-    # Un posto riservato per task_stagnante (decisione di Eugenio, 28/09,
+    # Un posto riservato per task_stagnante (decisione dell'utente, 28/09,
     # voce 8 del DECIDE in docs/CANTIERE-2026-09.md): la sua urgenza 7, la
     # più bassa di tutte, la fa arrivare ultima non appena ci sono `limite`
     # proposte più urgenti, quindi il taglio qui sotto la escluderebbe
@@ -289,7 +289,10 @@ def scegli(conn, quale=None, lang="it"):
     testo = str(quale).lower()
     ordinali = {"prima": 1, "primo": 1, "first": 1, "primera": 1,
                 "seconda": 2, "secondo": 2, "second": 2, "segunda": 2,
-                "terza": 3, "terzo": 3, "third": 3, "tercera": 3}
+                "terza": 3, "terzo": 3, "third": 3, "tercera": 3,
+                # `calcola()` da' fino a 4 proposte e la dashboard ha un
+                # pulsante per ciascuna: "la quarta" deve essere riconosciuta
+                "quarta": 4, "quarto": 4, "fourth": 4, "cuarta": 4}
     for parola, n in ordinali.items():
         if parola in testo:
             return lista[n - 1] if n <= len(lista) else None

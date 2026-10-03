@@ -34,7 +34,7 @@ struct RigaTask: Identifiable, Hashable {
     var dettaglio: String { (voce.dettaglio ?? compito?.body ?? "").trimmed }
 }
 
-private enum FiltroStato: String, CaseIterable, Identifiable {
+enum FiltroStato: String, CaseIterable, Identifiable {
     case aperti, fatti, tutti
     var id: String { rawValue }
     @MainActor var titolo: String {
@@ -72,10 +72,10 @@ private func simboloStato(_ s: String) -> String {
 struct VistaTask: View {
     @Environment(Archivio.self) private var archivio
 
-    @State private var stato: FiltroStato = .aperti
-    @State private var fonte: String = ""          // "" = tutte
+    // i filtri e il foglio del nuovo task stanno in ControlliVista: li muove la barra degli
+    // strumenti, che e' una sola per tutta la finestra (Guscio/Controlli.swift)
+    private let c = ControlliVista.condiviso
     @State private var ordine: [KeyPathComparator<RigaTask>] = []
-    @State private var nuovo = false
 
     private var righe: [RigaTask] {
         let perId = Dictionary(archivio.compiti.compactMap { c in c.id.map { ($0, c) } },
@@ -83,6 +83,7 @@ struct VistaTask: View {
         let tutte = (archivio.lavagna?.voci ?? []).map { v in
             RigaTask(voce: v, compito: v.taskId.flatMap { perId[$0] })
         }
+        let stato = c.statoTask, fonte = c.fonteTask
         let filtrate = tutte.filter { r in
             (fonte.isEmpty || r.fonte == fonte)
                 && (stato == .tutti || (stato == .aperti ? !r.chiuso : r.chiuso))
@@ -92,6 +93,7 @@ struct VistaTask: View {
 
     var body: some View {
         @Bindable var a = archivio
+        @Bindable var cc = c
         let elenco = righe
         Group {
             if elenco.isEmpty {
@@ -103,66 +105,34 @@ struct VistaTask: View {
                     TableColumn(tr("Titolo", "Title"), value: \.titolo) { r in
                         Text(r.titolo).lineLimit(1)
                     }
-                    .width(min: 200, ideal: 420)
+                    .width(min: 90, ideal: 420)
                     TableColumn(tr("Progetto", "Project"), value: \.progetto) { r in
                         Text(r.progetto).foregroundStyle(.secondary).lineLimit(1)
                     }
-                    .width(min: 90, ideal: 120)
+                    .width(min: 72, ideal: 100, max: 120)
                     TableColumn(tr("Scadenza", "Due"), value: \.scadenzaOrd) { r in scadenza(r) }
-                        .width(min: 70, ideal: 90)
+                        .width(min: 60, ideal: 64, max: 76)
                     TableColumn(tr("Fonte", "Source"), value: \.fonte) { r in
                         Text(r.fonteNome).foregroundStyle(.secondary)
                     }
-                    .width(min: 60, ideal: 80)
+                    .width(min: 60, ideal: 66, max: 84)
                 }
                 // le righe a strisce sotto l'ultima sembrano un fantasma: niente
                 .alternatingRowBackgrounds(.disabled)
             }
         }
-        .inspector(isPresented: mostraDettaglio) {
-            if let r = rigaScelta {
-                DettaglioTask(riga: r)
-                    .inspectorColumnWidth(min: 260, ideal: 320, max: 460)
-            }
-        }
-        .toolbar {
-            ToolbarItem(placement: .automatic) {
-                Picker(tr("Stato", "Status"), selection: $stato) {
-                    ForEach(FiltroStato.allCases) { Text($0.titolo).tag($0) }
-                }
-                .pickerStyle(.segmented)
-            }
-            ToolbarItem(placement: .automatic) {
-                Picker(tr("Fonte", "Source"), selection: $fonte) {
-                    Text(tr("Tutte le fonti", "All sources")).tag("")
-                    Text("Plancia").tag("plancia")
-                    Text("Claude").tag("claude")
-                    Text("Codex").tag("codex")
-                }
-                .pickerStyle(.menu)
-            }
-            ToolbarItem(placement: .primaryAction) {
-                Button { nuovo = true } label: {
-                    Label(tr("Nuovo task", "New task"), systemImage: "plus")
-                }
-                .keyboardShortcut("n", modifiers: .command)
-                .help(tr("Nuovo task", "New task"))
-            }
-        }
-        .sheet(isPresented: $nuovo) { NuovoTask() }
+        .sheet(isPresented: $cc.nuovoTask) { NuovoTask() }
+        // un task che il nuovo filtro nasconde non resta scelto: l'Inspector si chiude
+        .onChange(of: c.statoTask) { toglieSceltaNascosta() }
+        .onChange(of: c.fonteTask) { toglieSceltaNascosta() }
+    }
+
+    private func toglieSceltaNascosta() {
+        guard let id = archivio.taskScelto, !righe.contains(where: { $0.id == id }) else { return }
+        archivio.taskScelto = nil
     }
 
     // MARK: pezzi
-
-    private var rigaScelta: RigaTask? {
-        guard let id = archivio.taskScelto else { return nil }
-        return righe.first { $0.id == id }
-    }
-
-    private var mostraDettaglio: Binding<Bool> {
-        Binding(get: { rigaScelta != nil },
-                set: { if !$0 { archivio.taskScelto = nil } })
-    }
 
     @ViewBuilder private var vuoto: some View {
         if archivio.lavagna == nil {
@@ -175,7 +145,7 @@ struct VistaTask: View {
                     description: Text(tr("Appena risponde, i task compaiono qui.",
                                          "Tasks appear here as soon as it answers.")))
             }
-        } else if stato == .aperti && fonte.isEmpty {
+        } else if c.statoTask == .aperti && c.fonteTask.isEmpty {
             ContentUnavailableView(
                 tr("Nessun task aperto", "No open tasks"),
                 systemImage: "checkmark.circle")
@@ -202,14 +172,25 @@ struct VistaTask: View {
 
 // MARK: - il dettaglio (Inspector)
 
-private struct DettaglioTask: View {
+extension Archivio {
+    /// La riga del task scelto, per l'Inspector della finestra (Guscio/Ispettore.swift). Una
+    /// ricerca sola, non il giro di tutti i task che fa l'elenco.
+    func rigaTaskScelta() -> RigaTask? {
+        guard let id = taskScelto,
+              let v = lavagna?.voci?.first(where: { $0.identita == id }) else { return nil }
+        let compito = v.taskId.flatMap { t in compiti.first { $0.id == t } }
+        return RigaTask(voce: v, compito: compito)
+    }
+}
+
+struct DettaglioTask: View {
     let riga: RigaTask
     @Environment(Archivio.self) private var archivio
 
     @State private var messaggio: String?
     @State private var errore: String?
     @State private var lavora = false
-    @State private var confermaLancio = false
+    @State private var pronto: LancioPronto?
 
     var body: some View {
         Form {
@@ -234,6 +215,10 @@ private struct DettaglioTask: View {
                 }
                 .disabled(lavora)
                 if let id = riga.taskId {
+                    Button { Task { await inBackground(id) } } label: {
+                        Label(tr("In background", "In background"), systemImage: "play.circle")
+                    }
+                    .disabled(lavora)
                     Button { Task { await cambia(id, riga.chiuso ? "aperto" : "fatto") } } label: {
                         Label(riga.chiuso ? tr("Riapri", "Reopen") : tr("Fatto", "Done"),
                               systemImage: riga.chiuso ? "arrow.uturn.backward" : "checkmark")
@@ -255,13 +240,14 @@ private struct DettaglioTask: View {
         }
         .formStyle(.grouped)
         .confirmationDialog(
-            tr("Avviare un lancio in background?", "Start a background run?"),
-            isPresented: $confermaLancio, titleVisibility: .visible) {
-            Button(tr("Avvia senza modificare file", "Start without changing files")) { Task { await lancia() } }
+            pronto?.titolo ?? "",
+            isPresented: Binding(get: { pronto != nil }, set: { if !$0 { pronto = nil } }),
+            titleVisibility: .visible, presenting: pronto) { l in
+            Button(l.azione) { Task { await avvia(l) } }
             Button(tr("Annulla", "Cancel"), role: .cancel) {}
-        } message: {
-            Text(tr("Parte \(riga.voce.agente ?? "un agente") sul progetto, in sola lettura.",
-                    "\(riga.voce.agente ?? "An agent") starts on the project, read-only."))
+        } message: { l in
+            // il piano PRIMA di partire: la sessione originale, una copia, o una nuova
+            Text(l.testo)
         }
     }
 
@@ -271,43 +257,96 @@ private struct DettaglioTask: View {
         lavora = false
     }
 
+    /// Riprendi: nel Terminale, nella sessione del task. Se la sessione non c'e' piu' lo dice
+    /// prima, invece di aprirne una nuova senza avvisare.
     private func riprendi() async {
         errore = nil; messaggio = nil
         if let id = riga.taskId {
             lavora = true
-            let r = await archivio.scriviRisposta("POST", "/api/riprendi/\(id)", corpo: ["apri": true])
+            let piano = await archivio.pianoRipresa(task: id)
             lavora = false
-            switch r {
-            case .success(let j):
-                messaggio = j["riga"]?.testo ?? j["messaggio"]?.testo ?? tr("Avviato", "Started")
-            case .failure(let e):
-                errore = e.localizedDescription
+            if let p = piano, p.modo == "nuova" {
+                pronto = LancioPronto(nuovaNelTerminale: "/api/riprendi/\(id)", piano: p,
+                                      agente: riga.voce.agente ?? "claude")
+                return
             }
+            await apriNelTerminale(id)
         } else {
-            // i task di Claude Code e di Codex non hanno un id di Plancia: si parte da un lancio
-            confermaLancio = true
+            // i task di Claude Code e di Codex non hanno un id di Plancia: parte un lancio,
+            // nella sessione che la riga ricorda
+            await preparaLancio(percorso: "/api/cantiere", corpo: corpoLancio())
         }
     }
 
-    private func lancia() async {
+    /// In background: il lavoro senza testa riprende la sessione del task (o dice che non c'e').
+    private func inBackground(_ id: Int) async {
+        errore = nil; messaggio = nil
+        await preparaLancio(
+            percorso: "/api/riprendi/\(id)",
+            corpo: ["background": true, "scrive": false, "lang": Lingua.condivisa.codice])
+    }
+
+    private func apriNelTerminale(_ id: Int) async {
         lavora = true
+        let r = await archivio.scriviRisposta("POST", "/api/riprendi/\(id)", corpo: ["apri": true])
+        lavora = false
+        switch r {
+        case .success(let j):
+            messaggio = j["riga"]?.testo ?? j["messaggio"]?.testo ?? tr("Avviato", "Started")
+        case .failure(let e):
+            errore = e.localizedDescription
+        }
+    }
+
+    /// Chiede al server cosa farebbe (anteprima) e, se parte qualcosa, lo mostra prima di lanciare.
+    private func preparaLancio(percorso: String, corpo: [String: Any]) async {
+        lavora = true
+        let piano = await archivio.anteprima(percorso, corpo)
+        lavora = false
+        guard let p = piano else {
+            errore = tr("Non riesco a sapere cosa farebbe il lancio: il server non risponde.",
+                        "Can't tell what the run would do: the server isn't answering.")
+            return
+        }
+        if !p.parte {
+            messaggio = p.frase
+            return
+        }
+        pronto = LancioPronto(percorso: percorso, corpo: corpo, piano: p,
+                              agente: riga.voce.agente ?? "claude")
+    }
+
+    private func corpoLancio() -> [String: Any] {
         var corpo: [String: Any] = ["titolo": riga.titolo, "dettaglio": String(riga.dettaglio.prefix(600)),
                                     "agente": riga.voce.agente ?? "claude", "scrive": false,
                                     "lang": Lingua.condivisa.codice]
         if let k = riga.progettoChiave { corpo["progetto"] = k }
         if let s = riga.voce.sessione, !s.isEmpty { corpo["sessione"] = s }
-        let r = await archivio.scriviRisposta("POST", "/api/cantiere", corpo: corpo)
+        return corpo
+    }
+
+    private func avvia(_ l: LancioPronto) async {
+        lavora = true
+        let r = await archivio.scriviRisposta("POST", l.percorso, corpo: l.corpo)
         lavora = false
         switch r {
-        case .success: messaggio = tr("Lancio avviato", "Run started")
-        case .failure(let e): errore = e.localizedDescription
+        case .success(let j):
+            if j["lanciato"]?.testo == "false" {
+                messaggio = l.piano.frase   // nel frattempo la sessione si e' aperta: non e' partito niente
+            } else if l.corpo["apri"] != nil {
+                messaggio = j["riga"]?.testo ?? j["messaggio"]?.testo ?? tr("Avviato", "Started")
+            } else {
+                messaggio = tr("Lancio avviato. ", "Run started. ") + l.piano.frase
+            }
+        case .failure(let e):
+            errore = e.localizedDescription
         }
     }
 }
 
 // MARK: - nuovo task (⌘N)
 
-private struct NuovoTask: View {
+struct NuovoTask: View {
     @Environment(Archivio.self) private var archivio
     @Environment(\.dismiss) private var dismiss
 
