@@ -6,6 +6,9 @@
 //       [--larghezza 1280] [--altezza 820]   (punti; il minimo della finestra vale sempre)
 //       [--stile sistema|legno] [--testo 0...6]   (il passo della dimensione del testo, 3 = reale)
 //       [--prova-tasti]  premi ⌘+ ⌘- ⌘0 ⌘= veri e stampa il passo dopo ognuno (senza --testo)
+//       [--inattiva]  fotografa la finestra NON attiva (come quando si lavora in un'altra app)
+//       [--primo-risultato]  nella Ricerca sceglie la prima riga: si vede l'Inspector dei Risultati
+//       [--albero]  stampa l'albero delle viste di AppKit (righe ALB), per capire chi dipinge cosa
 //       [--prova-clic]  clic finti sulle righe di Task e Progetti: dice se colpiscono la riga giusta
 //
 // Apre la finestra a 1280x820, visita ogni sezione (con l'Inspector di un elemento scelto
@@ -82,6 +85,13 @@ enum Istantanee {
             try? await Task.sleep(nanoseconds: 500_000_000)
         }
         FileHandle.standardOutput.write(Data("finestra attiva: \(NSApp.isActive && w.isKeyWindow)\n".utf8))
+        // --inattiva: fotografa la finestra NON attiva (semafori grigi, vetro spento), per vedere
+        // come stanno le superfici quando l'utente lavora in un'altra app
+        if CommandLine.arguments.contains("--inattiva") {
+            NSApp.deactivate()
+            try? await Task.sleep(nanoseconds: 800_000_000)
+            FileHandle.standardOutput.write(Data("finestra inattiva: \(!NSApp.isActive && !w.isKeyWindow)\n".utf8))
+        }
 
         let a = Archivio.condiviso
         var scritti: [String] = []
@@ -123,6 +133,20 @@ enum Istantanee {
             }
         }
 
+        if CommandLine.arguments.contains("--albero") {
+            a.vai(.task); await a.carica(.task)
+            if let v = a.lavagna?.voci?.first(where: { $0.stato != "fatto" }) { a.taskScelto = v.identita }
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            func giu(_ v: NSView, _ liv: Int) {
+                let n = String(describing: type(of: v))
+                var extra = ""
+                if let e = v as? NSVisualEffectView { extra = " MATERIAL=\(e.material.rawValue) stato=\(e.state.rawValue) blend=\(e.blendingMode.rawValue) emph=\(e.isEmphasized)" }
+                let f = v.convert(v.bounds, to: nil)
+                FileHandle.standardOutput.write(Data("ALB \(String(repeating: " ", count: liv))\(n) x=\(Int(f.minX)) y=\(Int(f.minY)) w=\(Int(f.width)) h=\(Int(f.height)) hid=\(v.isHidden)\(extra)\n".utf8))
+                for s in v.subviews { giu(s, liv + 1) }
+            }
+            if let cv = w.contentView?.superview { giu(cv, 0) }
+        }
         if CommandLine.arguments.contains("--prova-tasti") { await provaTasti(w) }
         if CommandLine.arguments.contains("--prova-clic") { await provaClic(w, a, scatta) }
 
@@ -133,6 +157,14 @@ enum Istantanee {
         a.avviaRicerca()
         for _ in 0..<50 where a.ricercaInCorso || a.risultatiPer != parola {
             try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        // con --primo-risultato la riga scelta pubblica il suo dettaglio e l'Inspector si apre: si
+        // aspetta che ci sia, invece di fotografare a caso un momento prima
+        if CommandLine.arguments.contains("--primo-risultato") {
+            for _ in 0..<60 where ControlliVista.condiviso.dettaglioRisultato == nil {
+                try? await Task.sleep(nanoseconds: 100_000_000)
+            }
+            FileHandle.standardOutput.write(Data("risultato: dettaglio pubblicato \(ControlliVista.condiviso.dettaglioRisultato != nil)\n".utf8))
         }
         await scatta("ricerca")
         a.azzeraRicerca()

@@ -31,6 +31,8 @@ final class ControlliVista {
     var provaAperta = false
     // Ricerca: il dettaglio della riga scelta, costruito dalla vista Risultati
     var dettaglioRisultato: AnyView?
+    /// Quale istanza di VistaRisultati ha pubblicato il dettaglio (chi non e' il proprietario non lo cancella).
+    var proprietarioDettaglio: UUID?
 }
 
 extension Archivio {

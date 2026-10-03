@@ -105,17 +105,17 @@ struct VistaTask: View {
                     TableColumn(tr("Titolo", "Title"), value: \.titolo) { r in
                         Text(r.titolo).lineLimit(1)
                     }
-                    .width(min: 120, ideal: 420)
+                    .width(min: 90, ideal: 420)
                     TableColumn(tr("Progetto", "Project"), value: \.progetto) { r in
                         Text(r.progetto).foregroundStyle(.secondary).lineLimit(1)
                     }
-                    .width(min: 90, ideal: 120)
+                    .width(min: 72, ideal: 120)
                     TableColumn(tr("Scadenza", "Due"), value: \.scadenzaOrd) { r in scadenza(r) }
-                        .width(min: 78, ideal: 90)
+                        .width(min: 66, ideal: 90)
                     TableColumn(tr("Fonte", "Source"), value: \.fonte) { r in
                         Text(r.fonteNome).foregroundStyle(.secondary)
                     }
-                    .width(min: 76, ideal: 80)
+                    .width(min: 66, ideal: 80)
                 }
                 // le righe a strisce sotto l'ultima sembrano un fantasma: niente
                 .alternatingRowBackgrounds(.disabled)

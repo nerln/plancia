@@ -179,6 +179,8 @@ struct VistaRisultati: View {
 
     @State private var scelto: String?
     @State private var espansi: Set<TipoRis> = []
+    /// Distingue questa istanza della vista dalle altre (vedi onDisappear).
+    @State private var identitaIstanza = UUID()
 
     private var q: String { archivio.ricerca.trimmed }
 
@@ -410,7 +412,16 @@ struct VistaRisultati: View {
         .onChange(of: tutte.first(where: { $0.id == scelto }), initial: true) { _, corrente in
             pubblica(corrente)
         }
-        .onDisappear { ControlliVista.condiviso.dettaglioRisultato = nil }
+        // chi se ne va toglie il dettaglio solo se e' ancora il suo: SwiftUI puo' far comparire la
+        // vista nuova prima di far sparire la vecchia (misurato nelle istantanee: il dettaglio
+        // pubblicato dalla nuova veniva cancellato dalla vecchia e l'Inspector restava chiuso)
+        .onDisappear {
+            let c = ControlliVista.condiviso
+            if c.proprietarioDettaglio == nil || c.proprietarioDettaglio == identitaIstanza {
+                c.dettaglioRisultato = nil
+                c.proprietarioDettaglio = nil
+            }
+        }
         // solo nelle istantanee con --primo-risultato: sceglie la prima riga, per fotografare l'Inspector
         .onChange(of: tutte.first?.id, initial: true) { _, primo in
             if scelto == nil, let p = primo, Istantanee.attive,
@@ -448,7 +459,11 @@ struct VistaRisultati: View {
 
     private func pubblica(_ riga: RigaRis?) {
         let termini = risTermini(q)
-        ControlliVista.condiviso.dettaglioRisultato = riga.map { r in
+        let c = ControlliVista.condiviso
+        // una vista senza riga non cancella il dettaglio di un'altra istanza
+        if riga == nil, let p = c.proprietarioDettaglio, p != identitaIstanza { return }
+        c.proprietarioDettaglio = riga == nil ? nil : identitaIstanza
+        c.dettaglioRisultato = riga.map { r in
             AnyView(DettaglioRisultato(riga: r, termini: termini) { VistaRisultati.apri(r) })
         }
     }

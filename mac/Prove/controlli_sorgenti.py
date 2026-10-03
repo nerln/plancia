@@ -62,18 +62,57 @@ controlla("la legenda della mappa non e' piu' sovrapposta ai nodi",
           "overlay(alignment: .bottomLeading) { legenda" not in mappa and "private func barra(" in mappa)
 controlla("le etichette non lasciano piu' un vuoto fisso dove stava la legenda", "size.height - 150" not in mappa)
 
-# 4. le colonne delle tabelle non superano lo spazio accanto all'Inspector a 125% (1024 pt
-#    di layout, meno la barra laterale e l'Inspector: ~500)
-for rel in ("Viste/Task.swift", "Viste/Archivio.swift"):
+# 4. le colonne delle tabelle stanno accanto all'Inspector con la finestra al minimo (900 punti
+#    di layout, anche a 125%: il minimo scala col testo), meno la barra laterale (200 ideale) e la
+#    larghezza ideale dell'Inspector di quella sezione (Guscio/Ispettore.swift). Ogni colonna costa
+#    ~18 punti di margine suo (misurato nelle istantanee a 900 punti: con 12 l'ultima colonna di
+#    Archivio finiva sotto l'Inspector).
+ispettore = leggi("Guscio/Ispettore.swift")
+larg = re.search(r"private var larghezze.*?\n    \}\n", ispettore, re.S)
+larg = larg.group(0) if larg else ""
+def ideale_ispettore(sezione):
+    m = re.search(r"case \.%s: return \((\d+), (\d+), (\d+)\)" % sezione, larg) or \
+        re.search(r"default: return \((\d+), (\d+), (\d+)\)", larg)
+    return int(m.group(2)) if m else 999
+FINESTRA_MINIMA, BARRA_IDEALE, MARGINE_COLONNA = 900, 200, 18
+for rel, sezione in (("Viste/Task.swift", "task"), ("Viste/Archivio.swift", "archivio")):
     testo = leggi(rel)
+    disponibile = FINESTRA_MINIMA - BARRA_IDEALE - ideale_ispettore(sezione)
     blocchi = re.split(r"\bTable\(", testo)[1:]
     for k, b in enumerate(blocchi, 1):
         b = b.split("alternatingRowBackgrounds")[0]
         minimi = [int(m) for m in re.findall(r"\.width\(min: (\d+)", b)] + [int(m) for m in re.findall(r"\.width\((\d+)\)", b)]
-        # ogni colonna ha ~12 pt di margine suo: minimi + margini devono stare in ~500 pt
-        totale = sum(minimi) + 12 * len(minimi)
-        controlla("%s, tabella %d: minimi + margini delle colonne (%d) stanno accanto all'Inspector a 125%%"
-                  % (rel.split("/")[-1], k, totale), totale <= 500)
+        totale = sum(minimi) + MARGINE_COLONNA * len(minimi)
+        controlla("%s, tabella %d: minimi + margini delle colonne (%d) stanno nei %d punti accanto all'Inspector"
+                  % (rel.split("/")[-1], k, totale, disponibile), totale <= disponibile)
+
+# 4b. l'Inspector di Legno e' una superficie piena: carta calda, fascia in alto sul legno, fili
+#     d'ottone; nessun materiale di sistema che lasci vedere il fondo grigio
+stile = leggi("Tema/Stile.swift")
+m = re.search(r"struct StileIspettore: ViewModifier \{(.*?)\n\}\n", stile, re.S)
+corpo = m.group(1) if m else ""
+controlla("l'Inspector ha il suo stile Legno e il contenuto lo usa", bool(corpo) and ".stileIspettore()" in leggi("Guscio/Ispettore.swift"))
+controlla("l'Inspector di Legno: carta piena, nessun materiale di sistema, nessuna trasparenza",
+          ".background(p.carta" in corpo and "Material" not in corpo and ".opacity(" not in corpo)
+controlla("l'Inspector di Legno: fascia in alto sul legno e fili d'ottone sopra e a sinistra",
+          "SuperficieLegno(scuro: cartaScura).ignoresSafeArea()" in corpo
+          and "FiloOttone()" in corpo and "FiloOttoneVerticale()" in corpo)
+
+# 4c. il dettaglio dei Risultati ha un proprietario: la vista che se ne va (SwiftUI la fa sparire
+#     DOPO aver fatto comparire la nuova) non cancella il dettaglio pubblicato dalla nuova
+ris = leggi("Viste/Risultati.swift")
+dis = re.search(r"\.onDisappear \{(.*?)\n        \}", ris, re.S)
+controlla("Risultati: il dettaglio per l'Inspector ha un proprietario (la vista vecchia non lo cancella)",
+          "identitaIstanza" in ris and "proprietarioDettaglio" in leggi("Guscio/Controlli.swift")
+          and bool(dis) and "proprietarioDettaglio" in dis.group(1) and "identitaIstanza" in dis.group(1))
+
+# 4d. la barra sotto la mappa non fa da larghezza preferita di tutta la colonna: ViewThatFits porta
+#     la larghezza ideale della prima scelta (>800 punti) e spingeva l'Inspector fuori dalla finestra
+bm = re.search(r"private func barra\(.*?\n    \}\n", mappa, re.S)
+bm = bm.group(0) if bm else ""
+ideal = re.search(r"\.frame\(minWidth: 0, idealWidth: (\d+), maxWidth: \.infinity", bm)
+controlla("Mappa: la barra ha una larghezza ideale piccola e un'ultima scelta senza la frase della legenda",
+          bool(ideal) and int(ideal.group(1)) <= 400 and "legenda(info, frase: false)" in bm)
 
 # 5. i collegamenti nel Legno sono d'ottone: nessun buttonStyle(.link) fuori dal modificatore
 fuori = []

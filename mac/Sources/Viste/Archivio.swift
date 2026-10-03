@@ -208,28 +208,28 @@ struct VistaArchivio: View {
                     TableColumn(tr("Quando", "When"), value: \.quando) { r in
                         Text(FormatoArch.quando(r.quando)).foregroundStyle(.secondary).lineLimit(1)
                     }
-                    .width(min: 92, ideal: 96)
+                    .width(min: 80, ideal: 88)
                     TableColumn(tr("Titolo", "Title"), value: \.titolo) { r in
                         Text(r.titolo).lineLimit(1)
                     }
-                    .width(min: 70, ideal: 420)
+                    .width(min: 48, ideal: 420)
                     TableColumn(tr("Progetto", "Project"), value: \.progetto) { r in
                         Text(r.progetto).foregroundStyle(.secondary).lineLimit(1)
                     }
-                    .width(min: 60, ideal: 72)
+                    .width(min: 50, ideal: 64)
                     TableColumn(tr("Agente", "Agent"), value: \.agente) { r in
                         Text(FormatoArch.agente(r.agente)).foregroundStyle(.secondary)
                     }
-                    .width(min: 56, ideal: 60)
+                    .width(min: 46, ideal: 56)
                     TableColumn(tr("Durata", "Length"), value: \.durata) { r in
                         Text(FormatoArch.durata(r.durata)).foregroundStyle(.secondary)
                     }
-                    .width(min: 56, ideal: 60)
+                    .width(min: 46, ideal: 56)
                     TableColumn(tr("Messaggi", "Messages"), value: \.messaggi) { r in
                         Text(r.messaggi.formatted()).foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .trailing)
                     }
-                    .width(min: 62, ideal: 66)
+                    .width(min: 50, ideal: 58)
                 }
                 .alternatingRowBackgrounds(.disabled)
             }
@@ -264,23 +264,23 @@ struct VistaArchivio: View {
                     TableColumn(tr("Quando", "When"), value: \.quando) { r in
                         Text(FormatoArch.quando(r.quando)).foregroundStyle(.secondary).lineLimit(1)
                     }
-                    .width(min: 92, ideal: 96)
+                    .width(min: 80, ideal: 88)
                     TableColumn(tr("Tipo", "Type"), value: \.tipo) { r in
                         Text(r.tipo).foregroundStyle(.secondary).lineLimit(1)
                     }
-                    .width(min: 84, ideal: 110)
+                    .width(min: 70, ideal: 100)
                     TableColumn(tr("Titolo", "Title"), value: \.titolo) { r in
                         Text(r.titolo).lineLimit(1)
                     }
-                    .width(min: 70, ideal: 380)
+                    .width(min: 48, ideal: 380)
                     TableColumn(tr("Progetto", "Project"), value: \.progetto) { r in
                         Text(r.progetto).foregroundStyle(.secondary).lineLimit(1)
                     }
-                    .width(min: 60, ideal: 72)
+                    .width(min: 50, ideal: 64)
                     TableColumn(tr("Origine", "Origin"), value: \.origine) { r in
                         Text(r.origine).foregroundStyle(.secondary).lineLimit(1)
                     }
-                    .width(min: 58, ideal: 72)
+                    .width(min: 50, ideal: 64)
                 }
                 .alternatingRowBackgrounds(.disabled)
             }

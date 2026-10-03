@@ -672,7 +672,12 @@ struct VistaMappa: View {
     // MARK: pezzi sotto il disegno
 
     /// La barra sotto la mappa: i gruppi (un clic li inquadra), cosa vogliono dire i colori, a
-    /// destra il livello e lo zoom. Se la larghezza non basta i due gruppi vanno uno sopra l'altro.
+    /// destra il livello e lo zoom. Se la larghezza non basta i due gruppi vanno uno sopra l'altro,
+    /// e se non basta nemmeno cosi' la legenda perde la frase in fondo. L'ultima scelta deve
+    /// stare in poco. Misurato: la larghezza ideale della barra (piu' di 800 punti) faceva da
+    /// larghezza preferita di tutta la colonna, e a 125% o con la finestra stretta spingeva
+    /// l'Inspector fuori dalla finestra (e, con la finestra sotto i 1100 punti, mandava AppKit in
+    /// un giro di vincoli che chiudeva l'app).
     private func barra(_ info: InfoGrafo) -> some View {
         VStack(spacing: 6) {
             gruppi(info)
@@ -686,7 +691,14 @@ struct VistaMappa: View {
                     legenda(info)
                     controlli
                 }
+                VStack(alignment: .leading, spacing: 8) {
+                    legenda(info, frase: false)
+                    controlli
+                }
             }
+            // La larghezza ideale di ViewThatFits e' quella della prima scelta (oltre 800 punti):
+            // la colonna la prendeva per preferita e spingeva l'Inspector fuori dalla finestra.
+            .frame(minWidth: 0, idealWidth: 300, maxWidth: .infinity, alignment: .leading)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -721,7 +733,7 @@ struct VistaMappa: View {
         .frame(height: 24)
     }
 
-    private func legenda(_ info: InfoGrafo) -> some View {
+    private func legenda(_ info: InfoGrafo, frase: Bool = true) -> some View {
         let presenti = TipoMemoria.allCases.filter { t in info.tipi.contains(t) }
         return HStack(spacing: 12) {
             ForEach(presenti, id: \.self) { t in
@@ -733,9 +745,11 @@ struct VistaMappa: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             }
-            Text(tr("il colore è il tipo, l'area è il gruppo", "colour is the type, the area is the group"))
-                .font(.caption)
-                .foregroundStyle(.tertiary)
+            if frase {
+                Text(tr("il colore è il tipo, l'area è il gruppo", "colour is the type, the area is the group"))
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
         }
         .fixedSize()
         .allowsHitTesting(false)
