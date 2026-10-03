@@ -29,18 +29,24 @@ un Windows imitato, senza lanciare niente di vero:
    nello stdin, non come argomento: un `claude.cmd` di npm passa da cmd.exe, che taglia un
    argomento alla prima riga a capo. Su macOS e Linux la riga di comando e' quella di sempre.
 
+8. (quarto giro, run 37155444167) le prove statiche sui sorgenti Swift (`tools/prove-front/glass.py`)
+   indicizzavano i testi con `str(percorso_relativo)`: su Windows e' `Core\\X.swift`, e ogni confronto con
+   `Core/X.swift` o `Sistema/` cadeva (16 NO). Si prova con un percorso che, come Windows,
+   torna la barra rovescia da `relative_to()`.
+
 Per lanciare da sola: `python3 tools/prove/windows-testo.py`.
 """
 
 import ast
 import contextlib
+import importlib.util
 import ntpath
 import os
 import sqlite3
 import subprocess
 import sys
 import tempfile
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 RADICE = Path(__file__).resolve().parent.parent.parent
 if str(RADICE) not in sys.path:
@@ -482,7 +488,56 @@ def _prove_resolve_path_windows(prova):
           trovato == [pid, pid, pid, None, None], str(trovato))
 
 
+class _PercorsoWindows:
+    """Un percorso vero che, nell'unica cosa che conta qui, parla come Windows:
+    `relative_to()` torna un `PureWindowsPath`, quindi `str()` ha la barra rovescia e
+    `as_posix()` quella dritta. Il resto passa al percorso vero."""
+
+    def __init__(self, reale):
+        self.reale = Path(reale)
+
+    def __truediv__(self, altro):
+        return _PercorsoWindows(self.reale / altro)
+
+    def __lt__(self, altro):
+        return self.reale < altro.reale
+
+    def rglob(self, motivo):
+        return [_PercorsoWindows(f) for f in self.reale.rglob(motivo)]
+
+    def relative_to(self, base):
+        return PureWindowsPath(self.reale.relative_to(base.reale))
+
+    def read_text(self, *args, **kw):
+        return self.reale.read_text(*args, **kw)
+
+    def exists(self):
+        return self.reale.exists()
+
+    @property
+    def name(self):
+        return self.reale.name
+
+
+def _prove_sorgenti_swift_windows(prova):
+    """Le prove sui sorgenti Swift confrontano i percorsi con la barra dritta
+    ("Core/", "Sistema/", "Guscio/PlanciaApp.swift"): con i percorsi di Windows
+    (`Core\\X.swift`) non trovavano niente e davano 16 NO (run 37155444167)."""
+    spec = importlib.util.spec_from_file_location(
+        "prove_front_glass_windows", RADICE / "tools" / "prove-front" / "glass.py")
+    glass = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(glass)
+    esiti = []
+    glass._prova_swift(lambda nome, ok, dettaglio="": esiti.append((nome, bool(ok), dettaglio)),
+                       _PercorsoWindows(RADICE))
+    cadute = [nome for nome, ok, _ in esiti if not ok]
+    prova("glass: le prove sui sorgenti Swift reggono percorsi alla Windows (relative_to con la "
+          "barra rovescia): nessuna cade, e ne girano davvero (non una lista vuota)",
+          not cadute and len(esiti) >= 20, "%d prove, cadute: %s" % (len(esiti), cadute[:4]))
+
+
 def esegui(prova):
+    _prove_sorgenti_swift_windows(prova)
     _prove_esclusi_windows(prova)
     _prove_resolve_path_windows(prova)
     _prove_attribuzione(prova)

@@ -26,6 +26,14 @@ circa 31 mila turni scritti da `turni.indicizza` su transcript veri, in un
 
 Su un commit senza `turni.mappa` (la base) le stesse misure girano lo stesso e il
 controllo del tempo fallisce: e' la prova rossa.
+
+Su Windows i compartimenti sono spenti (`piattaforma.compartimenti_supportati`): non
+esistono ne' `alfa` ne' il predefinito, e `api._connessione_separata` torna una
+connessione senza filtro. Quello che ha senso li' si fa lo stesso (la mappa, il tempo,
+la strada veloce contro la lenta, i conti dei gruppi, il ripiego), solo senza
+compartimenti; i tre controlli che parlano di compartimenti si segnano come passati con
+"saltato: ..." scritto accanto, uno per uno, cosi' il conteggio delle prove e' lo stesso
+su ogni sistema (il README ne dichiara uno solo).
 """
 
 import json
@@ -114,7 +122,11 @@ conn.close()
 
 parole = ["zenzero", "curcuma", "zenzero curcuma", "parola001", "unicorno", "assente"]
 out["misure"] = {}
-for scelta in ("alfa", "predefinito", None):
+# con i compartimenti spenti (Windows) "alfa" e il predefinito non esistono: la
+# connessione tornerebbe senza filtro e le misure direbbero il falso
+out["compartimenti"] = viste.attivo() is not None
+scelte = ("alfa", "predefinito", None) if out["compartimenti"] else (None,)
+for scelta in scelte:
     for q in parole:
         c, o = api._connessione_separata(scelta) if scelta else (store.connect(), None)
         t0 = time.time()
@@ -161,8 +173,13 @@ if hasattr(turni, "mappa"):
     c.commit()
     out["mappa_dopo_cancella"] = turni.mappa(c) is not None
     c2, o2 = api._connessione_separata("predefinito")
-    a, g = viste.cerca_turni(c2, o2, "zenzero", 30)
-    filtro = turni.Filtro(lambda s, p: o2.sessione_ok(s, p or ""), o2.ok["sessions"], o2.ok["projects"])
+    if o2 is not None:
+        a, g = viste.cerca_turni(c2, o2, "zenzero", 30)
+        filtro = turni.Filtro(lambda s, p: o2.sessione_ok(s, p or ""), o2.ok["sessions"], o2.ok["projects"])
+    else:
+        # senza compartimenti: la ricerca di sempre, senza filtro
+        a, g = turni.cerca(c2, "zenzero", 30), turni.raggruppa(c2, "zenzero")
+        filtro = None
     la, lg = turni._lento(c2, "zenzero", 30, None, filtro, 8, True, True)
     out["ripiego_uguale"] = ([(x["sessione"], x["riga"]) for x in a] ==
                              [(x["sessione"], x["riga"]) for x in la] and g == lg and len(a) > 0)
@@ -207,6 +224,22 @@ def esegui(prova) -> None:
         d = json.loads(r.stdout.strip().splitlines()[-1])
 
     m = d["misure"]
+    # i compartimenti li ha chi li puo' avere: dal sistema vero, mai dal sottoprocesso
+    # (se su macOS o Linux il sottoprocesso li dicesse spenti, le misure per alfa e per
+    # il predefinito non esisterebbero e una prova vuota passerebbe lo stesso)
+    senza_comp = os.name == "nt"
+    scelte = ("-",) if senza_comp else ("alfa", "predefinito", "-")
+
+    def solo_compartimenti(nome, condizione, dettaglio=""):
+        """Un controllo che parla di compartimenti. Dove non ce ne sono (Windows) si segna
+        passato con il perche' accanto, come tutti gli altri controlli che li' non si
+        fanno: il conteggio resta quello degli altri sistemi. `condizione` e' una
+        funzione, perche' su Windows le misure di `alfa` non esistono."""
+        if senza_comp:
+            prova(nome, True, "saltato: i compartimenti non esistono su Windows (sono spenti)")
+        else:
+            prova(nome, condizione(), dettaglio)
+
     prova("ricerca veloce: l'archivio di prova ha decine di migliaia di turni",
           d["indicizzati"] >= 30000, str(d["indicizzati"]))
     prova("ricerca veloce: dopo l'indicizzazione la mappa da riga a file copre tutto l'indice",
@@ -216,8 +249,7 @@ def esegui(prova) -> None:
     prova("ricerca veloce: nessuna parola sopra %.0f s, con e senza compartimenti" % TETTO,
           not lenti, "troppo lente: %s" % lenti)
     prova("ricerca veloce: la parola in ogni turno trova la prima pagina piena",
-          m["predefinito|zenzero"]["n"] == 30 and m["alfa|zenzero"]["n"] == 30
-          and m["-|zenzero"]["n"] == 30)
+          all(m["%s|zenzero" % s]["n"] == 30 for s in scelte))
 
     if "lento" in m["-|zenzero"]:
         diversi = [k for k, v in m.items()
@@ -229,27 +261,32 @@ def esegui(prova) -> None:
         prova("ricerca veloce: la strada lenta esiste per il confronto", False,
               "manca turni._lento")
 
-    prova("ricerca veloce: nessun turno di un altro compartimento nei risultati",
-          all(v.get("fuori", 0) == 0 for v in m.values()))
-    prova("ricerca veloce: il turno unico di alfa in mezzo a migliaia si trova da alfa",
-          m["alfa|unicorno"]["n"] == 1 and m["alfa|unicorno"]["gruppi"]
-          and m["alfa|unicorno"]["gruppi"][0]["progetto"] == "Progetto 0",
-          str(m["alfa|unicorno"]))
-    prova("ricerca veloce: e non si trova dal predefinito",
-          m["predefinito|unicorno"]["n"] == 0 and m["predefinito|unicorno"]["gruppi"] == [])
+    solo_compartimenti(
+        "ricerca veloce: nessun turno di un altro compartimento nei risultati",
+        lambda: d["compartimenti"] is True and all(v.get("fuori", 0) == 0 for v in m.values()),
+        "compartimenti accesi nel sottoprocesso: %r" % d["compartimenti"])
+    solo_compartimenti(
+        "ricerca veloce: il turno unico di alfa in mezzo a migliaia si trova da alfa",
+        lambda: (m["alfa|unicorno"]["n"] == 1 and m["alfa|unicorno"]["gruppi"]
+                 and m["alfa|unicorno"]["gruppi"][0]["progetto"] == "Progetto 0"),
+        str(m.get("alfa|unicorno")))
+    solo_compartimenti(
+        "ricerca veloce: e non si trova dal predefinito",
+        lambda: (m["predefinito|unicorno"]["n"] == 0 and m["predefinito|unicorno"]["gruppi"] == []))
     prova("ricerca veloce: senza compartimenti lo trova",
           m["-|unicorno"]["n"] == 1)
     prova("ricerca veloce: una parola che non c'e' non trova niente e non fallisce",
-          all(m["%s|assente" % s]["n"] == 0 for s in ("alfa", "predefinito", "-")))
+          all(m["%s|assente" % s]["n"] == 0 for s in scelte))
 
     a_mano = d["a_mano"]
     for parola in ("zenzero", "curcuma"):
         tot = lambda scelta: sum(g["turni"] for g in m["%s|%s" % (scelta, parola)]["gruppi"])
+        giusto = tot("-") == a_mano[parola]["alfa"] + a_mano[parola]["predefinito"]
+        if not senza_comp:
+            giusto = (giusto and tot("alfa") == a_mano[parola]["alfa"]
+                      and tot("predefinito") == a_mano[parola]["predefinito"])
         prova("ricerca veloce: i gruppi di '%s' contano tutti i turni, non solo la pagina" % parola,
-              tot("alfa") == a_mano[parola]["alfa"]
-              and tot("predefinito") == a_mano[parola]["predefinito"]
-              and tot("-") == a_mano[parola]["alfa"] + a_mano[parola]["predefinito"],
-              "%s contro %s" % ({s: tot(s) for s in ("alfa", "predefinito", "-")}, a_mano[parola]))
+              giusto, "%s contro %s" % ({s: tot(s) for s in scelte}, a_mano[parola]))
 
     if "mappa_dopo_cancella" in d:
         prova("ricerca veloce: con una riga cancellata da fuori la mappa non copre piu'",

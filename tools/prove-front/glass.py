@@ -192,7 +192,10 @@ def _prova_swift(prova, radice):
     Queste guardano i sorgenti; il giudizio sul vetro resta a chi apre l'app."""
     base = radice / "mac" / "Sources"
     file_swift = sorted(base.rglob("*.swift"))
-    testi = {str(f.relative_to(base)): f.read_text(encoding="utf-8") for f in file_swift}
+    # le chiavi sono percorsi relativi scritti SEMPRE con la barra dritta: su Windows
+    # `str(Path)` userebbe la rovescia, e ogni confronto qui sotto ("Sistema/...",
+    # "Guscio/PlanciaApp.swift") non troverebbe niente
+    testi = {f.relative_to(base).as_posix(): f.read_text(encoding="utf-8") for f in file_swift}
     prova("mac/Sources: ci sono i sorgenti nelle quattro cartelle (Core, Guscio, Sistema, Viste)",
           all(any(k.startswith(c + "/") for k in testi) for c in ("Core", "Guscio", "Sistema", "Viste")),
           str(sorted({k.split("/")[0] for k in testi})))
