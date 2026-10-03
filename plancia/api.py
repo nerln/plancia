@@ -531,11 +531,8 @@ class Handler(BaseHTTPRequestHandler):
                     row = conn.execute("SELECT * FROM knowledge WHERE name=?",
                                        (first("name"),)).fetchone()
                     return self._json(dict(row)) if row else self._error(404, "non trovata")
-                return self._json([dict(r) for r in conn.execute(
-                    "SELECT k.id, k.name, k.description, k.type, k.updated_at, k.links, "
-                    "p.name AS progetto, p.key AS project_key FROM knowledge k "
-                    "LEFT JOIN projects p ON p.id=k.project_id ORDER BY k.updated_at DESC"
-                ).fetchall()])
+                from . import mappa as _mappa
+                return self._json(_mappa.schede(conn))
             if path == "/api/memoria/mappa":
                 from . import mappa as _mappa
                 return self._json(_mappa.mappa(conn))

@@ -276,7 +276,7 @@ def _mappa(prova, tmp, config, disposizione, mappa, store) -> None:
     conn.commit()
     m2 = mappa.mappa(conn)
     prova("mappa: la risposta ha lo stesso formato di sempre (nodi con x e y, archi, diagnosi)",
-          set(m1) == {"nodi", "archi", "diagnosi"}
+          set(m1) == {"nodi", "archi", "diagnosi", "gruppi"}
           and all(0 <= n["x"] <= 1 and 0 <= n["y"] <= 1 for n in m1["nodi"])
           and {"nome", "tipo", "grado"} <= set(m1["nodi"][0]) and {"da", "a"} == set(m1["archi"][0]))
     prova("mappa: riscrivere le descrizioni non ricalcola la disposizione",
@@ -446,6 +446,11 @@ def _riprendi(prova, tmp, cantiere, config, recap, store) -> None:
     finto_c = _finti.crea_finto(tmp / "bin-riprendi", "claude-argv", CLAUDE_FINTO_ARGV)
     finto_x = _finti.crea_finto(tmp / "bin-riprendi", "codex-argv", CODEX_FINTO_ARGV)
     os.environ["FINTO_ARGV"] = str(registro)
+    # Altri lotti della stessa suite lasciano `recap.claude_bin` sostituito (un lambda
+    # che torna "" o un finto loro): qui serve il finto che registra argv, qualunque
+    # cosa sia rimasta in giro.
+    vero_claude_bin = recap.claude_bin
+    recap.claude_bin = lambda: finto_c
     cfg_vecchia = config.load_config()
     cfg = dict(cfg_vecchia)
     cfg["claude_bin"] = finto_c
@@ -506,6 +511,7 @@ def _riprendi(prova, tmp, cantiere, config, recap, store) -> None:
               sorgente.count('"--model"') == 1 and "if not sessione:" in sorgente)
         conn.close()
     finally:
+        recap.claude_bin = vero_claude_bin
         config.save_config(cfg_vecchia)
         os.environ.pop("FINTO_ARGV", None)
 

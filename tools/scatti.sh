@@ -112,16 +112,24 @@ if [ "$CONTROLLA" = 1 ]; then
   ok=1
   leggi() { curl -fs "http://127.0.0.1:$PORTA$1"; }
   numero() { python3 -c "import json,sys; d=json.load(sys.stdin); print($1)"; }
-  # la vista Memoria e il suo grafo: una cinquantina di schede, con legami veri e
-  # qualche orfana (un archivio senza legami e' una nuvola di pallini)
+  # la vista Memoria e il suo grafo: 60-90 schede in 6-12 gruppi con un nome leggibile,
+  # legami fitti dentro un gruppo e dei ponti fra gruppi, qualche orfana (un archivio
+  # senza legami e' una nuvola di pallini, uno senza gruppi una nuvola di nomi simili)
   m="$(leggi /api/memoria/mappa)"
   schede="$(echo "$m" | numero "len(d['nodi'])")"
   archi="$(echo "$m" | numero "len(d['archi'])")"
   orfane="$(echo "$m" | numero "len(d['diagnosi']['orfane'])")"
   tipi="$(echo "$m" | numero "len({n['tipo'] for n in d['nodi']})")"
   posti="$(echo "$m" | numero "sum(1 for n in d['nodi'] if 0 <= n.get('x', -1) <= 1 and 0 <= n.get('y', -1) <= 1)")"
-  echo "    memoria: $schede schede, $archi legami, $orfane orfane, $tipi tipi, $posti con posizione"
-  [ "$schede" -ge 40 ] && [ "$schede" -le 70 ] || { echo "    NO: servono 40-70 schede" >&2; ok=0; }
+  gruppi="$(echo "$m" | numero "len(d.get('gruppi', []))")"
+  piccoli="$(echo "$m" | numero "sum(1 for g in d.get('gruppi', []) if g['memorie'] < 2 or not g['nome'])")"
+  titoli="$(echo "$m" | numero "len({n.get('titolo') for n in d['nodi']})")"
+  ponti="$(echo "$m" | numero "sum(l['n'] for g in d.get('gruppi', []) for l in g['legami']) // 2")"
+  echo "    memoria: $schede schede, $archi legami, $orfane orfane, $tipi tipi, $posti con posizione, $gruppi gruppi, $ponti ponti, $titoli titoli"
+  [ "$schede" -ge 60 ] && [ "$schede" -le 90 ] || { echo "    NO: servono 60-90 schede" >&2; ok=0; }
+  [ "$gruppi" -ge 6 ] && [ "$gruppi" -le 12 ] && [ "$piccoli" = 0 ] || { echo "    NO: servono 6-12 gruppi con un nome e piu' di una scheda" >&2; ok=0; }
+  [ "$ponti" -ge 8 ] || { echo "    NO: servono dei ponti fra i gruppi" >&2; ok=0; }
+  [ "$titoli" -ge $((schede - 2)) ] || { echo "    NO: i titoli delle schede devono essere vari" >&2; ok=0; }
   [ "$archi" -ge "$schede" ] || { echo "    NO: servono piu' legami che schede" >&2; ok=0; }
   [ "$orfane" -ge 1 ] && [ "$orfane" -lt $((schede / 3)) ] || { echo "    NO: servono alcune orfane, non troppe" >&2; ok=0; }
   [ "$tipi" -ge 4 ] || { echo "    NO: servono i quattro tipi" >&2; ok=0; }

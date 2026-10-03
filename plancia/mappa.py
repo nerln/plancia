@@ -16,12 +16,20 @@ prendere, che è la domanda che conta da quando il richiamo esiste.
 
 I nodi sono i fatti, non i file: la stessa memoria in due cartelle è un nodo
 solo, e le cartelle diventano una proprietà sua.
+
+I gruppi: un archivio di cento schede con nomi tutti simili è un elenco, non una
+mappa. Ogni nodo porta `gruppo` (la chiave stabile del cluster), `gruppo_nome` (il
+nome leggibile) e `titolo` (un titolo umano e corto), e la risposta porta l'elenco
+dei gruppi con i loro colori e i legami fra uno e l'altro (i ponti). La
+disposizione parte già a isole (plancia/disposizione.py): il primo fotogramma è
+leggibile senza aspettare nessuna fisica.
 """
 
 import collections
 import hashlib
 import json
 import os
+import re
 import sqlite3
 import subprocess
 import sys
@@ -42,7 +50,7 @@ CORPO_MINIMO = richiamo.SOSTANZA_MINIMA
 def _righe(conn) -> list:
     try:
         return list(conn.execute(
-            "SELECT name, type, scope, description, links, updated_at, path, "
+            "SELECT name, type, scope, description, links, updated_at, path, project_id, "
             "LENGTH(COALESCE(description,'')) + LENGTH(COALESCE(body,'')) AS peso "
             "FROM knowledge ORDER BY name"))
     except sqlite3.Error:
@@ -66,6 +74,7 @@ def _righe(conn) -> list:
 
 _LUCCHETTO = threading.Lock()
 _MEMORIA = collections.OrderedDict()    # impronta -> {nome: [x, y]}, le ultime
+_CON_ISOLE = set()                      # le impronte in memoria calcolate a isole (con i gruppi)
 _IN_CORSO = {}                          # impronta -> Event, un calcolo alla volta per impronta
 _PROVVISORIE = {}                       # impronta -> (posizioni, scadenza): il figlio non ha finito in tempo
 _VALIDITA_PROVVISORIA = 60.0
@@ -76,12 +85,16 @@ _TEMPO_MAX = 120.0                      # secondi per il processo figlio
 STATISTICHE = {"calcoli": 0, "figli": 0, "sul_posto": 0, "partenze_calde": 0, "scaduti": 0}
 
 
-def impronta(nomi: list, archi: list) -> str:
-    """Chi c'e' e chi e' legato a chi. Cambia solo se cambiano le schede o i legami."""
+def impronta(nomi: list, archi: list, gruppi: dict = None) -> str:
+    """Chi c'e', chi e' legato a chi e (se ci sono) di che gruppo e' ognuno. Cambia solo
+    se cambiano le schede, i legami o i gruppi: una descrizione riscritta no."""
     h = hashlib.sha1()
     h.update(("\n".join(sorted(nomi))).encode("utf-8"))
     h.update(b"\0")
     h.update(("\n".join(sorted("%s\t%s" % (a, b) for a, b in archi))).encode("utf-8"))
+    if gruppi:
+        h.update(b"\0isole2\0")
+        h.update(("\n".join(sorted("%s\t%s" % (n, gruppi.get(n, "")) for n in nomi))).encode("utf-8"))
     return h.hexdigest()
 
 
@@ -99,27 +112,30 @@ def _leggi_disco() -> dict:
     return {}
 
 
-def _scrivi_disco(chiave: str, posizioni: dict) -> None:
+def _scrivi_disco(chiave: str, posizioni: dict, isole: bool = False) -> None:
     percorso = _file_cache()
     try:
         percorso.parent.mkdir(parents=True, exist_ok=True)
         tmp = percorso.with_name(percorso.name + ".%d.tmp" % os.getpid())
-        tmp.write_text(json.dumps({"impronta": chiave, "posizioni": posizioni}),
+        tmp.write_text(json.dumps({"impronta": chiave, "posizioni": posizioni, "isole": bool(isole)}),
                        encoding="utf-8")
         os.replace(str(tmp), str(percorso))
     except OSError:
         pass        # la cache e' un'accelerazione: se non si scrive, si ricalcola
 
 
-def _ricorda(chiave: str, posizioni: dict) -> None:
+def _ricorda(chiave: str, posizioni: dict, isole: bool = False) -> None:
     with _LUCCHETTO:
         _MEMORIA[chiave] = posizioni
         _MEMORIA.move_to_end(chiave)
+        if isole:
+            _CON_ISOLE.add(chiave)
         while len(_MEMORIA) > _MEMORIA_MAX:
-            _MEMORIA.popitem(last=False)
+            vecchia, _ = _MEMORIA.popitem(last=False)
+            _CON_ISOLE.discard(vecchia)
 
 
-def _calcola_fuori(nomi: list, archi: list, partenza: dict) -> tuple:
+def _calcola_fuori(nomi: list, archi: list, partenza: dict, gruppi: dict = None) -> tuple:
     """(coordinate, definitive). Le calcola in un processo figlio; sul posto se il
     figlio non riesce a partire. Se il figlio non finisce in tempo (la macchina e'
     sotto un carico enorme) NON si ripiega sul calcolo intero nel server, che
@@ -127,7 +143,7 @@ def _calcola_fuori(nomi: list, archi: list, partenza: dict) -> tuple:
     (`giri=0`, costo lineare), segnate come non definitive: valgono per questa
     risposta e non si scrivono su disco, cosi' la prossima volta si riprova."""
     richiesta = json.dumps({"nomi": nomi, "archi": [list(a) for a in archi],
-                            "partenza": partenza})
+                            "partenza": partenza, "gruppi": gruppi or {}})
     if sys.executable:
         env = dict(os.environ)
         env["PYTHONPATH"] = os.pathsep.join(
@@ -145,18 +161,20 @@ def _calcola_fuori(nomi: list, archi: list, partenza: dict) -> tuple:
                     return risultato, True
         except subprocess.TimeoutExpired:
             STATISTICHE["scaduti"] += 1
-            return disposizione_pura.calcola(nomi, archi, partenza, giri=0), False
+            return disposizione_pura.calcola(nomi, archi, partenza, giri=0, gruppi=gruppi), False
         except (OSError, ValueError, subprocess.SubprocessError):
             pass
     STATISTICHE["sul_posto"] += 1
-    return disposizione_pura.calcola(nomi, archi, partenza), True
+    return disposizione_pura.calcola(nomi, archi, partenza, gruppi=gruppi), True
 
 
-def posizioni(nomi: list, archi: list) -> dict:
+def posizioni(nomi: list, archi: list, gruppi: dict = None) -> dict:
     """{nome: [x, y]} per questi nodi e questi archi, dalla cache se l'impronta
     e' la stessa, altrimenti calcolata (una volta sola anche se le richieste sono
-    dieci insieme) a partire dalle posizioni della disposizione precedente."""
-    chiave = impronta(nomi, archi)
+    dieci insieme) a partire dalle posizioni della disposizione precedente.
+    Con `gruppi` ({nome: chiave}) la disposizione e' a isole."""
+    isole = bool(gruppi) and len(set(gruppi.values())) >= 2
+    chiave = impronta(nomi, archi, gruppi if isole else None)
     while True:
         with _LUCCHETTO:
             trovata = _MEMORIA.get(chiave)
@@ -179,24 +197,28 @@ def posizioni(nomi: list, archi: list) -> dict:
             # Anche su disco, per non rifare da zero a ogni riavvio del server.
             disco = _leggi_disco()
             if disco.get("impronta") == chiave and set(disco["posizioni"]) == set(nomi):
-                _ricorda(chiave, disco["posizioni"])
+                _ricorda(chiave, disco["posizioni"], isole)
                 return disco["posizioni"]
             # La partenza: l'ultima disposizione nota (memoria o disco), qualunque
-            # impronta avesse. Le schede che c'erano restano dove stavano.
+            # impronta avesse. Le schede che c'erano restano dove stavano. A isole
+            # si parte solo da una disposizione a isole: una nuvola senza gruppi non
+            # dice dove stanno i gruppi.
             partenza = {}
             with _LUCCHETTO:
-                if _MEMORIA:
-                    partenza = dict(next(reversed(_MEMORIA.values())))
-            if not partenza:
+                for chiave_prec in reversed(_MEMORIA):
+                    if not isole or chiave_prec in _CON_ISOLE:
+                        partenza = dict(_MEMORIA[chiave_prec])
+                        break
+            if not partenza and (not isole or disco.get("isole")):
                 partenza = disco.get("posizioni", {})
             if partenza:
                 STATISTICHE["partenze_calde"] += 1
             with _UNO_ALLA_VOLTA:
                 STATISTICHE["calcoli"] += 1
-                risultato, definitive = _calcola_fuori(nomi, archi, partenza)
+                risultato, definitive = _calcola_fuori(nomi, archi, partenza, gruppi if isole else None)
             if definitive:
-                _ricorda(chiave, risultato)
-                _scrivi_disco(chiave, risultato)
+                _ricorda(chiave, risultato, isole)
+                _scrivi_disco(chiave, risultato, isole)
             else:
                 with _LUCCHETTO:
                     _PROVVISORIE.clear()
@@ -208,7 +230,7 @@ def posizioni(nomi: list, archi: list) -> dict:
             attesa.set()
 
 
-def disposizione(nodi: list, archi: list) -> None:
+def disposizione(nodi: list, archi: list, gruppi: dict = None) -> None:
     """Mette le coordinate dentro i nodi, in un quadrato da 0 a 1.
 
     Stabile a parita' di dati, non stabile in assoluto: un legame nuovo verso un
@@ -221,10 +243,253 @@ def disposizione(nodi: list, archi: list) -> None:
         return
     nomi = [x["nome"] for x in nodi]
     coppie = [(a["da"], a["a"]) for a in archi]
-    pos = posizioni(nomi, coppie)
+    pos = posizioni(nomi, coppie, gruppi)
     for nodo in nodi:
         xy = pos.get(nodo["nome"], [0.5, 0.5])
         nodo["x"], nodo["y"] = xy[0], xy[1]
+
+
+# ---------------------------------------------------------------------------
+# I gruppi e i titoli
+# ---------------------------------------------------------------------------
+#
+# Il gruppo di una memoria, in quest'ordine:
+#
+# 1. il progetto Plancia a cui e' collegata esplicitamente (`project_id`), salvo che
+#    sia il progetto che la sincronizzazione crea da sola per ogni memoria di tipo
+#    `project` (chiave uguale al nome della scheda): quello e' un artefatto, non un
+#    raggruppamento;
+# 2. se e' una memoria globale dell'utente (chi sei, preferenze): il gruppo del suo
+#    tipo, qualunque cartella l'abbia scritta;
+# 3. il progetto Plancia che possiede la cartella da cui viene il file (il percorso
+#    del progetto, scritto come lo scrive Claude Code: ogni carattere non
+#    alfanumerico diventa un trattino);
+# 4. la cartella stessa, se ci sono almeno due schede; una cartella con una scheda
+#    sola non fa un gruppo e cade nel gruppo del suo tipo.
+#
+# Un progetto nascosto non da' il nome a un gruppo.
+
+TAVOLOZZA = ["#e07b2a", "#3b6fd0", "#3fa066", "#a35cc2", "#d4546a", "#20a39e",
+             "#c9a227", "#6a6bd6", "#a0714a", "#42b0d5", "#8fb339", "#cc5fa8"]
+# Chi sei e preferenze viaggiano da una cartella all'altra: il loro gruppo e' il tipo.
+GLOBALI = ("user", "feedback")
+NOMI_TIPO = {"user": "Chi sei", "feedback": "Preferenze", "reference": "Riferimenti",
+             "project": "Altri progetti"}
+CARTELLA_MINIMA = 2
+TITOLO_MAX = 70
+
+
+def colore_gruppo(chiave: str, occupati=()) -> str:
+    """Il colore di un gruppo: dalla sua chiave, sempre lo stesso. Se in una stessa mappa
+    due gruppi cadono sullo stesso, il secondo (in ordine di chiave) prende il primo
+    libero: restano tutti distinti finche' i gruppi sono meno dei colori."""
+    n = len(TAVOLOZZA)
+    i = int.from_bytes(hashlib.sha1(chiave.encode("utf-8")).digest()[:4], "big") % n
+    for passo in range(n):
+        c = TAVOLOZZA[(i + passo) % n]
+        if c not in occupati:
+            return c
+    return TAVOLOZZA[i]
+
+
+def _codifica(percorso: str) -> str:
+    """Come Claude Code scrive una cartella di progetto nel nome della cartella delle sue memorie."""
+    return re.sub(r"[^A-Za-z0-9]", "-", os.path.normpath(percorso))
+
+
+def _umano(testo: str) -> str:
+    t = re.sub(r"[-_]+", " ", testo or "").strip()
+    return (t[:1].upper() + t[1:]) if t else ""
+
+
+# Pezzi di percorso che non dicono niente su che progetto sia: "dev-plancia" e' "Plancia".
+_GENERICI = {"users", "user", "home", "dev", "code", "projects", "project", "src", "github",
+             "repos", "repo", "documents", "desktop", "work", "workspace"}
+
+
+def _nome_cartella(scope: str) -> str:
+    pezzi = [p for p in richiamo._dove(scope).split("-") if p]
+    while len(pezzi) > 1 and pezzi[0].lower() in _GENERICI:
+        pezzi.pop(0)
+    return _umano(" ".join(pezzi)) or "Altrove"
+
+
+def _taglia(testo: str, massimo: int) -> str:
+    if len(testo) <= massimo:
+        return testo
+    taglio = testo[:massimo - 1].rsplit(" ", 1)[0].rstrip(" ,;:-")
+    return (taglio or testo[:massimo - 1]) + "…"
+
+
+def titolo_da_descrizione(testo: str, massimo: int = TITOLO_MAX) -> str:
+    """La prima frase della descrizione, accorciata: un titolo, non un riassunto."""
+    t = " ".join((testo or "").split())
+    if not t:
+        return ""
+    t = re.split(r"(?<=[.!?])\s|;|\s[\u2014\u2013]\s|\s-\s", t, maxsplit=1)[0].strip().rstrip(".;:,")
+    return _taglia(t[:1].upper() + t[1:], massimo)
+
+
+_INDICI = {}        # percorso di MEMORY.md -> (mtime, dimensione, {file: titolo})
+_LEGAME_INDICE = re.compile(r"\[([^\]]+)\]\(([^)\s]+)\)")
+
+
+def _indice(cartella: str) -> dict:
+    """I titoli scritti nell'indice MEMORY.md di una cartella di memorie: il testo di
+    ogni collegamento, per nome di file. Si rilegge solo se il file e' cambiato."""
+    percorso = os.path.join(cartella, "MEMORY.md")
+    try:
+        st = os.stat(percorso)
+    except OSError:
+        _INDICI.pop(percorso, None)
+        return {}
+    firma = (st.st_mtime_ns, st.st_size)
+    trovato = _INDICI.get(percorso)
+    if trovato and trovato[0] == firma:
+        return trovato[1]
+    titoli = {}
+    try:
+        with open(percorso, encoding="utf-8", errors="replace") as f:
+            for riga in f:
+                for testo, bersaglio in _LEGAME_INDICE.findall(riga):
+                    nome_file = os.path.basename(bersaglio.split("#", 1)[0])
+                    testo = " ".join(testo.split())
+                    if nome_file.endswith(".md") and testo and nome_file not in titoli:
+                        titoli[nome_file] = testo
+    except OSError:
+        return {}
+    if len(_INDICI) > 400:
+        _INDICI.clear()
+    _INDICI[percorso] = (firma, titoli)
+    return titoli
+
+
+def titolo_di(percorso: str, descrizione: str, nome: str) -> str:
+    """Il titolo di una memoria: il testo del suo collegamento nell'indice MEMORY.md
+    della stessa cartella; se manca, la descrizione accorciata a una frase; se manca
+    anche quella, il nome reso leggibile. Mai la sigla finche' c'e' altro."""
+    if percorso:
+        titolo = _indice(os.path.dirname(percorso)).get(os.path.basename(percorso))
+        if titolo:
+            return _taglia(titolo, TITOLO_MAX + 20)
+    return titolo_da_descrizione(descrizione) or _umano(nome) or nome
+
+
+def _contesto(conn) -> dict:
+    """I progetti Plancia (per id) e le loro cartelle, scritte come Claude Code le scrive."""
+    progetti = {}
+    try:
+        for r in conn.execute("SELECT id, key, name, hidden, auto FROM projects"):
+            progetti[r["id"]] = {"key": r["key"], "name": r["name"],
+                                 "nascosto": bool(r["hidden"]), "auto": bool(r["auto"])}
+    except sqlite3.Error:
+        try:
+            for r in conn.execute("SELECT id, key, name FROM projects"):
+                progetti[r["id"]] = {"key": r["key"], "name": r["name"], "nascosto": False, "auto": False}
+        except sqlite3.Error:
+            pass
+    cartelle = {}
+    try:
+        for r in conn.execute("SELECT project_id, value FROM project_links WHERE kind='path' ORDER BY id"):
+            if r["value"]:
+                cartelle.setdefault(_codifica(r["value"]), r["project_id"])
+    except sqlite3.Error:
+        pass
+    return {"progetti": progetti, "cartelle": cartelle}
+
+
+def _gruppo_tipo(tipo: str) -> tuple:
+    t = tipo if tipo in NOMI_TIPO else "altro"
+    return ("tipo:" + t, NOMI_TIPO.get(t, "Altro"), "tipo")
+
+
+def _gruppo_provvisorio(nome: str, tipo: str, scope: str, project_id, ctx: dict) -> tuple:
+    p = ctx["progetti"].get(project_id) if project_id else None
+    if p and not p["nascosto"] and not (p["auto"] and p["key"] == nome):
+        return (p["key"], p["name"], "progetto")
+    if tipo in GLOBALI:
+        return _gruppo_tipo(tipo)
+    p = ctx["progetti"].get(ctx["cartelle"].get(scope or ""))
+    if p and not p["nascosto"]:
+        return (p["key"], p["name"], "progetto")
+    return ("cartella:" + (scope or ""), _nome_cartella(scope or ""), "cartella")
+
+
+def _ultime(righe: list) -> dict:
+    """Una riga per nome: la piu' aggiornata (a parita', la prima), come i nodi."""
+    scelte = {}
+    for r in righe:
+        vecchia = scelte.get(r["name"])
+        if vecchia is None or (r["updated_at"] or "") > (vecchia["updated_at"] or ""):
+            scelte[r["name"]] = r
+    return scelte
+
+
+def _assegna(conn, scelte: dict) -> dict:
+    """{nome: {"gruppo", "gruppo_nome", "titolo"}} per le schede scelte."""
+    ctx = _contesto(conn)
+    prov = {nome: _gruppo_provvisorio(nome, r["type"] or "", r["scope"] or "", r["project_id"], ctx)
+            for nome, r in scelte.items()}
+    in_cartella = collections.Counter(g[0] for g in prov.values() if g[2] == "cartella")
+    fuori = {}
+    for nome, r in scelte.items():
+        chiave, nome_gruppo, genere = prov[nome]
+        if genere == "cartella" and in_cartella[chiave] < CARTELLA_MINIMA:
+            chiave, nome_gruppo, genere = _gruppo_tipo(r["type"] or "")
+        fuori[nome] = {"gruppo": chiave, "gruppo_nome": nome_gruppo,
+                       "titolo": titolo_di(r["path"] or "", r["description"] or "", nome)}
+    return fuori
+
+
+def _elenco_gruppi(nodi: list, archi: list) -> list:
+    """I gruppi presenti: chiave, nome, colore stabile, quante memorie, i ponti verso
+    gli altri gruppi (quanti legami li uniscono) e il centro dove stanno sulla mappa."""
+    per = collections.OrderedDict()
+    for n in nodi:
+        g = per.setdefault(n["gruppo"], {"chiave": n["gruppo"], "nome": n["gruppo_nome"], "memorie": 0,
+                                         "xs": [], "ys": []})
+        g["memorie"] += 1
+        g["xs"].append(n["x"])
+        g["ys"].append(n["y"])
+    di = {n["nome"]: n["gruppo"] for n in nodi}
+    ponti = collections.defaultdict(collections.Counter)
+    for a in archi:
+        ga, gb = di.get(a["da"]), di.get(a["a"])
+        if ga and gb and ga != gb:
+            ponti[ga][gb] += 1
+            ponti[gb][ga] += 1
+    occupati = set()
+    colori = {}
+    for chiave in sorted(per):
+        colori[chiave] = colore_gruppo(chiave, occupati)
+        occupati.add(colori[chiave])
+    risultato = []
+    for chiave, g in per.items():
+        risultato.append({
+            "chiave": chiave, "nome": g["nome"], "colore": colori[chiave], "memorie": g["memorie"],
+            "legami": [{"gruppo": altro, "n": n} for altro, n in
+                       sorted(ponti[chiave].items(), key=lambda t: (-t[1], t[0]))],
+            "x": round(sum(g["xs"]) / len(g["xs"]), 4), "y": round(sum(g["ys"]) / len(g["ys"]), 4),
+        })
+    risultato.sort(key=lambda g: (-g["memorie"], g["nome"].lower(), g["chiave"]))
+    return risultato
+
+
+def schede(conn) -> list:
+    """L'elenco delle schede di `/api/knowledge`: una per riga dell'archivio, con in piu'
+    gruppo, gruppo_nome e titolo, gli stessi dei nodi della mappa."""
+    righe = _righe(conn)
+    gruppi = _assegna(conn, _ultime(righe))
+    risultato = []
+    for r in conn.execute(
+            "SELECT k.id, k.name, k.description, k.type, k.updated_at, k.links, "
+            "p.name AS progetto, p.key AS project_key FROM knowledge k "
+            "LEFT JOIN projects p ON p.id=k.project_id ORDER BY k.updated_at DESC").fetchall():
+        d = dict(r)
+        d.update(gruppi.get(d["name"]) or {"gruppo": "tipo:altro", "gruppo_nome": "Altro",
+                                           "titolo": _umano(d["name"] or "")})
+        risultato.append(d)
+    return risultato
 
 
 def mappa(conn) -> dict:
@@ -233,7 +498,7 @@ def mappa(conn) -> dict:
     if not righe:
         return {"nodi": [], "archi": [], "diagnosi": {
             "totale": 0, "richiamabili": 0, "doppie": [], "orfane": [],
-            "rotti": [], "da_scrivere": [], "vuote": [], "cartelle": []}}
+            "rotti": [], "da_scrivere": [], "vuote": [], "cartelle": []}, "gruppi": []}
 
     # Un nodo per nome. Delle copie si tiene la più aggiornata e si ricorda in
     # quante cartelle vive, che è il segnale del doppione.
@@ -320,11 +585,15 @@ def mappa(conn) -> dict:
             conteggio[d] += 1
 
     lista_archi = [{"da": a, "a": b} for a, b in sorted(archi)]
-    disposizione(ordinati, lista_archi)
+    assegnati = _assegna(conn, _ultime(righe))
+    for n in ordinati:
+        n.update(assegnati[n["nome"]])
+    disposizione(ordinati, lista_archi, {n["nome"]: n["gruppo"] for n in ordinati})
 
     return {
         "nodi": ordinati,
         "archi": lista_archi,
+        "gruppi": _elenco_gruppi(ordinati, lista_archi),
         "diagnosi": {
             "totale": len(ordinati),
             "richiamabili": sum(1 for n in ordinati if n["richiamabile"]),

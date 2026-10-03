@@ -11,7 +11,7 @@ Qui si prova, senza Chrome:
 - i file che scrive sono quelli che i due README mostrano;
 - `?memoria=grafo` esiste nel web (senza, lo scatto del grafo sarebbe l'elenco);
 - `tools/scatti.sh --controlla` GIRA: avvia un server sull'archivio finto, in una casa e
-  su una porta sue, e controlla che ogni vista abbia dati (la memoria: 40-70 schede,
+  su una porta sue, e controlla che ogni vista abbia dati (la memoria: 60-90 schede,
   legami veri, orfane, i quattro tipi, ogni scheda con le sue coordinate);
 - la memoria dimostrativa e' generica: nessun nome vero, nessun percorso della macchina.
 
@@ -93,8 +93,8 @@ def _esegui(prova) -> None:
     memoria, legami = demo.MEMORIA, demo.LEGAMI_MEMORIA
     nomi = [m[0] for m in memoria]
     tipi = {m[1] for m in memoria}
-    prova("demo: la memoria dimostrativa ha da 40 a 70 schede, nomi tutti diversi",
-          40 <= len(memoria) <= 70 and len(set(nomi)) == len(nomi), str(len(memoria)))
+    prova("demo: la memoria dimostrativa ha da 60 a 90 schede, nomi tutti diversi",
+          60 <= len(memoria) <= 90 and len(set(nomi)) == len(nomi), str(len(memoria)))
     prova("demo: i quattro tipi di scheda ci sono tutti", tipi == {"user", "feedback", "project", "reference"}, str(tipi))
     archi = {tuple(sorted((a, b))) for a, vs in legami.items() for b in vs}
     prova("demo: i legami vanno fra schede che esistono, e sono piu' delle schede",
@@ -102,7 +102,7 @@ def _esegui(prova) -> None:
     legate = {n for a, b in archi for n in (a, b)}
     orfane = [n for n in nomi if n not in legate]
     prova("demo: qualche scheda senza legami (gli orfani), non la meta'", 1 <= len(orfane) < len(nomi) // 3, str(orfane))
-    corte = [m[0] for m in memoria if not m[4]]
+    corte = [m[0] for m in memoria if not m[5]]
     prova("demo: alcune schede restano corte (il grafo le mostra vuote), la maggior parte no",
           1 <= len(corte) < len(nomi) // 3, str(len(corte)))
     testo = json.dumps(memoria, ensure_ascii=False) + json.dumps(legami)
@@ -110,7 +110,7 @@ def _esegui(prova) -> None:
           not re.search(r"/Users/|/Volumes/|/home/|C:\\\\", testo, re.I)
           and not [w for w in (getpass.getuser(), Path.home().name) if len(w) > 2 and w.lower() in testo.lower()])
     prova("demo: nessun em dash, e le descrizioni sono in inglese",
-          "\u2014" not in testo and not re.search(r"\b(il|della|che|per|con)\b", " ".join(m[3] for m in memoria)))
+          "\u2014" not in testo and not re.search(r"\b(il|della|che|con|gli|nel|sono|non)\b", " ".join(m[4] for m in memoria)))
 
     # --- lo script gira davvero (--controlla), in una casa e su una porta sue
     tmp = Path(tempfile.mkdtemp(prefix="plancia-prova-scatti-"))
@@ -131,10 +131,14 @@ def _esegui(prova) -> None:
     uscita = r.stdout + r.stderr
     prova("scatti: `scatti.sh --controlla` gira e passa sull'archivio finto",
           r.returncode == 0 and "controllo passato" in uscita, uscita[-500:])
-    m = re.search(r"memoria: (\d+) schede, (\d+) legami, (\d+) orfane, (\d+) tipi, (\d+) con posizione", uscita)
+    m = re.search(r"memoria: (\d+) schede, (\d+) legami, (\d+) orfane, (\d+) tipi, (\d+) con posizione, "
+                  r"(\d+) gruppi, (\d+) ponti, (\d+) titoli", uscita)
     prova("scatti: la memoria che il server serve ha schede, legami, orfane, tipi e coordinate",
           bool(m) and int(m.group(1)) == len(memoria) and int(m.group(4)) == 4
           and int(m.group(5)) == int(m.group(1)) and int(m.group(2)) >= int(m.group(1)), uscita[-400:])
+    prova("scatti: ...in 6-12 gruppi leggibili, con dei ponti fra gruppi e un titolo per scheda",
+          bool(m) and 6 <= int(m.group(6)) <= 12 and int(m.group(7)) >= 8 and int(m.group(8)) >= int(m.group(1)) - 2,
+          uscita[-400:])
     # un archivio senza le viste da fotografare deve far FALLIRE il controllo
     env["PLANCIA_DEMO_HOME"] = str(tmp / "demo-vuoto")
     env["PLANCIA_DEMO_PORT"] = str(_porta_libera())

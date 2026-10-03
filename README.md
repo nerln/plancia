@@ -606,7 +606,7 @@ Python 3.9+ and Claude Code, on macOS 13 or later, Windows or Linux (see above).
 needs macOS 26 or later, and the Xcode command line tools to build it. `gh` is optional and only used to read your repos.
 
 The native Mac app 2.0 is SwiftUI and needs macOS 26 or later. On macOS 13 to 15 stay on the 1.1.0 app,
-or use the dashboard in the browser (it installs as a web app). The web dashboard was redrawn in 2.0 to match the Mac app (system fonts, sidebar, tables with a detail panel, a physics graph for memory, five-step text size in Settings).
+or use the dashboard in the browser (it installs as a web app). The web dashboard was redrawn in 2.0 to match the Mac app (system fonts, sidebar, tables with a detail panel, a physics graph for memory, five-step text size in Settings). The memory graph is drawn as islands: each note sits in its group (the project it belongs to, or the type for who-you-are and preferences notes), a group is a coloured region with a big name, and links between groups are bridges. From far away you read the groups, up close the note titles (the link text in the folder's `MEMORY.md`, or the first sentence of the description, never the slug). The server lays the map out once per memory fingerprint, in a separate low-priority process, and reuses it until notes or links change.
 
 ## Security
 
@@ -642,7 +642,7 @@ warning each time). The full list is in the docstring of `plancia/compartimenti.
 git config core.hooksPath .githooks
 ```
 
-Turns on the hook that runs `python3 tools/prova.py` before every push: 4341
+Turns on the hook that runs `python3 tools/prova.py` before every push: 4483
 checks in a few minutes, against a throwaway archive that never touches
 yours. They cover the schema, the board, the proposals, the search index, the
 recap, the MCP surface and its token budget, every read route of the HTTP API,

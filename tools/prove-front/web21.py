@@ -82,8 +82,8 @@ def _statiche(prova, radice):
           "history.replaceState" in js and "async function seleziona(" in js, "")
     prova("tabella dei task: cerchio di stato, titolo, progetto, scadenza, fonte",
           all(x in js for x in ('class="tabella"', "cerchioTask(", "c-stato", "T('Scadenza')", "T('Fonte')")), "")
-    prova("Memoria: l'elenco e' per tipo con i conteggi e 'Da sistemare' in fondo",
-          "TIPI_MEM.map" in js and "T('Da sistemare')" in js, "")
+    prova("Memoria: l'elenco e' per gruppo con i conteggi e 'Da sistemare' in fondo",
+          "gruppi.map((g) =>" in js and "T('Da sistemare')" in js, "")
     prova("Social e Progetti hanno il dettaglio a destra (DETTAGLI.social, DETTAGLI.progetti)",
           "DETTAGLI.social = async" in js and "DETTAGLI.progetti = async" in js, "")
     prova("non restano vortice, palette, spia in pillola ne' sync-dot nel JS",
@@ -182,7 +182,8 @@ def _dinamica(radice):
             ris[_CONTROLLI[0]] = (False, "il server di prova non e' partito")
             return ris
         porta_cdp = _m._porta_libera(int(os.environ.get("PLANCIA_WEB21_CDP_PORT", 9591)))
-        chrome = subprocess.Popen([CHROME, "--headless=new", "--disable-gpu", "--hide-scrollbars", "--no-first-run",
+        chrome = subprocess.Popen([CHROME, "--headless=new", "--disable-gpu", "--hide-scrollbars", "--no-first-run", "--use-mock-keychain",
+                                   "--disable-features=MacAppCodeSignClone",
                                    "--no-default-browser-check", f"--remote-debugging-port={porta_cdp}",
                                    f"--user-data-dir={cartelle['chrome-profile']}", "about:blank"],
                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=_ambiente_chrome())
@@ -346,7 +347,9 @@ def _dinamica(radice):
         rr = val("""(async function(){
           var q = document.getElementById('cerca-q');
           q.value = 'lumen'; q.dispatchEvent(new Event('input', {bubbles: true}));
-          await new Promise(function(r){ setTimeout(r, 120); });
+          // sotto un carico enorme l'indice locale arriva in piu' di un secondo: si aspetta il
+          // primo risultato (fino a 8 s) invece di un tempo fisso
+          for (var i = 0; i < 80 && !document.querySelectorAll('.risultato').length; i++) await new Promise(function(r){ setTimeout(r, 100); });
           var subito = document.querySelectorAll('.risultato').length;
           var gruppi = [].map.call(document.querySelectorAll('.risultati h2'), function(h){return h.textContent;});
           document.querySelector('[data-act="ambito"][data-v="progetti"]').click();
