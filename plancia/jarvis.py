@@ -628,6 +628,24 @@ def _intero(v):
         return None
 
 
+def _progetto_esatto(lett, ident):
+    """Il progetto di una proposta del modello: id, chiave o nome esatti.
+
+    store.get_project indovina anche per somiglianza, parola per parola, e va
+    bene per una frase detta a voce ("il filmato ard"). Una proposta del
+    modello invece porta una chiave: se non esiste, la scheda si scarta invece
+    di agganciarsi a un progetto qualunque che contiene "non" nel nome."""
+    if not ident:
+        return None
+    if ident.isdigit():
+        riga = lett.execute("SELECT * FROM projects WHERE id=?", (int(ident),)).fetchone()
+        if riga:
+            return riga
+    return lett.execute(
+        "SELECT * FROM projects WHERE key=? OR lower(name)=lower(?) LIMIT 1",
+        (ident, ident)).fetchone()
+
+
 def _scheda(azione, args, lett, conn, lang):
     """`(titolo, righe, rischio, avviso, args_puliti)` di una proposta, costruita
     coi dati veri dell'archivio. Solleva `ValueError` col motivo se qualcosa non
@@ -641,7 +659,7 @@ def _scheda(azione, args, lett, conn, lang):
             raise ValueError("titolo mancante")
         chiave = None
         if args.get("progetto"):
-            riga = store.get_project(lett, _testo(args.get("progetto"), 80))
+            riga = _progetto_esatto(lett, _testo(args.get("progetto"), 80))
             if not riga:
                 raise ValueError("progetto inesistente")
             chiave = riga["key"]
@@ -661,7 +679,7 @@ def _scheda(azione, args, lett, conn, lang):
             righe.append({"k": et["progetto"], "v": task["project"]})
         return (t["titoli"]["task_done"], righe, "scrive", t["avviso_scrive"], {"task_id": tid})
     if azione == "progetto_stato":
-        riga = store.get_project(lett, _testo(args.get("progetto"), 80))
+        riga = _progetto_esatto(lett, _testo(args.get("progetto"), 80))
         stato = _testo(args.get("stato"), 20).lower()
         if not riga:
             raise ValueError("progetto inesistente")
@@ -681,7 +699,7 @@ def _scheda(azione, args, lett, conn, lang):
         chiave = None
         nome_progetto = None
         if args.get("progetto"):
-            riga = store.get_project(lett, _testo(args.get("progetto"), 80))
+            riga = _progetto_esatto(lett, _testo(args.get("progetto"), 80))
             if not riga:
                 raise ValueError("progetto inesistente")
             chiave, nome_progetto = riga["key"], riga["name"]

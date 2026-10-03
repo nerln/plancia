@@ -135,6 +135,11 @@ def _esegui(prova) -> None:
         store.init_db(conn)
         store.upsert_project(conn, "jv-sicuro", "Jarvis Sicuro", kind="prova", priority=2, pinned=0,
                              summary="progetto di prova")
+        # Un progetto vicino per parole a "non-esiste": una proposta del modello
+        # con una chiave inesistente non deve agganciarsi a questo per somiglianza
+        # (su un archivio vero e' successo con un progetto con "non" nel nome).
+        store.upsert_project(conn, "note-non-nostre", "Note non nostre", kind="prova",
+                             priority=2, pinned=0, summary="progetto vicino per parole")
         conn.commit()
         n_task = lambda: conn.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
         n_prog_att = lambda: conn.execute(
