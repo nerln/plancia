@@ -131,10 +131,21 @@ def _briefing():
 def _testi():
     from plancia import agente, jarvis, mcp, recap, setup_claude
 
+    # La skill nomina la cartella da cui e' installata Plancia: e' quella di
+    # chi la usa (sotto la sua casa ci puo' essere il suo nome), non un testo
+    # del repo. Si toglie prima di cercare il nome dell'autore.
+    cartelle = {setup_claude.cartella_installata(), RADICE.as_posix()}
+
+    def senza_cartella(testo):
+        for cartella in sorted(cartelle, key=len, reverse=True):
+            testo = testo.replace(cartella, "<cartella di Plancia>")
+        return testo
+
     testi = {}
     for lingua in ("it", "en"):
-        testi[f"skill plancia ({lingua})"] = setup_claude.skill_text(lingua)
-        testi[f"skill riepilogo ({lingua})"] = setup_claude.riepilogo_skill_text(lingua)
+        testi[f"skill plancia ({lingua})"] = senza_cartella(setup_claude.skill_text(lingua))
+        testi[f"skill riepilogo ({lingua})"] = senza_cartella(
+            setup_claude.riepilogo_skill_text(lingua))
     for tool in mcp._TUTTI + mcp.TOOLS:
         testi[f"tool MCP {tool['name']}"] = "\n".join(_stringhe(tool))
     testi["indizi del dispatcher MCP"] = "\n".join(_stringhe(mcp.INDIZI))
