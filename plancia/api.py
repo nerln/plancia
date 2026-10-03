@@ -853,7 +853,7 @@ class Handler(BaseHTTPRequestHandler):
                 # Se la voce sarebbe comunque quella di sistema, la sintesi la
                 # fa il chiamante: parlare parte subito invece di aspettare che
                 # il server scriva un file e lo rimandi indietro.
-                esito["motore"] = "voicebox" if voice.voicebox_vivo() else "say"
+                esito["motore"] = voice.voce_neurale(lang) or "say"
                 # Quando a parlare è l'app con la voce di sistema, il testo da
                 # dire è diverso da quello da leggere: niente indirizzi, niente
                 # percorsi, niente sha.

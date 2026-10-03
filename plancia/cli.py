@@ -1019,7 +1019,7 @@ def cmd_esclusi(args):
     cfg = config.load_config_verificata()
     if not cfg.get("esclusi_ok", True):
         print(f"config.json non valido: {cfg.get('esclusi_errore')}")
-        print("fail-closed: nessun conteggio, nessuna pulizia — i dati non sono affidabili "
+        print("fail-closed: nessun conteggio, nessuna pulizia, i dati non sono affidabili "
               "finché il file non torna a leggersi e a validare.")
         return
     cartelle = cfg.get("cartelle_escluse") or []

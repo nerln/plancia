@@ -270,7 +270,7 @@ what it cannot see is listed in the README.
 
 ## Tested
 
-4917 checks for the program, 422 for the dashboard, 153 for the Mac side (the data
+4921 checks for the program, 422 for the dashboard, 153 for the Mac side (the data
 layer against a fake server, the Map physics, the colour contrast of both styles)
 and 74 for the Jarvis panel (every state in light and dark, the voice paths with
 Pocket and Kokoro fakes, the confirm card, Esc, the microphone and the server off).

@@ -1284,7 +1284,7 @@ def sync(full=False, progress=None, skip_git=False, modo="tutto",
     if not escl_ok:
         result["esclusi_errore"] = cfg_verificata.get("esclusi_errore")
         log(f"config.json non valido per le cartelle/sessioni private: "
-            f"{result['esclusi_errore']} — salto sessioni, turni, memoria, Codex, "
+            f"{result['esclusi_errore']}: salto sessioni, turni, memoria, Codex, "
             "lavagna e git locali; non lancio la pulizia", progress)
     escl = esclusi.carica(cfg_verificata, conn=conn) if escl_ok else None
 
