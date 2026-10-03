@@ -1420,11 +1420,21 @@ def senza_proposta(testo):
 # il flusso: una frase dentro, eventi fuori
 # --------------------------------------------------------------------------
 
-def _frasi_eventi(frasi, lang):
+def _frasi_eventi(frasi, lang, uscite=None):
+    """Gli eventi `frase` per le frasi date. `uscite` e' un contatore condiviso da tutta
+    la risposta ([0] all'inizio): la PRIMA frase, se il motore e' Kokoro, esce in clausole
+    (una per virgola, punto e virgola o due punti), cosi' il primo audio parte dopo la
+    prima clausola invece che dopo la frase intera. Le altre escono intere."""
     for grezza in frasi:
         dire = per_voce(grezza, lang)
         if dire and dire.strip(" .,;:"):
-            yield {"t": "frase", "d": grezza, "dire": dire}
+            pezzi = [dire]
+            if uscite is not None:
+                if uscite[0] == 0 and voice.spezza_prima_frase(lang):
+                    pezzi = voice.clausole(dire)
+                uscite[0] += 1
+            for i, pezzo in enumerate(pezzi):
+                yield {"t": "frase", "d": grezza if len(pezzi) == 1 else pezzo, "dire": pezzo}
 
 
 def flusso(testo, lang=None, vista=None, conn=None):
@@ -1441,6 +1451,7 @@ def flusso(testo, lang=None, vista=None, conn=None):
     d = _dizionario(lang)
     t = _sic(lang)
     testo = (testo or "").strip()
+    uscite = [0]   # quante frasi sono uscite: la prima esce in clausole (vedi _frasi_eventi)
     chiudi = False
     if vista is not None:
         conn = vista.conn
@@ -1455,7 +1466,7 @@ def flusso(testo, lang=None, vista=None, conn=None):
         yield {"t": "stato", "v": "penso"}
         if vista is not None and vista.incerta:
             esito = {"tipo": "claude", "risposta": d["non_capito"], "via": "compartimento"}
-            yield from _testo_intero(esito["risposta"], lang)
+            yield from _testo_intero(esito["risposta"], lang, uscite)
             yield {"t": "fine", "esito": _chiudi_esito(esito, testo, lang, lett, conn)}
             return
 
@@ -1467,7 +1478,7 @@ def flusso(testo, lang=None, vista=None, conn=None):
             if pid is not None:
                 esito = {"tipo": "attende", "risposta": t["col_pulsante"], "via": "comando",
                          "proposta_id": pid}
-                yield from _testo_intero(esito["risposta"], lang)
+                yield from _testo_intero(esito["risposta"], lang, uscite)
                 yield {"t": "fine", "esito": _chiudi_esito(esito, testo, lang, lett, conn,
                                                             ricorda=False)}
                 return
@@ -1479,7 +1490,7 @@ def flusso(testo, lang=None, vista=None, conn=None):
             if locale:
                 esito = {"tipo": "dati", "risposta": locale}
         if esito is not None:
-            yield from _testo_intero(esito["risposta"], lang)
+            yield from _testo_intero(esito["risposta"], lang, uscite)
             yield {"t": "fine", "esito": _chiudi_esito(esito, testo, lang, lett, conn)}
             return
 
@@ -1489,7 +1500,7 @@ def flusso(testo, lang=None, vista=None, conn=None):
                 testo, lang, lett,
                 schede=lambda q: compartimenti_viste.cerca_schede(lett, vista.ombra, q, 8))
             esito = {"tipo": "claude", "risposta": risposta or d["non_capito"]}
-            yield from _testo_intero(esito["risposta"], lang)
+            yield from _testo_intero(esito["risposta"], lang, uscite)
             yield {"t": "fine", "esito": _chiudi_esito(esito, testo, lang, lett, conn)}
             return
 
@@ -1504,7 +1515,7 @@ def flusso(testo, lang=None, vista=None, conn=None):
                     visibile = filtro.nutri(valore)
                     if visibile:
                         yield {"t": "testo", "d": visibile}
-                        yield from _frasi_eventi(frasi.nutri(visibile), lang)
+                        yield from _frasi_eventi(frasi.nutri(visibile), lang, uscite)
                 elif genere == "fine":
                     finale = valore
                 elif genere == "errore":
@@ -1520,14 +1531,14 @@ def flusso(testo, lang=None, vista=None, conn=None):
             # con i dati nel prompt, che non ha tool e non puo' scrivere
             risposta = _rispondi_con_dati(testo, lang, lett)
             esito = {"tipo": "claude", "risposta": risposta or t["non_posso"]}
-            yield from _testo_intero(esito["risposta"], lang)
+            yield from _testo_intero(esito["risposta"], lang, uscite)
             yield {"t": "fine", "esito": _chiudi_esito(esito, testo, lang, lett, conn)}
             return
         resto = filtro.resto()
         if resto:
             yield {"t": "testo", "d": resto}
-            yield from _frasi_eventi(frasi.nutri(resto), lang)
-        yield from _frasi_eventi(frasi.chiudi(), lang)
+            yield from _frasi_eventi(frasi.nutri(resto), lang, uscite)
+        yield from _frasi_eventi(frasi.chiudi(), lang, uscite)
 
         completo = finale if finale is not None else filtro.buf
         parlato = senza_proposta(completo) or d["non_capito"]
@@ -1553,11 +1564,11 @@ def flusso(testo, lang=None, vista=None, conn=None):
             conn.close()
 
 
-def _testo_intero(risposta, lang):
+def _testo_intero(risposta, lang, uscite=None):
     """Una risposta gia' pronta, data come se scorresse: un pezzo e le sue frasi."""
     if risposta:
         yield {"t": "testo", "d": risposta}
-        yield from _frasi_eventi(voice.Frasi().nutri(risposta + "\n"), lang)
+        yield from _frasi_eventi(voice.Frasi().nutri(risposta + "\n"), lang, uscite)
 
 
 def _chiudi_esito(esito, testo, lang, lett, conn, ricorda=True):
@@ -1584,11 +1595,19 @@ def _scrivi_riga(gestore, evento):
     gestore.wfile.flush()
 
 
-def informazioni_voce() -> dict:
-    """Che voce avra' Jarvis adesso: il motore neurale se risponde, altrimenti
-    niente (e allora l'app usa le voci avanzate di sistema e lo dice)."""
-    motore = voice.voce_neurale()
-    return {"neurale": motore or None, "sistema": bool(voice.piattaforma.voce_sistema_presente())}
+def informazioni_voce(lang=None) -> dict:
+    """Che voce avra' Jarvis adesso: il motore neurale se risponde (Kokoro, Pocket o
+    Voicebox, in quest'ordine), altrimenti niente (e allora l'app usa le voci avanzate di
+    sistema e lo dice). `nota` e' la riga per il piede del pannello quando Kokoro e'
+    installato ma non parla, o quando non c'e' nessun motore neurale e sta a te installarne uno."""
+    motore = voice.voce_neurale(lang)
+    fuori = {"neurale": motore or None, "sistema": bool(voice.piattaforma.voce_sistema_presente())}
+    if motore != "kokoro":
+        codice = voice.kokoro.codice_no(lang)
+        if codice:
+            fuori["kokoro"] = codice
+            fuori["nota"] = voice.kokoro.perche_no(lang)
+    return fuori
 
 
 def rotta(gestore, metodo, percorso, corpo, vista_fn, scelta=None):
@@ -1636,9 +1655,11 @@ def rotta(gestore, metodo, percorso, corpo, vista_fn, scelta=None):
         return True
     if percorso == "/api/jarvis/pronto":
         scalda(lang)
-        gestore._json(dict(informazioni_voce(), scaldato=True))
+        # Kokoro parte adesso, in un altro thread: quando arriva la prima frase e' gia' caldo
+        voice.scalda_neurale(lang)
+        gestore._json(dict(informazioni_voce(lang), scaldato=True))
         return True
     if percorso == "/api/jarvis/voce":
-        gestore._json(informazioni_voce())
+        gestore._json(informazioni_voce(lang))
         return True
     return False

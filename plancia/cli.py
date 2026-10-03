@@ -331,6 +331,57 @@ def cmd_voice(args):
         print(f"[{info['motore']} · {voice.voce_per(lang) or 'voce predefinita'}] ok")
 
 
+def cmd_voce(args):
+    """`plancia voce installa` e `plancia voce prova`: Kokoro, la voce neurale di Jarvis."""
+    from . import kokoro, recap, voice
+    if args.azione == "installa":
+        return kokoro.installa(si=args.si, python=args.python)
+    lang = recap.lang_or_default(args.lang)
+    spiegato = voice.spiega_neurale(lang)
+    nomi = {"kokoro": "Kokoro", "pocket": "Pocket", "voicebox": "Voicebox"}
+    if spiegato["scelto"]:
+        extra = f" (voce {spiegato['voce']}, lingua {lang})" if spiegato["scelto"] == "kokoro" else ""
+        print(f"Jarvis parlerebbe con: {nomi[spiegato['scelto']]}{extra}.")
+    else:
+        print("Jarvis non ha una voce neurale locale adesso.")
+    for n, r in enumerate(spiegato["righe"], 1):
+        print(f"  {n}. {nomi[r['motore']]:<9} {r['esito']:<24} {r['perche']}")
+    print(f"  {len(spiegato['righe']) + 1}. Voci di sistema: {spiegato['sistema']}")
+    if args.carica:
+        if spiegato["scelto"] != "kokoro":
+            print("--carica: Kokoro non e' il motore scelto, non lo carico.")
+            return 1
+        return _carica_kokoro(kokoro, voice, lang)
+    return 0 if spiegato["scelto"] else 1
+
+
+def _carica_kokoro(kokoro, voice, lang):
+    """`voce prova --carica`: avvia il lavoratore e sintetizza una frase in un file. Non
+    suona niente; alla fine chiude il lavoratore."""
+    import time
+    frase = {"it": "Plancia è pronta. Ti leggo il riepilogo quando vuoi.",
+             "en": "Plancia is ready. I can read you the recap whenever you want.",
+             "es": "Plancia está lista. Te leo el resumen cuando quieras."}.get(lang, "Plancia is ready.")
+    voice.AUDIO_DIR.mkdir(parents=True, exist_ok=True)
+    out = voice.AUDIO_DIR / "prova-kokoro.wav"
+    try:
+        inizio = time.perf_counter()
+        info = kokoro.sintetizza(frase, lang, out, attesa=120)
+        totale = time.perf_counter() - inizio
+        st = kokoro.stato()["lavoratore"]
+        rtf = (info["ms"] / 1000.0 / info["durata"]) if info.get("durata") else 0
+        print(f"Kokoro ha sintetizzato {info['durata']} s di audio in {info['ms']} ms "
+              f"(fattore {rtf:.2f}); dal lancio al file {totale:.1f} s, modello caricato in "
+              f"{st.get('caricato_ms')} ms, picco di memoria {st.get('picco_mb')} MB. "
+              f"File (non suonato): {info['file']}")
+        return 0
+    except kokoro.ErroreKokoro as exc:
+        print(f"Kokoro non ha risposto: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        kokoro.spegni()
+
+
 @_con_rifiuti
 def cmd_task(args):
     v = _vista()
@@ -1177,7 +1228,7 @@ def build_parser():
     s.add_argument("--speak", action="store_true", help="leggilo ad alta voce")
     s.add_argument("--notify", action="store_true", help="mandalo come notifica")
     s.add_argument("--daily", action="store_true", help="modalità automatica")
-    s.add_argument("--voce", choices=["auto", "voicebox", "say"])
+    s.add_argument("--voce", choices=["auto", "kokoro", "voicebox", "say"])
     s.add_argument("--background", action="store_true", help="non aspettare la fine")
     s.add_argument("--json", action="store_true")
     s.set_defaults(func=cmd_recap)
@@ -1186,7 +1237,7 @@ def build_parser():
     s.add_argument("domanda", nargs="+")
     s.add_argument("--lang")
     s.add_argument("--speak", action="store_true")
-    s.add_argument("--voce", choices=["auto", "voicebox", "say"])
+    s.add_argument("--voce", choices=["auto", "kokoro", "voicebox", "say"])
     s.add_argument("--background", action="store_true")
     s.set_defaults(func=cmd_ask)
 
@@ -1199,14 +1250,26 @@ def build_parser():
     s = sub.add_parser("say", help="leggi una frase con la voce configurata")
     s.add_argument("testo", nargs="+")
     s.add_argument("--lang")
-    s.add_argument("--voce", choices=["auto", "voicebox", "say"])
+    s.add_argument("--voce", choices=["auto", "kokoro", "voicebox", "say"])
     s.set_defaults(func=cmd_say)
 
     s = sub.add_parser("voice", help="stato della voce, elenco voci, prova")
     s.add_argument("azione", nargs="?", default="stato", choices=["stato", "voci", "prova"])
     s.add_argument("--lang")
-    s.add_argument("--voce", choices=["auto", "voicebox", "say"])
+    s.add_argument("--voce", choices=["auto", "kokoro", "voicebox", "say"])
     s.set_defaults(func=cmd_voice)
+
+    s = sub.add_parser("voce", help="Kokoro, la voce neurale di Jarvis: installa e prova")
+    sv = s.add_subparsers(dest="azione", required=True)
+    i = sv.add_parser("installa", help="crea l'ambiente Python e scarica i modelli (dice prima "
+                                       "quanto scarica e chiede conferma)")
+    i.add_argument("--si", action="store_true", help="procede senza chiedere conferma")
+    i.add_argument("--python", help="il Python (fra 3.10 e 3.13) con cui creare l'ambiente")
+    pv = sv.add_parser("prova", help="dice quale motore userebbe Jarvis e perche', senza suonare")
+    pv.add_argument("--lang")
+    pv.add_argument("--carica", action="store_true",
+                    help="avvia Kokoro e sintetizza una frase in un file (non la suona)")
+    s.set_defaults(func=cmd_voce)
 
     s = sub.add_parser("riordina", help="propone, applica e annulla il riordino: padri, stati, inglobamenti")
     g = s.add_mutually_exclusive_group(required=True)

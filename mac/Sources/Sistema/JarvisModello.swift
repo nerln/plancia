@@ -68,8 +68,6 @@ final class JarvisModello {
     var visibile = false
     var voceDescrizione = ""
     var voceAvviso: String?
-    /// Il server non vede nessuna voce neurale locale.
-    var voceSenzaNeurale = false
     /// Cambia quando cambia una preferenza, per far rileggere il menu.
     var versionePreferenze = 0
 
@@ -82,6 +80,7 @@ final class JarvisModello {
     @ObservationIgnored private var contaPezzi = 0
     @ObservationIgnored private var haParlato = false
     @ObservationIgnored private var neuraleNoto: String?
+    @ObservationIgnored private var kokoroNoNoto: String?
     /// Quante volte e' arrivato Esc: serve alla prova per dire che arriva una volta sola.
     @ObservationIgnored var escRicevuti = 0
     private static var neuraleScaldato = false
@@ -135,8 +134,9 @@ final class JarvisModello {
         voceAvviso = voce.avviso
     }
 
-    /// La prima frase con una voce neurale paga il caricamento del modello: la si paga adesso,
-    /// una volta per esecuzione, con una frase che poi resta in cache.
+    /// La prima frase con una voce neurale paga il caricamento del modello (con Kokoro il server
+    /// ha gia' avviato il lavoratore: qui si aspetta che sia pronto): la si paga adesso, una volta
+    /// per esecuzione, con una frase che poi resta in cache.
     private func scaldaNeurale() {
         guard !JarvisProva.attivo, !JarvisModello.neuraleScaldato else { return }
         JarvisModello.neuraleScaldato = true
@@ -155,16 +155,16 @@ final class JarvisModello {
             messaggio = nil
             erroreGrave = false
         }
-        voce.prepara(lingua: lingua, neurale: neuraleNoto)
+        voce.prepara(lingua: lingua, neurale: neuraleNoto, kokoroNo: kokoroNoNoto)
         rileggiVoce()
         Task { [weak self] in
             guard let self = self else { return }
             let info = await ReteJarvis.pronto(lingua: self.lingua)
             if JarvisProva.attivo, info == nil { return }
             self.neuraleNoto = info?.neurale
-            self.voceSenzaNeurale = info != nil && info?.neurale == nil
+            self.kokoroNoNoto = info?.kokoroNo
             if info?.neurale != nil { self.scaldaNeurale() }
-            if !self.parla { self.voce.prepara(lingua: self.lingua, neurale: info?.neurale) }
+            if !self.parla { self.voce.prepara(lingua: self.lingua, neurale: info?.neurale, kokoroNo: info?.kokoroNo) }
             self.rileggiVoce()
             if info == nil, self.pezzi.isEmpty {
                 self.avvisa(ErroreJarvis.nonRaggiungibile.localizedDescription, grave: true)
@@ -396,7 +396,7 @@ final class JarvisModello {
 
     func preferenzeCambiate() {
         versionePreferenze += 1
-        voce.prepara(lingua: lingua, neurale: neuraleNoto)
+        voce.prepara(lingua: lingua, neurale: neuraleNoto, kokoroNo: kokoroNoNoto)
         rileggiVoce()
     }
 }

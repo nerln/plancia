@@ -34,9 +34,8 @@ extension JarvisModello {
             trascritto = ""; pezzi = []; proposta = nil; messaggio = nil; erroreGrave = false
             microfonoAcceso = false; microfonoInApertura = false; elabora = false; parla = false
             confermaInCorso = false; livello.valore = 0
-            voceDescrizione = it ? "Voce neurale locale" : "Local neural voice"
+            voceDescrizione = it ? "Voce neurale: Kokoro" : "Neural voice: Kokoro"
             voceAvviso = nil
-            voceSenzaNeurale = false
         }
         func testo(_ t: String, eta: TimeInterval = 5) {
             pezzi = [Pezzo(id: 1, testo: t, arrivo: Date().addingTimeInterval(-eta))]
@@ -100,8 +99,8 @@ extension JarvisModello {
         case .serverSpento:
             avvisa(ErroreJarvis.nonRaggiungibile.localizedDescription, grave: true)
             voceDescrizione = it ? "Voce di sistema: Zoe (premium)" : "System voice: Zoe (premium)"
-            voceAvviso = it ? "Nessuna voce neurale locale in ascolto."
-                            : "No local neural voice is listening."
+            voceAvviso = it ? "Nessuna voce neurale locale. Per averne una: plancia voce installa (Kokoro)."
+                            : "No local neural voice. To get one: plancia voce installa (Kokoro)."
         }
     }
 }

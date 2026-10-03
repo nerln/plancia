@@ -720,7 +720,8 @@ class Handler(BaseHTTPRequestHandler):
                 if not testo:
                     raise actions.BadInput("serve un testo")
                 lang = recap.lang_or_default(body.get("lang"))
-                info, nota = _sintesi_o_nota(testo, lang, body.get("motore"))
+                info, nota = _sintesi_o_nota(testo, lang, body.get("motore"),
+                                             velocita=body.get("velocita"))
                 if info is None:
                     return self._json(_senza_voce(
                         {"testo": testo, "lingua": lang}, nota))
@@ -1168,3 +1169,6 @@ def serve(port=None, open_browser=False, sync_first=True) -> None:
     except KeyboardInterrupt:
         print("\nchiuso")
         httpd.server_close()
+    finally:
+        # il lavoratore Kokoro (700 MB e piu') non deve sopravvivere al server
+        voice.spegni_neurale()
