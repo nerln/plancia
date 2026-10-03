@@ -168,6 +168,18 @@ def _prove_padre_windows(prova):
 def _prove_utf8(prova):
     from plancia import piattaforma as pf
 
+    # La suite del web scrive nomi di prova col simbolo del tasto Comando: con
+    # l'uscita in cp1252, come su Windows in CI, non deve cadere.
+    radice = Path(__file__).resolve().parent.parent.parent
+    codice = ("import runpy, sys; "
+              f"runpy.run_path({str(radice / 'tools' / 'prova-front.py')!r}, run_name='non_main'); "
+              "sys.stdout.write('\\u2318 cmd'); sys.stdout.flush()")
+    r = subprocess.run([sys.executable, "-c", codice], capture_output=True,
+                       env=dict(os.environ, PYTHONIOENCODING="cp1252"), timeout=120)
+    prova("prova-front.py: con l'uscita in cp1252 (Windows in CI) scrive in UTF-8 e non cade",
+          r.returncode == 0 and "⌘".encode("utf-8") in r.stdout,
+          (r.stderr or b"")[-200:].decode("utf-8", "replace"))
+
     prova("opzioni_utf8: {} su macOS, Linux e su un host che non e' Windows davvero",
           pf.opzioni_utf8("mac") == {} and pf.opzioni_utf8("linux") == {}
           and pf.opzioni_utf8("windows", nt=False) == {})

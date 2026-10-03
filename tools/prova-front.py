@@ -18,6 +18,15 @@ import re
 import sys
 from pathlib import Path
 
+# Come in tools/prova.py: su Windows, con l'uscita rediretta (la CI), Python
+# scrive in cp1252 e un nome di prova con un carattere fuori tabella (il simbolo
+# del tasto Comando) faceva cadere un modulo intero con UnicodeEncodeError.
+for _flusso in (sys.stdout, sys.stderr):
+    try:
+        _flusso.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
 RADICE = Path(__file__).resolve().parent.parent
 APP = RADICE / "web" / "app.js"
 INDEX = RADICE / "web" / "index.html"
