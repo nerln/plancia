@@ -6,7 +6,7 @@ funzione pubblica e' `esegui(prova, radice)`, la stessa forma usata da
 tools/prova-front.py (vedi tools/prove-front/README.md).
 
 Storia. Fino alla 2.0 questo file misurava il "vetro" della dashboard (L4-VETRO,
-18/09/2026: backdrop-filter e aloni su ogni superficie). Eugenio il 29/09 lo ha
+18/09/2026: backdrop-filter e aloni su ogni superficie). L'utente il 29/09 lo ha
 bocciato (riquadri appiccicati, fantasmi trasparenti sotto il contenuto) e ha
 chiesto una dashboard che somigli alla 2.0 nativa; nella seconda passata (WEB) le
 superfici sono piene e il vetro vero lo danno solo i controlli di sistema del Mac.

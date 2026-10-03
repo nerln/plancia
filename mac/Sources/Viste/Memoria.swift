@@ -264,7 +264,10 @@ struct DettaglioMemoria: View {
                     }
                     .font(.callout)
                     .foregroundStyle(.secondary)
-                    Text(fatto.nome).font(.headline).textSelection(.enabled)
+                    Text(fatto.titolo).font(.headline).textSelection(.enabled)
+                    if fatto.titolo != fatto.nome {
+                        Text(fatto.nome).font(.caption).foregroundStyle(.tertiary).textSelection(.enabled)
+                    }
                     if !fatto.descrizione.isEmpty {
                         Text(fatto.descrizione).font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
                     }
@@ -274,7 +277,7 @@ struct DettaglioMemoria: View {
 
             Section {
                 if let c = corpo, !c.isEmpty {
-                    TestoMemoria(testo: c, noti: Set(dati.perNome.keys))
+                    TestoMemoria(testo: c, noti: Set(dati.perNome.keys), titolo: { dati.titolo($0) })
                 } else if carico {
                     ProgressView().controlSize(.small)
                 } else {
@@ -319,7 +322,7 @@ struct DettaglioMemoria: View {
                 ForEach(vicini, id: \.self) { nome in
                     Button { archivio.memoriaScelta = nome } label: {
                         Label {
-                            Text(nome)
+                            Text(dati.titolo(nome))
                         } icon: {
                             Image(systemName: "circle.fill")
                                 .foregroundStyle(dati.perNome[nome]?.tipo.colore ?? .gray)
@@ -403,6 +406,8 @@ struct DettaglioMemoria: View {
 private struct TestoMemoria: View {
     let testo: String
     let noti: Set<String>
+    /// Il testo con cui si scrive un legame: il titolo umano della memoria, non la sigla.
+    let titolo: (String) -> String
 
     private enum Blocco { case titolo(String), voce(String), paragrafo(String) }
 
@@ -440,7 +445,8 @@ private struct TestoMemoria: View {
                 risultato += ns.substring(with: NSRange(location: ultimo, length: m.range.location - ultimo))
                 let nome = ns.substring(with: m.range(at: 1))
                 if noti.contains(nome), let enc = nome.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) {
-                    risultato += "[\(nome)](plancia-memoria:\(enc))"
+                    let visto = titolo(nome).replacingOccurrences(of: "[", with: "(").replacingOccurrences(of: "]", with: ")")
+                    risultato += "[\(visto)](plancia-memoria:\(enc))"
                 } else {
                     risultato += nome
                 }

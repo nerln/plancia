@@ -373,7 +373,7 @@ Jarvis, read-only: the old second one, which kept a model with the write tools o
 and ran what you typed, is gone. `plancia jarvis` prints the card and asks you to
 confirm at the keyboard; without a real terminal (a script, a pipe, another agent
 calling it) it never confirms. On the dashboard the card shows up with Confirm and
-Cancel, and the Retry button goes through it too.
+Cancel, and the Relaunch button goes through it too.
 
 Claude Code has had [voice input since March 2026](https://claudefa.st/blog/guide/mechanics/voice-mode):
 you hold the spacebar and dictate. It is input only, and by design there is no
@@ -415,7 +415,7 @@ folder), and records the outcome. It never opens a new session behind your
 back: if the session is still open somewhere nothing starts and you get the
 message to paste (`--copia` asks for a copy instead), and only when the
 session is really lost does a new one start, said before it does. The same
-goes for the Retry and Resume buttons, the MCP tool and Jarvis. If the
+goes for the Relaunch and Resume buttons, the MCP tool and Jarvis. If the
 ChatGPT/Codex desktop app holds a Codex thread open, the run stops and says
 so instead of failing silently. The default is read-only; `--scrive` lets
 the agent write, and that is a choice you make every time. `plancia manda
@@ -711,7 +711,7 @@ warning each time). The full list is in the docstring of `plancia/compartimenti.
 git config core.hooksPath .githooks
 ```
 
-Turns on the hook that runs `python3 tools/prova.py` before every push: 4939
+Turns on the hook that runs `python3 tools/prova.py` before every push: 4952
 checks in a few minutes, against a throwaway archive that never touches
 yours. They cover the schema, the board, the proposals, the search index, the
 recap, the MCP surface and its token budget, every read route of the HTTP API,

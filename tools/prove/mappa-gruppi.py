@@ -1,6 +1,6 @@
 """Prove della Mappa a gruppi (22-SERVER, punto 6).
 
-Eugenio, guardando la Mappa: piu' apparente su cosa sia, non nomi tutti simili e posizioni
+L'utente, guardando la Mappa: piu' apparente su cosa sia, non nomi tutti simili e posizioni
 praticamente identiche, ma cluster chiaramente definiti e interconnessi. Lato server, in modo
 ADDITIVO (i campi vecchi restano):
 

@@ -563,6 +563,13 @@ async function api(path, opts = {}) {
   return data;
 }
 
+/* Il titolo umano di una memoria per sigla (quello della Mappa), gia' pronto per l'HTML: i
+   [[collegamenti]] nel testo di una memoria si leggono come titoli, non come nomi di file. */
+function titoloMemoria(nome) {
+  const m = state.mappa && state.mappa.nodi && state.mappa.nodi.find((x) => x.nome === nome);
+  return m && m.titolo ? esc(m.titolo) : nome;
+}
+
 function md(src) {
   let out = esc(src || '');
   const blocks = [];
@@ -575,7 +582,7 @@ function md(src) {
     .replace(/^&gt; (.*)$/gm, '<blockquote>$1</blockquote>')
     .replace(/`([^`\n]+)`/g, '<code>$1</code>')
     .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
-    .replace(/\[\[([^\]]+)\]\]/g, '<span class="wl" data-memory="$1">$1</span>')
+    .replace(/\[\[([^\]]+)\]\]/g, (m, nome) => `<span class="wl" data-memory="${nome}">${titoloMemoria(nome)}</span>`)
     .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
     .replace(/^[-*] (.*)$/gm, '<li>$1</li>')
     .replace(/(<li>[\s\S]*?<\/li>)(?!\s*<li>)/g, '<ul>$1</ul>');
@@ -1170,8 +1177,8 @@ function filtraLocale(q) {
     ...dai(ix.sessioni, 'sessioni', (s) => s.title || s.first_prompt, (s) => [s.first_prompt, s.progetto, s.cwd], (s) => ({
       gruppo: 'sessioni', titolo: s.title || (s.first_prompt || '').slice(0, 90) || T('senza titolo'),
       sec: [s.progetto, cap(s.agent || 'claude'), ago(s.started_at)].filter(Boolean).join(' · '), vai: 'sessioni:' + (s.title || s.first_prompt || '').slice(0, 60) })),
-    ...dai(ix.memoria, 'memoria', (k) => k.name, (k) => [k.description], (k) => ({
-      gruppo: 'memoria', titolo: k.name, sec: k.description || '', vai: 'memoria:' + k.name })),
+    ...dai(ix.memoria, 'memoria', (k) => k.titolo || k.name, (k) => [k.name, k.description], (k) => ({
+      gruppo: 'memoria', titolo: k.titolo || k.name, sec: k.description || '', vai: 'memoria:' + k.name })),
   ];
 }
 
@@ -1185,7 +1192,7 @@ function dalServer(d, q) {
     return {
       gruppo: g, titolo: h.title || T('senza titolo'), snip: h.snip || '',
       sec: [etichetta, h.project, h.ts ? ago(h.ts) : ''].filter(Boolean).join(' · '),
-      vai: g === 'altro' ? '' : (g === 'memoria' ? 'memoria:' + h.title : g === 'task' ? 'task:'
+      vai: g === 'altro' ? '' : (g === 'memoria' ? 'memoria:' + (h.nome || h.title) : g === 'task' ? 'task:'
         : g === 'progetti' ? 'progetti:' + (h.project || '') : 'sessioni:' + (h.title || '')),
       dallaRete: true };
   });
@@ -1804,7 +1811,7 @@ DETTAGLI.progetti = async (key) => {
     ${cassettoDopo(p, d.task)}
 
     ${d.memoria.length ? section(T('Memoria'), `<div class="elenco">${d.memoria.map((k) =>
-      `<div class="riga" data-memory="${esc(k.name)}"><div class="txt"><div class="t">${esc(k.name)}</div>
+      `<div class="riga" data-memory="${esc(k.name)}"><div class="txt"><div class="t">${esc(k.titolo || k.name)}</div>
         <div class="s clamp2">${esc(k.description || '')}</div></div>${CHEV}</div>`).join('')}</div>`) : ''}
 
     ${d.repo.length ? section(T('Repository'), `<div class="elenco">${d.repo.map((r) =>
@@ -2396,7 +2403,21 @@ function montaGrafo(host, m, opz) {
     // l'involucro, mai in mezzo ai nodi.
     ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic'; ctx.lineJoin = 'round';
     const intestazioni = [];
-    for (const x of info) {
+    // il titolo del nodo scelto e di quello sotto il puntatore si scrive sempre: il suo posto si
+    // prenota prima dei nomi dei gruppi, che altrimenti ci finivano sopra
+    const riservati = [];
+    ctx.font = `12px ${colori.font}`;
+    for (const n of nodi) {
+      if (!(n.vis > 0.5) || !(n.id === sel || n === hov)) continue;
+      const [sx, sy] = aSchermo(n.x, n.y);
+      const t = n.n.titolo || n.id, nome = t.length > 30 ? t.slice(0, 29) + '…' : t;
+      const w = ctx.measureText(nome).width + 14, y = sy + n.r * cam.k + 15;
+      riservati.push([sx - w / 2, y - 14, sx + w / 2, y + 6]);
+    }
+    const sovrappone = (a, b) => a[0] < b[2] && a[2] > b[0] && a[1] < b[3] && a[3] > b[1];
+    // i gruppi grandi per primi: se due nomi si toccano, il piu' piccolo sale di una riga, e se
+    // nemmeno cosi' c'e' posto non si scrive (il suo colore resta nell'isola e nella legenda)
+    for (const x of [...info].sort((p, q) => q.g.memorie - p.g.memorie)) {
       const alto = Math.min(...x.dentro.map((n) => n.y - n.r));
       const [sx, sy] = aSchermo(x.cx, alto);
       if (sx < -200 || sx > W + 200 || sy < -60 || sy > H + 120) continue;
@@ -2404,11 +2425,18 @@ function montaGrafo(host, m, opz) {
       const px = Math.round(13 + (grande - 13) * aGruppi);
       ctx.font = `700 ${px}px ${colori.font}`;
       const nome = nomeGruppo(x.g.chiave, x.g.nome);
-      const y = sy - pad * k - 8;
+      const mezzo = ctx.measureText(nome).width / 2 + 6;
+      let y = sy - pad * k - 8, posto = false;
+      for (let giro = 0; giro < 3 && !posto; giro++) {
+        const box = [sx - mezzo, y - px, sx + mezzo, y + 6];
+        if (intestazioni.some((b) => sovrappone(box, b)) || riservati.some((b) => sovrappone(box, b))) { y -= px + 4; continue; }
+        posto = true;
+      }
+      if (!posto) continue;
       ctx.globalAlpha = x.vis * 0.95;
       ctx.lineWidth = 6; ctx.strokeStyle = colori.bg; ctx.strokeText(nome, sx, y);
       ctx.fillStyle = x.col; ctx.fillText(nome, sx, y);
-      intestazioni.push([sx - ctx.measureText(nome).width / 2 - 6, y - px, sx + ctx.measureText(nome).width / 2 + 6, y + 6]);
+      intestazioni.push([sx - mezzo, y - px, sx + mezzo, y + 6]);
     }
 
     ctx.save();
@@ -2671,7 +2699,7 @@ views.briefing = async () => {
 
 /* ---------------------------------------------------------------- memoria */
 /* LOTTO-L4-MEMORIA: "salvare in memoria gli ultimi aggiornamenti... fare in
-   modo che non sia mai vuota" (Eugenio, 18/09/2026). Ogni disegno riuscito
+   modo che non sia mai vuota" (l'utente, 18/09/2026). Ogni disegno riuscito
    di una vista salva l'innerHTML di #view sotto una chiave versionata, così
    route() può ridipingerlo SUBITO alla riapertura invece di mostrare
    "carico…" o, peggio, "errore: …" quando il server non risponde più. La

@@ -109,13 +109,13 @@ struct VistaTask: View {
                     TableColumn(tr("Progetto", "Project"), value: \.progetto) { r in
                         Text(r.progetto).foregroundStyle(.secondary).lineLimit(1)
                     }
-                    .width(min: 72, ideal: 120)
+                    .width(min: 72, ideal: 100, max: 120)
                     TableColumn(tr("Scadenza", "Due"), value: \.scadenzaOrd) { r in scadenza(r) }
-                        .width(min: 66, ideal: 90)
+                        .width(min: 60, ideal: 64, max: 76)
                     TableColumn(tr("Fonte", "Source"), value: \.fonte) { r in
                         Text(r.fonteNome).foregroundStyle(.secondary)
                     }
-                    .width(min: 66, ideal: 80)
+                    .width(min: 60, ideal: 66, max: 84)
                 }
                 // le righe a strisce sotto l'ultima sembrano un fantasma: niente
                 .alternatingRowBackgrounds(.disabled)

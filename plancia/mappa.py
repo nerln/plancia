@@ -5,7 +5,7 @@ fare con questi dati: dice cosa c'è, non come sta messo. Qui si calcolano le du
 cose che un elenco non mostra.
 
 La forma: i `[[link]]` che le memorie si scambiano sono archi veri, e il grafo
-che ne esce ha degli assi portanti. `user-eugenio` ne tiene diciassette: è il
+che ne esce ha degli assi portanti. `user-profile` ne tiene diciassette: è il
 nodo da cui passa tutto, e se una memoria non è legata a niente è quasi sempre
 una memoria che non verrà mai riletta.
 
@@ -373,6 +373,57 @@ def titolo_di(percorso: str, descrizione: str, nome: str) -> str:
         if titolo:
             return _taglia(titolo, TITOLO_MAX + 20)
     return titolo_da_descrizione(descrizione) or _umano(nome) or nome
+
+
+_WIKILINK = re.compile(r"\[\[([^\]]+)\]\]")
+
+
+def umanizza_schede(conn, trovate: list) -> list:
+    """Le schede della ricerca con la memoria scritta come la scrive la Mappa: `title` e' il titolo
+    umano (non la sigla del file), `nome` e' la sigla (serve per aprirla), e nelle anteprime i
+    [[collegamenti]] diventano il titolo della memoria a cui puntano. Le altre schede non cambiano."""
+    if not trovate:
+        return trovate
+    marche = "\u00ab\u00bb"
+    nomi = set()
+    for h in trovate:
+        if h.get("kind") == "memoria":
+            nomi.add(h.get("title") or "")
+        for m in _WIKILINK.findall(h.get("snip") or ""):
+            nomi.add(m.strip(marche).replace("\u00ab", "").replace("\u00bb", ""))
+    nomi.discard("")
+    titoli = {}
+    if nomi:
+        try:
+            righe = conn.execute(
+                "SELECT name, description, path, updated_at FROM knowledge WHERE name IN (%s)"
+                % ",".join("?" * len(nomi)), list(nomi)).fetchall()
+        except sqlite3.Error:
+            righe = []
+        for nome, r in _ultime([{"name": x["name"], "description": x["description"], "path": x["path"],
+                                 "updated_at": x["updated_at"]} for x in righe]).items():
+            titoli[nome] = titolo_di(r["path"] or "", r["description"] or "", nome)
+
+    def titolo(nome: str) -> str:
+        return titoli.get(nome) or _umano(nome) or nome
+
+    def sostituisci(m):
+        dentro = m.group(1)
+        evidenziato = "\u00ab" in dentro
+        nome = dentro.replace("\u00ab", "").replace("\u00bb", "").strip()
+        t = titolo(nome)
+        return "\u00ab" + t + "\u00bb" if evidenziato else t
+
+    fuori = []
+    for h in trovate:
+        h = dict(h)
+        if h.get("kind") == "memoria":
+            h["nome"] = h.get("title") or ""
+            h["title"] = titolo(h["nome"])
+        if h.get("snip"):
+            h["snip"] = _WIKILINK.sub(sostituisci, h["snip"])
+        fuori.append(h)
+    return fuori
 
 
 def _contesto(conn) -> dict:

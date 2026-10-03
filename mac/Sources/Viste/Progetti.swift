@@ -52,6 +52,48 @@ private func testoStatoProgetto(_ s: String?) -> String {
     }
 }
 
+// MARK: - il divisorio
+
+/// Il divisorio fra due colonne: una riga sottile con una fascia piu' larga da afferrare,
+/// il cursore di ridimensionamento e un gesto che sposta la larghezza della colonna di
+/// sinistra fra `minimo` e `massimo`. Un doppio clic la riporta a 300.
+struct DivisorioTrascinabile: View {
+    @Binding var larghezza: Double
+    let minimo: Double
+    let massimo: Double
+    @State private var inizio: Double?
+    @State private var sopra = false
+    /// Il gesto misura in punti della finestra, la larghezza e' in punti della vista scalata.
+    @Environment(\.fattoreTesto) private var fattore
+
+    var body: some View {
+        Divider()
+            .overlay {
+                Color.clear
+                    .frame(width: 9)
+                    .contentShape(Rectangle())
+                    .onHover { dentro in
+                        guard dentro != sopra else { return }
+                        sopra = dentro
+                        if dentro { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
+                    }
+                    .onDisappear { if sopra { NSCursor.pop(); sopra = false } }
+                    .gesture(
+                        DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                            .onChanged { v in
+                                let base = inizio ?? larghezza
+                                inizio = base
+                                larghezza = min(max(base + v.translation.width / Double(fattore), minimo), massimo)
+                            }
+                            .onEnded { _ in inizio = nil })
+                    .onTapGesture(count: 2) { larghezza = 300 }
+            }
+            .accessibilityElement()
+            .accessibilityLabel(tr("Divisorio", "Divider"))
+            .accessibilityValue("\(Int(larghezza))")
+    }
+}
+
 // MARK: - la vista
 
 struct VistaProgetti: View {
@@ -60,6 +102,8 @@ struct VistaProgetti: View {
     private let c = ControlliVista.condiviso
     /// Le aree chiuse a mano; all'inizio sono tutte aperte.
     @State private var chiuse: Set<String> = []
+    /// La larghezza della lista, che il divisorio sposta. Si ricorda fra un avvio e l'altro.
+    @AppStorage("larghezzaListaProgetti") private var larghezzaLista: Double = 300
 
     private var radici: [Progetto] {
         archivio.alberoProgetti.isEmpty ? archivio.progetti.filter { $0.parentId == nil } : archivio.alberoProgetti
@@ -102,9 +146,15 @@ struct VistaProgetti: View {
             if elenco.isEmpty {
                 vuoto
             } else {
-                HSplitView {
+                // Non HSplitView: e' un NSSplitView, e con il testo a un passo diverso da 100%
+                // (la vista e' dentro la scala di ScalaTesto) mandava AppKit in un giro di vincoli
+                // che chiudeva l'app (testo 85% o 95%, finestra 900x600). Lista e scheda stanno in
+                // un HStack e il divisorio si trascina con un gesto: stessa cosa per chi usa l'app,
+                // nessun NSSplitView.
+                HStack(spacing: 0) {
                     lista(elenco, selezione: $a.progettoScelto)
-                        .frame(minWidth: 250, idealWidth: 300, maxWidth: 420, maxHeight: .infinity)
+                        .frame(minWidth: 250, idealWidth: larghezzaLista, maxWidth: larghezzaLista, maxHeight: .infinity)
+                    DivisorioTrascinabile(larghezza: $larghezzaLista, minimo: 250, massimo: 420)
                     scheda
                         .frame(minWidth: 380, maxWidth: .infinity, maxHeight: .infinity)
                 }

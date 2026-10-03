@@ -606,6 +606,7 @@ class Handler(BaseHTTPRequestHandler):
                 # 0,08% del materiale, ed e' il motivo per cui questa ricerca non
                 # trovava mai niente.
                 from . import turni
+                from . import mappa as _mappa
                 q = first("q", "")
                 if ombra is not None:
                     # gli indici FTS non si filtrano con una vista: il filtro sta dentro la query, prima del taglio per rango
@@ -613,7 +614,8 @@ class Handler(BaseHTTPRequestHandler):
                         conn, ombra, q, int(first("limit", 30)), first("progetto") or None)
                     return self._json({
                         "turni": dai_turni, "progetti": gruppi,
-                        "schede": viste.cerca_schede(conn, ombra, q, int(first("limit", 20))),
+                        "schede": _mappa.umanizza_schede(
+                            conn, viste.cerca_schede(conn, ombra, q, int(first("limit", 20)))),
                     })
                 # Una passata sola per i turni e per il conteggio: l'indice si
                 # legge una volta (turni.ricerca), non due.
@@ -624,7 +626,7 @@ class Handler(BaseHTTPRequestHandler):
                     # Il conteggio è su tutto l'indice, non sulla pagina: dice se
                     # la cosa cercata sta in un progetto solo o è sparsa.
                     "progetti": gruppi,
-                    "schede": store.search(conn, q, int(first("limit", 20))),
+                    "schede": _mappa.umanizza_schede(conn, store.search(conn, q, int(first("limit", 20)))),
                 })
             if path == "/api/recap":
                 if first("solo_cache"):

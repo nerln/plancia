@@ -14,13 +14,14 @@ import SwiftUI
 /// Costo in piu' rispetto a non averlo: nessuno, la sezione si ricostruisce comunque.
 struct IspettoreFinestra: ViewModifier {
     @Environment(Archivio.self) private var archivio
+    @AppStorage(DimensioneTesto.chiave) private var passoTesto = DimensioneTesto.predefinito
     private let c = ControlliVista.condiviso
 
     func body(content: Content) -> some View {
         content
             .inspector(isPresented: Binding(get: { presente }, set: { if !$0 { chiudi() } })) {
                 ContenutoIspettore()
-                    .inspectorColumnWidth(min: larghezze.min, ideal: larghezze.ideale, max: larghezze.max)
+                    .inspectorColumnWidth(min: larghezze.min * fattore, ideal: larghezze.ideale * fattore, max: larghezze.max * fattore)
             }
             .id(inRicerca ? "ricerca" : archivio.sezione.rawValue)
     }
@@ -28,18 +29,22 @@ struct IspettoreFinestra: ViewModifier {
     /// Le larghezze della colonna. Con la finestra al minimo (900 punti, anche a 125% perche' il
     /// minimo scala col testo) barra laterale + Inspector lasciano alla tabella quello che resta:
     /// con 320 di larghezza ideale restavano 380 punti e l'ultima colonna di Task e Archivio usciva
-    /// a destra, sotto l'Inspector. Con 280 (260 in Archivio, che ha sei colonne) ne restano 420
-    /// (440), e le colonne delle tabelle hanno minimi che ci stanno (Task.swift e Archivio.swift;
+    /// a destra, sotto l'Inspector. Con 280 (240 in Archivio, che ha sei colonne) ne restano 420
+    /// (460), e le colonne delle tabelle hanno minimi che ci stanno (Task.swift e Archivio.swift;
     /// la prova e' mac/Prove/controlli_sorgenti.py: ogni colonna costa ~18 punti di margine).
     private var larghezze: (min: CGFloat, ideale: CGFloat, max: CGFloat) {
         guard !inRicerca else { return (240, 280, 460) }
         switch archivio.sezione {
         case .social: return (280, 340, 480)
         case .memoria: return (280, 340, 480)
-        case .archivio: return (240, 260, 460)
+        case .archivio: return (240, 240, 460)
         default: return (240, 280, 460)
         }
     }
+
+    /// Le larghezze sono in punti del testo (come le colonne delle tabelle): la colonna e' vera,
+    /// quindi si moltiplicano per l'ingrandimento.
+    private var fattore: CGFloat { DimensioneTesto.fattore(passoTesto) }
 
     private var inRicerca: Bool { !archivio.ricerca.trimmed.isEmpty }
 
@@ -71,6 +76,7 @@ struct IspettoreFinestra: ViewModifier {
 /// Quello che sta nella colonna.
 struct ContenutoIspettore: View {
     @Environment(Archivio.self) private var archivio
+    @AppStorage(DimensioneTesto.chiave) private var passoTesto = DimensioneTesto.predefinito
     private let c = ControlliVista.condiviso
 
     var body: some View {
@@ -99,6 +105,7 @@ struct ContenutoIspettore: View {
                 }
             }
         }
+        .scalaTesto(passoTesto)
         .stileIspettore()
     }
 }

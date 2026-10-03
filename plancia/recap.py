@@ -79,6 +79,12 @@ def collect(conn, day: str = None) -> dict:
         "WHERE t.status IN ('aperto','in corso','bloccato') "
         "ORDER BY t.priority ASC, t.due IS NULL, t.due ASC LIMIT 8")
     scaduti = [t for t in task_aperti if t["due"] and t["due"] < label]
+    # L'elenco ha un tetto di otto righe: i numeri detti a voce sono su tutti i task aperti, non sulle otto
+    tot_aperti = rows("SELECT COUNT(*) AS n FROM tasks WHERE status IN ('aperto','in corso','bloccato')")
+    tot_scaduti = rows("SELECT COUNT(*) AS n FROM tasks WHERE status IN ('aperto','in corso','bloccato') "
+                       "AND due IS NOT NULL AND due <> '' AND due < ?", (label,))
+    n_aperti = tot_aperti[0]["n"] if tot_aperti else len(task_aperti)
+    n_scaduti = tot_scaduti[0]["n"] if tot_scaduti else len(scaduti)
     post_pubblicati = rows(
         "SELECT id, platform, substr(text,1,120) AS text, url FROM posts "
         "WHERE published_at >= ? AND published_at < ?", (start, end))
@@ -131,6 +137,8 @@ def collect(conn, day: str = None) -> dict:
         "task_creati": task_creati,
         "task_aperti": task_aperti,
         "task_scaduti": scaduti,
+        "task_aperti_totale": n_aperti,
+        "task_scaduti_totale": n_scaduti,
         "post_pubblicati": post_pubblicati,
         "post_coda": post_coda,
         "prossimi_passi": prossimi,
@@ -283,11 +291,11 @@ def render_template(dati: dict, lang: str) -> str:
         frasi.append(t["task_chiusi"].format(
             n=quanti, elenco=_elenco([x["title"] for x in dati["task_chiusi"][:3]], lang)))
     if dati["task_aperti"]:
-        n = len(dati["task_aperti"])
+        n = dati.get("task_aperti_totale") or len(dati["task_aperti"])
         chiave = "task_aperti_1" if n == 1 else "task_aperti"
         frasi.append(t[chiave].format(n=n, titolo=dati["task_aperti"][0]["title"]))
     if dati["task_scaduti"]:
-        frasi.append(t["scaduti"].format(n=len(dati["task_scaduti"])))
+        frasi.append(t["scaduti"].format(n=dati.get("task_scaduti_totale") or len(dati["task_scaduti"])))
     if dati["post_pubblicati"] or dati["post_coda"]:
         frasi.append(t["post"].format(n=len(dati["post_pubblicati"]), q=len(dati["post_coda"])))
     if dati["prossimi_passi"]:

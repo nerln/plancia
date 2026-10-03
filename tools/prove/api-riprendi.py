@@ -422,7 +422,7 @@ def _prova_cantiere_scrive_bool(prova, cantiere, tmp) -> None:
 
 
 def _prova_cantiere_sessione_forka(prova, cantiere, tmp) -> None:
-    """L3-RIPRENDI-UI-4 (obbligatoria del critico, "occhi di Eugenio"): il
+    """L3-RIPRENDI-UI-4 (obbligatoria del critico, "occhi dell'utente"): il
     modulo "In background" senza un task_id (righe della lavagna venute da
     Claude/Codex, che una sessione la hanno già, plancia/lavagna.py) partiva
     sempre da zero - /api/cantiere non inoltrava mai `sessione`.

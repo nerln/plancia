@@ -1,7 +1,7 @@
 """Prove per LOTTO 21-RIPRENDI: il lavoro senza testa prosegue NELLA sessione che
 il task (o il lancio) aveva salvato, non in una sessione nuova.
 
-Il verdetto di Eugenio (30/09/2026): "i task da proseguire dovrebbero proseguire
+Il verdetto dell'utente (30/09/2026): "i task da proseguire dovrebbero proseguire
 sulle stesse sessioni che li hanno salvati da claude code o codex e non da una
 nuova sessione creata ad hoc per il task singolo". Prima di questo lotto solo
 "Riprendi" nel Terminale lo faceva: "In background" e le proposte

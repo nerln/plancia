@@ -1,5 +1,5 @@
 """Prove per L5-STAGNANTE: il posto riservato di task_stagnante nel taglio
-finale di proposte.calcola() (decisione di Eugenio del 28/09, voce 8 del
+finale di proposte.calcola() (decisione dell'utente del 28/09, voce 8 del
 DECIDE in docs/CANTIERE-2026-09.md).
 
 Stessa disciplina di tools/prove/briefing-aree.py: un archivio SQLite in

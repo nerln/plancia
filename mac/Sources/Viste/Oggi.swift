@@ -294,7 +294,7 @@ struct VistaOggi: View {
     private func etichetta(_ p: Proposta) -> String {
         switch p.azione?.tipo {
         case "manda": return tr("Riprendi", "Resume")
-        case "rilancia": return tr("Rilancia", "Retry")
+        case "rilancia": return tr("Rilancia", "Relaunch")
         default: return tr("Apri", "Open")
         }
     }

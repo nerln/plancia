@@ -76,16 +76,18 @@ enum FormatoArch {
         return f
     }
 
-    /// "29 set, 11:34"
+    /// "29 set, 11:34". Giorno e ora si scrivono a parte e si uniscono con la virgola: il modello
+    /// unico ("d MMM jmm") in inglese diventa "Oct 3 at 1:34 PM", venti punti piu' largo, e nella
+    /// colonna della tabella accanto all'Inspector non ci sta.
     static func quando(_ s: String?) -> String {
         guard let d = Tempo.data(s) else { return "" }
-        return formattatore("d MMM jmm").string(from: d)
+        return formattatore("d MMM").string(from: d) + ", " + formattatore("jmm").string(from: d)
     }
 
-    /// "29 settembre 2026, 11:34"
+    /// "29 set 2026, 11:34" (mese abbreviato: nella colonna stretta dell'Inspector il mese per esteso mandava il valore a capo sotto l'etichetta)
     static func quandoEsteso(_ s: String?) -> String {
         guard let d = Tempo.data(s) else { return "" }
-        return formattatore("d MMMM y jmm").string(from: d)
+        return formattatore("d MMM y jmm").string(from: d)
     }
 
     /// "45 s", "12 min", "1 h 05"; vuoto se zero.
@@ -208,28 +210,28 @@ struct VistaArchivio: View {
                     TableColumn(tr("Quando", "When"), value: \.quando) { r in
                         Text(FormatoArch.quando(r.quando)).foregroundStyle(.secondary).lineLimit(1)
                     }
-                    .width(min: 80, ideal: 88)
+                    .width(min: 106, ideal: 110, max: 140)
                     TableColumn(tr("Titolo", "Title"), value: \.titolo) { r in
                         Text(r.titolo).lineLimit(1)
                     }
-                    .width(min: 48, ideal: 420)
+                    .width(min: 40, ideal: 360)
                     TableColumn(tr("Progetto", "Project"), value: \.progetto) { r in
                         Text(r.progetto).foregroundStyle(.secondary).lineLimit(1)
                     }
-                    .width(min: 50, ideal: 64)
+                    .width(min: 50, ideal: 80, max: 170)
                     TableColumn(tr("Agente", "Agent"), value: \.agente) { r in
                         Text(FormatoArch.agente(r.agente)).foregroundStyle(.secondary)
                     }
-                    .width(min: 46, ideal: 56)
+                    .width(min: 44, ideal: 56, max: 90)
                     TableColumn(tr("Durata", "Length"), value: \.durata) { r in
                         Text(FormatoArch.durata(r.durata)).foregroundStyle(.secondary)
                     }
-                    .width(min: 46, ideal: 56)
+                    .width(min: 44, ideal: 56, max: 90)
                     TableColumn(tr("Messaggi", "Messages"), value: \.messaggi) { r in
                         Text(r.messaggi.formatted()).foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .trailing)
                     }
-                    .width(min: 50, ideal: 58)
+                    .width(min: 58, ideal: 72, max: 100)
                 }
                 .alternatingRowBackgrounds(.disabled)
             }
@@ -264,11 +266,11 @@ struct VistaArchivio: View {
                     TableColumn(tr("Quando", "When"), value: \.quando) { r in
                         Text(FormatoArch.quando(r.quando)).foregroundStyle(.secondary).lineLimit(1)
                     }
-                    .width(min: 80, ideal: 88)
+                    .width(min: 106, ideal: 110, max: 140)
                     TableColumn(tr("Tipo", "Type"), value: \.tipo) { r in
                         Text(r.tipo).foregroundStyle(.secondary).lineLimit(1)
                     }
-                    .width(min: 70, ideal: 100)
+                    .width(min: 70, ideal: 100, max: 150)
                     TableColumn(tr("Titolo", "Title"), value: \.titolo) { r in
                         Text(r.titolo).lineLimit(1)
                     }
@@ -276,11 +278,11 @@ struct VistaArchivio: View {
                     TableColumn(tr("Progetto", "Project"), value: \.progetto) { r in
                         Text(r.progetto).foregroundStyle(.secondary).lineLimit(1)
                     }
-                    .width(min: 50, ideal: 64)
+                    .width(min: 50, ideal: 80, max: 170)
                     TableColumn(tr("Origine", "Origin"), value: \.origine) { r in
                         Text(r.origine).foregroundStyle(.secondary).lineLimit(1)
                     }
-                    .width(min: 50, ideal: 64)
+                    .width(min: 50, ideal: 80, max: 170)
                 }
                 .alternatingRowBackgrounds(.disabled)
             }

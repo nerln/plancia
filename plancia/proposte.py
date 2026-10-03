@@ -198,7 +198,7 @@ def calcola(conn, lang="it", limite=4) -> list:
 
     fuori.sort(key=lambda p: p["urgenza"])
 
-    # Un posto riservato per task_stagnante (decisione di Eugenio, 28/09,
+    # Un posto riservato per task_stagnante (decisione dell'utente, 28/09,
     # voce 8 del DECIDE in docs/CANTIERE-2026-09.md): la sua urgenza 7, la
     # più bassa di tutte, la fa arrivare ultima non appena ci sono `limite`
     # proposte più urgenti, quindi il taglio qui sotto la escluderebbe

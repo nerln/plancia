@@ -245,6 +245,14 @@ enum DisegnoMappa {
         }
 
         var occupati: [CGRect] = []
+        // i nodi in primo piano (sotto il puntatore, scelto, al centro) hanno sempre il loro titolo:
+        // si prenota il posto prima dei nomi dei gruppi, che altrimenti ci finivano sopra
+        for i in 0..<n where (i == stato.hover || i == stato.scelto || i == stato.centro)
+            && foto.presenza[i] > 0.6 && area.contains(punti[i]) {
+            let (_, rect) = etichettaNodo(ctx, i, evidente: true, punti: punti, info: info, stato: stato,
+                                          zoom: zoom, visibile: CGRect(origin: .zero, size: size))
+            occupati.append(rect.insetBy(dx: -2, dy: -1))
+        }
         nomiGruppi(&ctx, size, foto: foto, info: info, stato: stato, regioni: regioni,
                    daLontano: daLontano, occupati: &occupati, luce: luce)
         titoli(&ctx, size, foto: foto, info: info, stato: stato, punti: punti, rho: rho,
@@ -353,6 +361,34 @@ enum DisegnoMappa {
         }
     }
 
+    // MARK: l'etichetta di un nodo
+
+    /// Il testo di un nodo e dove sta: a destra del nodo; se a destra non c'e' posto, a sinistra; se
+    /// non ce n'e' nemmeno a sinistra (nodo vicino al bordo, etichetta lunga, Inspector aperto a
+    /// 125%), sopra il nodo, sempre dentro la vista. Prima usciva dal bordo e restava tagliata.
+    static func etichettaNodo(_ ctx: GraphicsContext, _ i: Int, evidente: Bool, punti: [CGPoint],
+                              info: InfoGrafo, stato: StatoDisegno, zoom: Float,
+                              visibile: CGRect) -> (GraphicsContext.ResolvedText, CGRect) {
+        let testo = evidente ? TitoloMappa.breve(info.titoli[i], massimo: 54) : info.etichette[i]
+        var t = Text(testo)
+        t = evidente ? t.font(.callout.weight(.semibold)) : t.font(.caption)
+        let ris = ctx.resolve(t.foregroundStyle(.primary))
+        let misura = ris.measure(in: CGSize(width: 360, height: 40))
+        let r = raggioSchermo(info.topologia.raggio[i] * (i == stato.centro ? 1.35 : 1), zoom)
+        var rect = CGRect(x: punti[i].x + r + 4, y: punti[i].y - misura.height / 2 - 1,
+                          width: misura.width + 8, height: misura.height + 2)
+        if rect.maxX > visibile.maxX - 4 {
+            rect.origin.x = punti[i].x - r - 4 - rect.width
+        }
+        if rect.minX < 4 {
+            let x = min(max(punti[i].x - rect.width / 2, 4), max(visibile.maxX - 4 - rect.width, 4))
+            var y = punti[i].y - r - 4 - rect.height
+            if y < 2 { y = punti[i].y + r + 4 }
+            rect.origin = CGPoint(x: x, y: y)
+        }
+        return (ris, rect)
+    }
+
     // MARK: i titoli dei nodi
 
     private static func titoli(_ ctx: inout GraphicsContext, _ size: CGSize, foto: FotoScena,
@@ -393,17 +429,8 @@ enum DisegnoMappa {
             }
             if alfa <= 0.02 { continue }
 
-            let testo = evidente ? TitoloMappa.breve(info.titoli[i], massimo: 54) : info.etichette[i]
-            var t = Text(testo)
-            t = evidente ? t.font(.callout.weight(.semibold)) : t.font(.caption)
-            let ris = ctx.resolve(t.foregroundStyle(.primary))
-            let misura = ris.measure(in: CGSize(width: 360, height: 40))
-            let r = raggioSchermo(info.topologia.raggio[i] * (i == stato.centro ? 1.35 : 1), zoom)
-            var rect = CGRect(x: punti[i].x + r + 4, y: punti[i].y - misura.height / 2 - 1,
-                              width: misura.width + 8, height: misura.height + 2)
-            if rect.maxX > visibile.maxX - 4 {
-                rect.origin.x = punti[i].x - r - 4 - rect.width
-            }
+            let (ris, rect) = etichettaNodo(ctx, i, evidente: evidente, punti: punti, info: info, stato: stato,
+                                            zoom: zoom, visibile: visibile)
             let ingombro = rect.insetBy(dx: -2, dy: -1)
             if !evidente && occupati.contains(where: { $0.intersects(ingombro) }) { continue }
             occupati.append(ingombro)

@@ -172,7 +172,7 @@ and closing the panel throw it away.
 
 ## Work resumes in the session that saved it
 
-"In background" on a task, the Retry and Resume proposals and Jarvis now continue
+"In background" on a task, the Relaunch and Resume proposals and Jarvis now continue
 in the session that saved the task, with the same id and in its folder, instead of
 a new or forked one. One function decides, and the dashboard, MCP, the command line
 and Jarvis all use it. Sessions of yours are resumed without forcing a model
@@ -238,6 +238,21 @@ characters or 24 stars is now read as plain text). A path built in code from
 starts from. It is still a heuristic against incidents, not a security boundary:
 what it cannot see is listed in the README.
 
+## After the first round of testing
+
+- The Mac app no longer closes when text is set to 85% or 95% and the window is narrow
+  (AppKit stopped laying the window out after too many constraint passes). The text size
+  now scales the contents of each column (sidebar, view, Inspector) and not the whole
+  window, so the split between columns is made at real size. Projects also drops the
+  system split view for a plain divider you drag, which does the same job.
+- Map: a selected node's label stays inside the view next to the Inspector, group names
+  keep clear of it, and the group chips wrap onto two lines instead of running off the
+  right edge; the bar below the Map is left-aligned.
+- Search and the Inspector write notes by their human title; the summary counts every
+  open task, not just the eight it lists.
+- Tables: the Title column takes the spare width, and the Archive date is shorter in
+  the narrow Inspector.
+
 ## Known limits
 
 - The interface was checked in System and Wood, light and dark, in Italian and
@@ -255,9 +270,9 @@ what it cannot see is listed in the README.
   it. The server derives groups from project links and from folder names as Claude
   Code encodes them; a copy or worktree of a project is not recognised as that
   project and becomes a group named after its folder.
-- The Neighbourhood mode and the search results still write notes by their code name
-  (`lumen-markdown-quirks`), not by their human title; only the Map, the web list and
-  the web detail use the title.
+- The Neighbourhood mode and the List mode of the Mac app still write notes by their code
+  name (`lumen-markdown-quirks`); the Map, the search results, the Inspector and its
+  links, and the web use the human title.
 - Jarvis was never run with the real microphone, speakers or a real `claude`; the
   panel and its safety rules were tested against fakes. Kokoro was tested against a
   fake worker, and its install and the real model were not run in this round. Without
@@ -266,8 +281,9 @@ what it cannot see is listed in the README.
 - The Jarvis panel is shown in dark only in the pictures. A snapshot of the glass panel in
   light appearance, with nothing behind it, comes out a muddy grey; whether it looks the
   same over a real desktop was not checked.
-- In the dashboard's memory graph the labels of the selected note and of its neighbours
-  can overlap a group name or each other. The Mac Map places its labels without overlaps.
+- In the dashboard's memory graph the labels of a note's neighbours can still overlap
+  each other in a dense group; group names no longer sit on top of each other or on the
+  label of the selected note.
 - Row selection in tables and lists follows the system accent (blue or grey), not the
   brass, in Wood. At 125% text, with the inspector open, long titles in tables are
   cut short; no column runs under the inspector any more.
@@ -280,7 +296,7 @@ what it cannot see is listed in the README.
 
 ## Tested
 
-4939 checks for the program, 422 for the dashboard, 135 for the Mac side (the data
+4952 checks for the program, 422 for the dashboard, 149 for the Mac side (the data
 layer against a fake server, source checks, the Map physics) and 134 for the Jarvis panel
 (every state in light and dark, the voice paths with Pocket and Kokoro fakes, the confirm
 card, Esc, the microphone and the server off). The colour contrast of the two styles has

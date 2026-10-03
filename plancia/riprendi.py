@@ -2,7 +2,7 @@
 
 Un task nato da `plancia_task_add` porta `session_id`, `cwd`, `agent`, `host`
 (L0-SESSIONE, L0-SCHEMA). Questo modulo li legge e decide una cosa sola: cosa
-succede quando Eugenio preme "Riprendi".
+succede quando l'utente preme "Riprendi".
 
 Tre stati, mai di più, perché sono le uniche tre cose che possono essere vere
 di una sessione:
@@ -495,7 +495,7 @@ def apri(task, conn=None) -> dict:
 # il lavoro senza testa: nella sessione di origine, non in una nuova
 # --------------------------------------------------------------------------
 #
-# LOTTO 21-RIPRENDI (verdetto di Eugenio, 30/09/2026): i task e i lanci devono
+# LOTTO 21-RIPRENDI (verdetto dell'utente, 30/09/2026): i task e i lanci devono
 # proseguire nelle STESSE sessioni di Claude Code o di Codex che li hanno
 # salvati, non in una sessione creata apposta per il task. Prima solo "Riprendi"
 # nel Terminale lo faceva; "In background", le proposte "Rilancia"/"Riprendi" e

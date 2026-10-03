@@ -3,7 +3,7 @@
 `slot.set_parent` sa assegnare un padre e rifiutarlo con un motivo; sa
 `slot.annulla` disfare un batch. Quello che manca è la parte DECIDE (verdetto
 §A, punto 7, "reversibilità come relazione"): calcolare *quale* padre proporre
-per ogni progetto automatico senza uno, scriverlo in un file che Eugenio può
+per ogni progetto automatico senza uno, scriverlo in un file che l'utente può
 leggere e correggere a mano, e solo dopo la sua occhiata applicarlo. Questo
 modulo fa quella parte; non tocca `projects` finché non è `--applica`.
 
@@ -311,7 +311,7 @@ class FileNonValido(ValueError):
 
 
 def carica(percorso):
-    """Rilegge il JSON di `proponi` (magari corretto a mano da Eugenio).
+    """Rilegge il JSON di `proponi` (magari corretto a mano dall'utente).
 
     Un file che non c'è alza `FileNotFoundError` come sempre; uno che c'è ma
     non è una lista di righe alza `FileNonValido` con il perché, in italiano.
@@ -496,7 +496,7 @@ def tabella(righe):
     larghezza fissa (28/20, la versione precedente) va storta non appena una
     chiave la supera - e sul dato vero capita per un decimo delle chiavi.
     `.get("chiave", "")` invece di `r["chiave"]` perché una riga corretta a
-    mano da Eugenio senza quel campo non deve far fallire l'intera tabella
+    mano dall'utente senza quel campo non deve far fallire l'intera tabella
     con un KeyError: meglio una cella vuota.
     """
     # Una riga scritta male (non un oggetto, un campo che non e' un testo) non

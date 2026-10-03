@@ -253,10 +253,11 @@ struct VistaRisultati: View {
             var v: [(Int, Int, RigaRis)] = []
             for (i, m) in archivio.schede.enumerated() {
                 let nome = m.name ?? ""
-                guard let rango = risCombacia(termini, titolo: nome,
-                                              altri: [m.description ?? "", m.progetto ?? ""]) else { continue }
+                let visto = (m.titolo ?? "").trimmed.isEmpty ? nome : (m.titolo ?? "").trimmed
+                guard let rango = risCombacia(termini, titolo: visto,
+                                              altri: [nome, m.description ?? "", m.progetto ?? ""]) else { continue }
                 v.append((rango, i, RigaRis(
-                    id: "memoria:\(m.identita)", tipo: .memoria, titolo: nome,
+                    id: "memoria:\(m.identita)", tipo: .memoria, titolo: visto,
                     sottotitolo: (m.description ?? "").trimmed,
                     anteprima: nil, quando: m.updatedAt, progetto: m.progetto, ruolo: nil,
                     apri: .memoria(m.identita), unione: m.id.map { "memoria:\($0)" })))
@@ -310,7 +311,7 @@ struct VistaRisultati: View {
                 case "task":
                     dest = .task((archivio.lavagna?.voci ?? []).first { $0.taskId == ref }?.identita)
                 case "memoria":
-                    dest = .memoria(archivio.schede.first { $0.id == ref }?.name ?? h.title ?? "")
+                    dest = .memoria(archivio.schede.first { $0.id == ref }?.name ?? h.nome ?? h.title ?? "")
                 case "sessione":
                     if let x = archivio.sessioni.first(where: { $0.id == ref }) {
                         dest = .sessione(x.sessionId ?? x.identita)

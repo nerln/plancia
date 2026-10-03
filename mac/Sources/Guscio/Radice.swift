@@ -12,6 +12,12 @@ struct Radice: View {
     @AppStorage(StileApp.chiave) private var stile = StileApp.sistema.rawValue
     @AppStorage(DimensioneTesto.chiave) private var passoTesto = DimensioneTesto.predefinito
 
+    // La dimensione del testo scala il CONTENUTO di ogni colonna (barra laterale, vista, Inspector),
+    // non la finestra intera: la divisione fra le colonne e' di AppKit (NSSplitViewController),
+    // e dentro una vista ridimensionata con scaleEffect i suoi minimi e massimi non tornavano con
+    // quelli della finestra, e a certe misure (testo 85% o 95%, finestra 880x600) AppKit
+    // ricalcolava i vincoli senza fine e chiudeva l'app. Cosi' le colonne sono a misura vera e
+    // ognuna contiene una sola vista flessibile.
     var body: some View {
         @Bindable var a = archivio
         let sezione = Binding<Sezione?>(
@@ -22,9 +28,11 @@ struct Radice: View {
         NavigationSplitView {
             BarraLaterale(selezione: sezione)
                 .listStyle(.sidebar)
-            .navigationSplitViewColumnWidth(min: 170, ideal: 200, max: 260)
+                .scalaTesto(passoTesto)
+                .navigationSplitViewColumnWidth(min: 170 * fattore, ideal: 200 * fattore, max: 260 * fattore)
         } detail: {
             contenuto
+                .scalaTesto(passoTesto)
                 .ispettoreFinestra()
                 .stileVista()
                 .navigationTitle(archivio.ricerca.trimmed.isEmpty ? archivio.sezione.titolo : tr("Ricerca", "Search"))
@@ -40,8 +48,10 @@ struct Radice: View {
         // Legno: la finestra e' sempre scura, la carta del contenuto e' chiara o scura (StileVista)
         .preferredColorScheme(stile == StileApp.legno.rawValue ? .dark : (Aspetto(rawValue: aspetto) ?? .sistema).schema)
         .background(FondoFinestra(legno: stile == StileApp.legno.rawValue, scuro: fondoScuro))
-        .scalaTesto(passoTesto)
     }
+
+    /// Di quanto sono ingrandite le colonne (1 = dimensione reale).
+    private var fattore: CGFloat { DimensioneTesto.fattore(passoTesto) }
 
     /// Il legno della finestra: chiaro o scuro come la carta.
     private var fondoScuro: Bool {

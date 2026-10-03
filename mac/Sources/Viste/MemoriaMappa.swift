@@ -681,6 +681,7 @@ struct VistaMappa: View {
     private func barra(_ info: InfoGrafo) -> some View {
         VStack(spacing: 6) {
             gruppi(info)
+                .frame(maxWidth: .infinity, alignment: .leading)
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 16) {
                     legenda(info)
@@ -691,10 +692,12 @@ struct VistaMappa: View {
                     legenda(info)
                     controlli
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
                 VStack(alignment: .leading, spacing: 8) {
                     legenda(info, frase: false)
                     controlli
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
             // La larghezza ideale di ViewThatFits e' quella della prima scelta (oltre 800 punti):
             // la colonna la prendeva per preferita e spingeva l'Inspector fuori dalla finestra.
@@ -706,31 +709,29 @@ struct VistaMappa: View {
 
     /// Un pulsante per gruppo: il colore dell'isola, il nome, quante memorie. Porta la camera li'.
     private func gruppi(_ info: InfoGrafo) -> some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
-                ForEach(Array(info.gruppi.enumerated()), id: \.offset) { g, gi in
-                    let scelto = modello.gruppoScelto == g
-                    Button { modello.scegliGruppo(scelto ? nil : g) } label: {
-                        HStack(spacing: 5) {
-                            Circle().fill(ColoreGruppo.colore(gi.colore)).frame(width: 8, height: 8)
-                            Text(gi.nomeVisto(inglese: Lingua.condivisa.codice != "it")).font(.caption)
-                            Text("\(gi.membri.count)").font(.caption).foregroundStyle(.secondary)
-                        }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(scelto ? ColoreGruppo.colore(gi.colore).opacity(0.22) : Color.clear, in: Capsule())
-                        .overlay(Capsule().strokeBorder(ColoreGruppo.colore(gi.colore).opacity(scelto ? 0.8 : 0.35), lineWidth: 1))
-                        .contentShape(Capsule())
+        FlussoChip(righeMassime: 2, spazio: 6) {
+            ForEach(Array(info.gruppi.enumerated()), id: \.offset) { g, gi in
+                let scelto = modello.gruppoScelto == g
+                Button { modello.scegliGruppo(scelto ? nil : g) } label: {
+                    HStack(spacing: 5) {
+                        Circle().fill(ColoreGruppo.colore(gi.colore)).frame(width: 8, height: 8)
+                        Text(gi.nomeVisto(inglese: Lingua.condivisa.codice != "it")).font(.caption)
+                        Text("\(gi.membri.count)").font(.caption).foregroundStyle(.secondary)
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(tr("Gruppo \(gi.nomeVisto(inglese: Lingua.condivisa.codice != "it")), \(gi.membri.count) memorie",
-                                           "Group \(gi.nomeVisto(inglese: Lingua.condivisa.codice != "it")), \(gi.membri.count) memories"))
-                    .help(tr("Inquadra il gruppo", "Frame the group"))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(scelto ? ColoreGruppo.colore(gi.colore).opacity(0.22) : Color.clear, in: Capsule())
+                    .overlay(Capsule().strokeBorder(ColoreGruppo.colore(gi.colore).opacity(scelto ? 0.8 : 0.35), lineWidth: 1))
+                    .contentShape(Capsule())
                 }
+                .buttonStyle(.plain)
+                .accessibilityLabel(tr("Gruppo \(gi.nomeVisto(inglese: Lingua.condivisa.codice != "it")), \(gi.membri.count) memorie",
+                                       "Group \(gi.nomeVisto(inglese: Lingua.condivisa.codice != "it")), \(gi.membri.count) memories"))
+                .help(tr("Inquadra il gruppo", "Frame the group"))
             }
         }
-        .scrollClipDisabled()
-        .frame(height: 24)
+        .clipped()
+
     }
 
     private func legenda(_ info: InfoGrafo, frase: Bool = true) -> some View {
@@ -783,5 +784,44 @@ struct VistaMappa: View {
         .labelStyle(.iconOnly)
         .buttonStyle(.bordered)
         .fixedSize()
+    }
+}
+
+
+/// Dispone i chip dei gruppi a righe, andando a capo dove la larghezza finisce, per al piu'
+/// `righeMassime` righe: i chip che non ci stanno si nascondono (fuori dal ritaglio) invece di
+/// uscire dal bordo senza segno di scorrimento, com'era con la riga che scorreva. I piu' grandi
+/// sono i primi (l'ordine e' quello dei gruppi); gli altri si raggiungono dalla mappa.
+struct FlussoChip: Layout {
+    let righeMassime: Int
+    let spazio: CGFloat
+
+    private struct Disposizione { var posti: [CGPoint]; var dimensioni: CGSize }
+
+    private func dispone(_ larghezza: CGFloat, _ sub: Subviews) -> Disposizione {
+        var posti: [CGPoint] = []
+        var x: CGFloat = 0, y: CGFloat = 0, riga = 0, altezzaRiga: CGFloat = 0, piuLarga: CGFloat = 0
+        for v in sub {
+            let d = v.sizeThatFits(.unspecified)
+            if x > 0, x + d.width > larghezza { riga += 1; x = 0; y += altezzaRiga + spazio; altezzaRiga = 0 }
+            if riga >= righeMassime { posti.append(CGPoint(x: -100_000, y: 0)); continue }
+            posti.append(CGPoint(x: x, y: y))
+            x += d.width + spazio
+            altezzaRiga = max(altezzaRiga, d.height)
+            piuLarga = max(piuLarga, x - spazio)
+        }
+        return Disposizione(posti: posti, dimensioni: CGSize(width: piuLarga, height: y + altezzaRiga))
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let d = dispone(proposal.width ?? 300, subviews).dimensioni
+        return CGSize(width: min(d.width, proposal.width ?? d.width), height: d.height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let d = dispone(bounds.width, subviews)
+        for (v, p) in zip(subviews, d.posti) {
+            v.place(at: CGPoint(x: bounds.minX + p.x, y: bounds.minY + p.y), anchor: .topLeading, proposal: .unspecified)
+        }
     }
 }

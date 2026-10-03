@@ -5,6 +5,7 @@
 //       --istantanee <cartella> [--aspetto chiaro|scuro] [--lingua it|en] [--parola <testo>]
 //       [--larghezza 1280] [--altezza 820]   (punti; il minimo della finestra vale sempre)
 //       [--stile sistema|legno] [--testo 0...6]   (il passo della dimensione del testo, 3 = reale)
+//       [--sezioni task,progetti,...]  solo queste sezioni, in questo ordine (default: tutte)
 //       [--prova-tasti]  premi ⌘+ ⌘- ⌘0 ⌘= veri e stampa il passo dopo ognuno (senza --testo)
 //       [--inattiva]  fotografa la finestra NON attiva (come quando si lavora in un'altra app)
 //       [--primo-risultato]  nella Ricerca sceglie la prima riga: si vede l'Inspector dei Risultati
@@ -104,7 +105,10 @@ enum Istantanee {
             scritti.append(file.path)
         }
 
-        for s in Sezione.allCases {
+        // --sezioni task,social,...: solo quelle, in quell'ordine (per provare un passaggio preciso,
+        // per esempio da Task con l'Inspector aperto a Progetti)
+        let ordine = valore("--sezioni").map { $0.split(separator: ",").compactMap { Sezione(rawValue: String($0)) } } ?? Sezione.allCases
+        for s in ordine {
             a.vai(s)
             a.taskScelto = nil; a.progettoScelto = nil; a.memoriaScelta = nil
             a.postScelto = nil; a.sessioneScelta = nil

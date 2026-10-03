@@ -48,7 +48,7 @@ riprendi <id>` da terminale (senza `--apri` stampa solo il comando; con
 `azione="riprendi"` in Claude Code e Codex.
 
 **Vetro su ogni superficie.** Non è più il compromesso del verdetto ("vetro
-sui bordi, contenuto opaco"): decisione di Eugenio del 18/09, con parole sue,
+sui bordi, contenuto opaco"): decisione dell'utente del 18/09, con parole sue,
 "deve sembrare tutto vetro". Il materiale nativo (Liquid Glass su macOS 26 e
 successivi, NSVisualEffectView prima) sta adesso dietro l'intera finestra,
 non solo dietro rail e drawer, header del sito incluso, e ogni pannello che

@@ -172,6 +172,58 @@ controlla("l'Inspector della finestra ha l'identita' della sezione (.id dopo .in
 controlla("l'Inspector non e' appeso a una vista vuota (Color.clear) ma al contenuto",
           "Color.clear" not in leggi("Guscio/Ispettore.swift"))
 
+# 12. 23-RIPARAZIONE. Il crash con il testo al 85% o al 95% e la finestra stretta (NSException di
+#     AppKit: "piu' passi di vincoli che viste", 7 volte su 7): la dimensione del testo scalava la
+#     finestra intera, NSSplitViewController compreso, e i minimi e massimi delle colonne non
+#     tornavano con quelli della finestra. Ora scala il contenuto di ogni colonna.
+radice_swift = leggi("Guscio/Radice.swift")
+dopo_fondo = radice_swift.split("FondoFinestra(", 1)[-1]
+controlla("la scala del testo non e' sulla finestra intera (dopo il fondo di Radice non c'e' .scalaTesto)",
+          ".scalaTesto(" not in dopo_fondo)
+controlla("la scala del testo e' sul contenuto della barra laterale e della vista (Radice)",
+          radice_swift.count(".scalaTesto(passoTesto)") == 2)
+controlla("le larghezze della barra laterale scalano col testo (colonna vera)",
+          "min: 170 * fattore" in radice_swift)
+isp = leggi("Guscio/Ispettore.swift")
+controlla("l'Inspector scala il suo contenuto e le sue larghezze col testo",
+          ".scalaTesto(passoTesto)" in isp and "larghezze.min * fattore" in isp)
+controlla("Progetti non usa HSplitView (NSSplitView dentro la scala): lista e scheda stanno in un HStack col divisorio",
+          "HSplitView" not in re.sub(r"//[^\n]*", "", leggi("Viste/Progetti.swift"))
+          and "DivisorioTrascinabile(" in leggi("Viste/Progetti.swift"))
+
+# 13. 23-RIPARAZIONE. Mappa: l'etichetta di un nodo non esce dalla vista, e il posto dei nodi
+#     in primo piano si prenota prima dei nomi dei gruppi; i chip dei gruppi vanno a capo invece di
+#     scorrere senza segno; la barra sotto la mappa sta a sinistra.
+disegno = leggi("Viste/MappaDisegno.swift")
+controlla("l'etichetta di un nodo ha un posto dentro la vista anche a sinistra (etichettaNodo)",
+          "static func etichettaNodo(" in disegno and "rect.minX < 4" in disegno)
+controlla("i nomi dei gruppi non finiscono sopra il titolo del nodo scelto (si prenota prima)",
+          disegno.index("etichettaNodo(ctx, i, evidente: true") < disegno.index("nomiGruppi(&ctx"))
+mm = leggi("Viste/MemoriaMappa.swift")
+gr = mm[mm.index("private func gruppi("):mm.index("private func legenda(")]
+controlla("i chip dei gruppi vanno a capo (FlussoChip), non scorrono in una riga senza segno",
+          "FlussoChip(" in gr and "ScrollView" not in gr)
+controlla("le scelte della barra sotto la mappa sono allineate a sinistra",
+          mm.count(".frame(maxWidth: .infinity, alignment: .leading)") >= 3)
+
+# 14. 23-RIPARAZIONE. Tabelle: le colonne piccole hanno un massimo, cosi' il Titolo e' la piu' elastica
+for rel in ("Viste/Task.swift", "Viste/Archivio.swift"):
+    testo = leggi(rel)
+    senza_max = [m for m in re.findall(r"\.width\(min: \d+, ideal: \d+\)", testo)]
+    # il Titolo e' l'unica con ideale sopra i 300 e senza massimo
+    grandi = [m for m in senza_max if int(re.search(r"ideal: (\d+)", m).group(1)) < 300]
+    controlla("%s: ogni colonna diversa dal Titolo ha un massimo di larghezza" % rel.split("/")[-1], not grandi, ", ".join(grandi))
+controlla("l'Archivio scrive la data del dettaglio col mese abbreviato (la colonna dell'Inspector e' stretta)",
+          '"d MMM y jmm"' in leggi("Viste/Archivio.swift"))
+
+# 15. 23-RIPARAZIONE. La Memoria si legge con i titoli umani anche nella Ricerca e nell'Inspector
+risultati = leggi("Viste/Risultati.swift")
+controlla("la Ricerca mostra il titolo umano delle memorie, non la sigla (locale e dal server)",
+          "titolo: visto" in risultati and "h.nome ?? h.title" in risultati)
+mem = leggi("Viste/Memoria.swift")
+controlla("l'Inspector della Memoria titola col titolo umano e scrive i legami coi titoli",
+          "Text(fatto.titolo)" in mem and "Text(dati.titolo(nome))" in mem and "titolo: { dati.titolo($0) }" in mem)
+
 # 11. i commenti citano i banchi di misura che esistono
 citazioni = []
 for f in sorgenti:

@@ -398,7 +398,7 @@ def _dinamica_vera(radice, chrome):
 
     # Sostituto del pgrep globale (correzione del critico): un pgrep -x
     # claude/codex guarda TUTTI i processi della macchina, e su quella di
-    # Eugenio girano sessioni claude vere in parallelo a questa prova - una
+    # chi la usa girano sessioni claude vere in parallelo a questa prova - una
     # che parte o finisce nei ~15s della dinamica fa sembrare rosso un
     # pre-push senza che questa prova abbia fatto niente di male. Al posto
     # del pgrep: due eseguibili finti chiamati proprio "claude" e "codex",

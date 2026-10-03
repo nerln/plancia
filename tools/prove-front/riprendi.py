@@ -579,7 +579,7 @@ def _prova_drawer_apre_subito(prova, sorgente):
 
 
 def _prova_riga_porta_sessione(prova, sorgente):
-    """L3-RIPRENDI-UI-4 ("occhi di Eugenio", obbligatoria del critico): il
+    """L3-RIPRENDI-UI-4 ("occhi dell'utente", obbligatoria del critico): il
     bottone di riga in "Tutti i task" (data-act="manda") porta data-task solo
     per fonte 'plancia' - su Claude/Codex (due fonti su tre) il click apriva
     il drawer senza pulsante di stato, e il modulo "In background" lanciava
@@ -628,7 +628,7 @@ def _prova_riga_porta_sessione(prova, sorgente):
 
 
 def _prova_proposta_manda_apre_drawer(prova, sorgente):
-    """L3-RIPRENDI-UI-4 ("occhi di Eugenio", obbligatoria del critico): un
+    """L3-RIPRENDI-UI-4 ("occhi dell'utente", obbligatoria del critico): un
     click su "Riprendi" su una proposta di tipo 'manda' (views.oggi) mandava
     SUBITO /api/jarvis {testo:'fallo'}, che sul server esegue la proposta
     scelta senza nessuna conferma - un claude/codex headless partito senza

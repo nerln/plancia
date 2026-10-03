@@ -50,6 +50,8 @@ enum TipoMemoria: String, CaseIterable {
 
 struct FattoMemoria: Identifiable, Hashable {
     let nome: String
+    /// Il titolo umano, come lo scrive la Mappa; se il server non lo da', la sigla.
+    let titolo: String
     let tipo: TipoMemoria
     let descrizione: String
     let aggiornata: String?
@@ -67,6 +69,8 @@ struct FattoMemoria: Identifiable, Hashable {
 
     init(scheda: Scheda?, nodo: NodoMemoria?) {
         nome = scheda?.name ?? nodo?.nome ?? "?"
+        let t = (scheda?.titolo ?? nodo?.titolo ?? "").trimmed
+        titolo = t.isEmpty ? nome : t
         tipo = TipoMemoria(scheda?.type ?? nodo?.tipo)
         descrizione = ((scheda?.description ?? nodo?.descrizione) ?? "").trimmed
         aggiornata = scheda?.updatedAt ?? nodo?.aggiornata
@@ -124,6 +128,9 @@ struct DatiMemoria {
     let daScrivere: [String]
     let richiamabili: Int
     let haMappa: Bool
+
+    /// Il titolo umano di una memoria per nome; per un nome che non c'e', il nome.
+    func titolo(_ nome: String) -> String { perNome[nome]?.titolo ?? nome }
 
     init(schede: [Scheda], mappa: MappaMemoria?) {
         var nodi: [String: NodoMemoria] = [:]
