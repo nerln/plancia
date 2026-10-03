@@ -136,6 +136,7 @@ const EN = {
   // IT_TESTI perché l'ordine delle parole intorno al segnaposto cambia da
   // una lingua all'altra, come 'dopo_conta' di LOTTO-L2-VISTA.
   'Riprendi': 'Resume', 'Rilancia': 'Relaunch', 'Apri': 'Open',
+  'Conferma': 'Confirm', 'Annulla': 'Cancel',
   'aggiorno': 'Checking…',
   'in_background': 'In the background',
   'riprendi_viva': 'Open in the app, {cwd}',
@@ -185,7 +186,7 @@ const EN = {
   "che il richiamo può andare a prendere da un'altra cartella":
     'that recall can fetch from another folder',
   'tutte': 'all', 'preferenze': 'preferences', 'chi sei': 'who you are',
-  'riferimenti': 'references', 'progetti': 'projects',
+  'riferimenti': 'references', 'progetti': 'projects', 'altri progetti': 'other projects', 'altro': 'other',
   'in due cartelle': 'in two folders', 'senza legami': 'unlinked',
   'link rotti': 'broken links', 'quasi vuote': 'nearly empty',
   'niente da sistemare': 'nothing to fix',
@@ -436,6 +437,9 @@ function storageGet(chiave) { try { return localStorage.getItem(chiave); } catch
 function storageSet(chiave, valore) { try { localStorage.setItem(chiave, valore); } catch (e) { /* pazienza */ } }
 
 const UIPARAM = new URLSearchParams(location.search).get('ui');
+// `?memoria=grafo` apre la Memoria gia' sul grafo invece che sull'elenco: serve a
+// chi deve fotografare la vista (tools/scatti.sh) e non puo' premere il pulsante.
+const MODO_MEMORIA = new URLSearchParams(location.search).get('memoria') === 'grafo' ? 'grafo' : 'elenco';
 let UILANG = UIPARAM || storageGet('plancia-ui') ||
   (navigator.language.startsWith('it') ? 'it' : 'en');
 if (UIPARAM) storageSet('plancia-ui', UIPARAM);
@@ -638,12 +642,69 @@ views.oggi = async () => {
   </div>`;
 };
 
+/* La scheda di una proposta di Jarvis: cosa succederebbe, riga per riga, con
+   Conferma e Annulla. E' l'unico modo in cui la dashboard fa partire qualcosa che
+   scrive o avvia un agente da una frase (/api/jarvis/conferma), e la scheda
+   propone Annulla per prima: il focus parte li'. Annulla, Esc e un click fuori
+   la buttano (/api/jarvis/rifiuta). Torna l'esito della conferma, o null. */
+function schedaJarvis(p, lingua) {
+  const vecchia = document.getElementById('jscheda');
+  if (vecchia) vecchia.remove();
+  const el = document.createElement('div');
+  el.id = 'jscheda';
+  el.className = 'jscheda';
+  el.setAttribute('role', 'dialog');
+  el.setAttribute('aria-modal', 'true');
+  el.setAttribute('aria-label', p.titolo || '');
+  el.innerHTML = `<div class="jscheda-box rischio-${esc(p.rischio || '')}">
+    <h2>${esc(p.titolo || '')}</h2>
+    <dl>${(p.righe || []).map((r) => `<dt>${esc(r.k)}</dt><dd>${esc(r.v)}</dd>`).join('')}</dl>
+    ${p.avviso ? `<p class="jscheda-avviso">${esc(p.avviso)}</p>` : ''}
+    <div class="jscheda-az">
+      <button type="button" class="ghost" data-j="annulla">${T('Annulla')}</button>
+      <button type="button" class="primary" data-j="conferma">${T('Conferma')}</button>
+    </div>
+  </div>`;
+  document.body.appendChild(el);
+  return new Promise((resolve) => {
+    let chiusa = false;
+    const chiudi = (esito) => {
+      if (chiusa) return;
+      chiusa = true;
+      document.removeEventListener('keydown', tasto);
+      el.remove();
+      resolve(esito);
+    };
+    const rifiuta = async () => {
+      try { await api('/api/jarvis/rifiuta', { method: 'POST', body: { id: p.id, lang: lingua } }); }
+      catch (e) { /* la scheda scade da sola in cinque minuti */ }
+      chiudi(null);
+    };
+    const tasto = (ev) => { if (ev.key === 'Escape') rifiuta(); };
+    document.addEventListener('keydown', tasto);
+    el.addEventListener('click', async (ev) => {
+      const b = ev.target.closest('[data-j]');
+      if (b && b.dataset.j === 'conferma') {
+        el.querySelectorAll('button').forEach((x) => { x.disabled = true; });
+        try {
+          chiudi(await api('/api/jarvis/conferma', { method: 'POST', body: { id: p.id, lang: lingua } }));
+        } catch (err) { toast(err.message, true); chiudi(null); }
+      } else if ((b && b.dataset.j === 'annulla') || ev.target === el) {
+        rifiuta();
+      }
+    });
+    el.querySelector('[data-j="annulla"]').focus();
+  });
+}
+
 /* Una proposta e un solo pulsante. "Riprendi" su una proposta "manda" apre il
    cassetto (con o senza task, come apriRiprendi gia' sa fare): il lancio parte
    solo dal click su "In background" li' dentro, mai da questo pulsante da solo.
-   "Rilancia" chiama davvero cantiere.avvia (plancia/jarvis.py, _esegui_proposta):
-   e' la risposta a "Il lancio e' fallito. Lo riprovo?", per questo dice
-   Rilancia e non Riprendi. "Apri" segue la navigazione che jarvis risponde. */
+   "Rilancia" chiede a Jarvis (plancia/jarvis.py, azione "rilancia") di preparare la
+   scheda del rilancio e la mostra con Conferma e Annulla (schedaJarvis): e' la
+   risposta a "Il lancio e' fallito. Lo riprovo?", per questo dice Rilancia e non
+   Riprendi, e non parte niente finche' non si preme Conferma. "Apri" segue la
+   navigazione che jarvis risponde. */
 function rigaProposta(p, i) {
   const az = p.azione || {};
   const frase = i === 0 ? 'fallo' : ['', 'la seconda', 'la terza', 'la quarta'][i] || 'fallo';
@@ -1230,7 +1291,7 @@ function vaiA(vai) {
   } else if (tipo === 'progetti') {
     dest = '#/progetti/' + encodeURIComponent(id);
   } else if (tipo === 'memoria') {
-    const f = state.filters.memoria || (state.filters.memoria = { lente: '', modo: 'elenco', livello: 0 });
+    const f = state.filters.memoria || (state.filters.memoria = { lente: '', modo: MODO_MEMORIA, livello: 0 });
     f.lente = '';
     dest = '#/memoria/' + encodeURIComponent(id);
   } else if (tipo === 'sessioni') {
@@ -1918,30 +1979,49 @@ function guaiMem(d) {
   return righe + invito;
 }
 
+/* I gruppi della mappa: il server li manda gia' fatti (progetto, o tipo per chi sei e
+   preferenze), col colore stabile e i legami verso gli altri. I gruppi dei tipi hanno il
+   nome in italiano dal server e si traducono qui. Con un server vecchio, senza gruppi,
+   si raggruppa per tipo come si faceva prima. */
+const NOMI_GRUPPO_TIPO = { 'tipo:user': 'chi sei', 'tipo:feedback': 'preferenze', 'tipo:reference': 'riferimenti',
+                           'tipo:project': 'altri progetti', 'tipo:altro': 'altro' };
+const nomeGruppo = (chiave, nome) => (NOMI_GRUPPO_TIPO[chiave] ? cap(T(NOMI_GRUPPO_TIPO[chiave])) : (nome || chiave));
+const gruppoNodo = (n) => n.gruppo || ('tipo:' + n.tipo);
+
+function gruppiMappa(m) {
+  if (Array.isArray(m.gruppi) && m.gruppi.length) return m.gruppi;
+  const per = new Map();
+  m.nodi.forEach((n) => {
+    const chiave = gruppoNodo(n);
+    if (!per.has(chiave)) per.set(chiave, { chiave, nome: chiave, colore: `var(--t-${n.tipo})`, memorie: 0, legami: [] });
+    per.get(chiave).memorie++;
+  });
+  return [...per.values()].sort((a, b) => b.memorie - a.memorie);
+}
+
 views.memoria = async () => {
-  const f = state.filters.memoria || (state.filters.memoria = { lente: '', modo: 'elenco', livello: 0 });
+  const f = state.filters.memoria || (state.filters.memoria = { lente: '', modo: MODO_MEMORIA, livello: 0 });
   const m = state.mappa = await api('/api/memoria/mappa');
   const d = m.diagnosi;
   if (!d.totale) return `<div class="vuoto">${T('nessuna memoria')}</div>`;
   const acceso = accesiMem(m, f.lente);
   const nodi = m.nodi.filter((n) => !acceso || acceso.has(n.nome));
-  const ordinati = TIPI_MEM.flatMap(([tipo]) => nodi.filter((n) => n.tipo === tipo)
-    .sort((a, b) => (a.aggiornata < b.aggiornata ? 1 : -1)));
+  const gruppi = gruppiMappa(m);
+  const colore = Object.fromEntries(gruppi.map((g) => [g.chiave, g.colore]));
+  const recenti = (a, b) => (a.aggiornata < b.aggiornata ? 1 : -1);
+  const ordinati = gruppi.flatMap((g) => nodi.filter((n) => gruppoNodo(n) === g.chiave).sort(recenti));
   const sel = scegliSel('memoria', ordinati.map((n) => n.nome));
-  const conta = {};
-  m.nodi.forEach((n) => { conta[n.tipo] = (conta[n.tipo] || 0) + 1; });
 
   const riga = (n) => `
     <div class="riga ${n.nome === sel ? 'sel' : ''}" data-sel="${esc(n.nome)}" data-memory="${esc(n.nome)}" tabindex="0">
-      <span class="punto mnodo ${esc(n.tipo)}"></span>
-      <div class="txt"><div class="t">${esc(n.nome)}</div><div class="s clamp">${esc(n.descrizione || '')}</div></div>
+      <span class="punto mnodo ${esc(n.tipo)}" style="background:${esc(colore[gruppoNodo(n)] || '')}"></span>
+      <div class="txt"><div class="t">${esc(n.titolo || n.nome)}</div><div class="s clamp">${esc(n.descrizione || '')}</div></div>
       <span class="scad">${dataBreve(n.aggiornata)}</span>
     </div>`;
-  const elenco = TIPI_MEM.map(([tipo, etichetta]) => {
-    const items = nodi.filter((n) => n.tipo === tipo)
-      .sort((a, b) => (a.aggiornata < b.aggiornata ? 1 : -1));
+  const elenco = gruppi.map((g) => {
+    const items = nodi.filter((n) => gruppoNodo(n) === g.chiave).sort(recenti);
     if (!items.length) return '';
-    return `<div class="gruppo-testa"><span>${cap(T(etichetta))}</span><span class="n">${items.length}</span></div>
+    return `<div class="gruppo-testa"><span>${esc(nomeGruppo(g.chiave, g.nome))}</span><span class="n">${items.length}</span></div>
       <div class="lista-righe">${items.map(riga).join('')}</div>`;
   }).join('') + `
     <div class="gruppo-testa"><span>${T('Da sistemare')}</span></div>
@@ -1958,9 +2038,10 @@ views.memoria = async () => {
         <button class="icona-btn" data-act="grafo-zoom" data-v="-1" aria-label="${T('Riduci')}">－</button>
         <button class="icona-btn" data-act="grafo-zoom" data-v="0" aria-label="${T('Adatta')}" title="${T('Adatta')}">⤢</button>
       </div>
-      <div class="grafo-legenda">${TIPI_MEM.map(([k, etichetta]) =>
-        `<span class="${k}"><i></i>${cap(T(etichetta))} ${conta[k] || 0}</span>`).join('')}
-        <span>${T('pieno vuol dire che il richiamo può portarla in contesto')}</span></div>
+      <div class="grafo-legenda">${gruppi.map((g) =>
+        `<button class="grafo-gruppo" data-act="grafo-gruppo" data-g="${esc(g.chiave)}"><i style="background:${esc(g.colore || '')}"></i>${
+          esc(nomeGruppo(g.chiave, g.nome))}<span class="n">${g.memorie}</span></button>`).join('')}
+        <span class="nota">${T('pieno vuol dire che il richiamo può portarla in contesto')}</span></div>
     </div>`;
 
   return `
@@ -2001,13 +2082,16 @@ DETTAGLI.memoria = async (nome) => {
   const verso = archi.filter((a) => a.da === nome).map((a) => a.a);
   const da = archi.filter((a) => a.a === nome).map((a) => a.da);
   const legami = [...new Set([...verso, ...da])];
-  const esiste = new Set(state.mappa.nodi.map((x) => x.nome));
+  const per = new Map(state.mappa.nodi.map((x) => [x.nome, x]));
   const tipoEt = (TIPI_MEM.find(([k]) => k === n.tipo) || [])[1];
+  const g = gruppiMappa(state.mappa).find((x) => x.chiave === gruppoNodo(n));
   return `
     <button class="ghost indietro" data-act="indietro">‹ ${T('Indietro')}</button>
-    <div class="sub"><span class="punto mnodo ${esc(n.tipo)}" style="display:inline-block;margin-right:6px"></span>${
-      esc(cap(T(tipoEt || 'memoria')))}</div>
-    <h2>${esc(n.nome)}</h2>
+    <div class="sub"><span class="punto mnodo ${esc(n.tipo)}" style="display:inline-block;margin-right:6px;background:${esc((g && g.colore) || '')}"></span>${
+      esc(nomeGruppo(gruppoNodo(n), n.gruppo_nome))}${
+      cap(T(tipoEt || 'memoria')) !== nomeGruppo(gruppoNodo(n), n.gruppo_nome) ? ' · ' + esc(cap(T(tipoEt || 'memoria'))) : ''}</div>
+    <h2>${esc(n.titolo || n.nome)}</h2>
+    <div class="faint" style="font-size:var(--t-sm)">${esc(n.nome)}</div>
     ${n.descrizione ? `<p class="corpo">${esc(n.descrizione)}</p>` : ''}
     ${corpo.trim() && corpo.trim() !== (n.descrizione || '').trim() ? `<div class="md" style="margin-top:12px">${md(corpo)}</div>`
       : `<p class="faint" style="margin-top:12px">${T('Nessun testo oltre alla descrizione.')}</p>`}
@@ -2017,24 +2101,48 @@ DETTAGLI.memoria = async (nome) => {
       <div><dt>${T('Usata in')}</dt><dd>${n.richiamabile ? T('il richiamo può portarla in contesto') : T('nessuno, troppo corta')}</dd></div>
     </dl>
     <h3>${T('Legami')}</h3>
-    ${legami.length ? `<div class="elenco legami">${legami.map((x) => esiste.has(x)
-      ? `<div class="riga" data-memory="${esc(x)}"><div class="txt"><div class="t">${esc(x)}</div></div>${CHEV}</div>`
+    ${legami.length ? `<div class="elenco legami">${legami.map((x) => per.has(x)
+      ? `<div class="riga" data-memory="${esc(x)}"><div class="txt"><div class="t">${esc(per.get(x).titolo || x)}</div>${
+        gruppoNodo(per.get(x)) !== gruppoNodo(n) ? `<div class="s">${esc(nomeGruppo(gruppoNodo(per.get(x)), per.get(x).gruppo_nome))}</div>` : ''}</div>${CHEV}</div>`
       : `<div class="riga"><div class="txt"><div class="t faint">${esc(x)}</div><div class="s">${T('link rotto')}</div></div></div>`).join('')}</div>`
       : `<p class="faint">${T('Nessun legame.')}</p>`}
     ${(state.filters.memoria || {}).modo === 'grafo' ? '' : `<div class="azioni"><button class="btn" data-act="mem-grafo" data-nome="${esc(n.nome)}">${T('Mostra nel grafo')}</button></div>`}`;
 };
 
 /* ---------------------------------------------------------------- grafo */
-/* Le forze sono quattro: i nodi si respingono, un legame e' una molla, i tipi
-   si tirano verso il proprio angolo (senza questo un archivio senza legami e'
-   una nuvola), tutto e' tenuto vicino al centro. Il calore cala da solo e il
-   disegno si ferma; trascinare un nodo lo riaccende. Le posizioni iniziali
-   vengono da un generatore deterministico (dal nome), quindi lo stesso archivio
-   parte sempre uguale. */
+/* Il grafo e' a isole. Il server manda dove stanno i nodi (gruppi separati e compatti,
+   i ponti fra gruppi come legami piu' lunghi): il primo fotogramma e' gia' leggibile e la
+   fisica qui si limita a rifinire. Le forze sono: i nodi si respingono (con una griglia,
+   non a tutte le coppie), un legame dentro un gruppo e' una molla, uno fra gruppi tira
+   solo se si allunga troppo, e una cintura tiene ogni nodo vicino al proprio gruppo. Il
+   calore cala da solo e il disegno si ferma; trascinare un nodo lo riaccende.
+
+   Cosa si vede dipende da quanto si e' vicini: da lontano i gruppi, come regioni morbide
+   colorate col nome grande e i ponti fra l'uno e l'altro; da vicino i nodi col loro
+   titolo (mai la sigla). In mezzo le due cose si sfumano l'una nell'altra.
+   Senza le posizioni del server (un server vecchio) i gruppi si dispongono su un cerchio. */
+/* Le soglie sono relative all'inquadratura che mostra tutto il grafo (`kTutto`), non a un
+   ingrandimento assoluto: un archivio di 70 schede e uno di 700 si guardano allo stesso modo. */
+const SOGLIA_GRUPPI = 2.2;    // oltre questo ingrandimento (in volte `kTutto`) il nome del gruppo e' solo un'intestazione piccola
+const SOGLIA_TITOLI = 1.5;    // sotto questo i titoli dei nodi non si scrivono (restano quelli sotto il puntatore)
+
 function seme(testo) {
   let h = 2166136261;
   for (let i = 0; i < testo.length; i++) { h ^= testo.charCodeAt(i); h = Math.imul(h, 16777619); }
   return () => { h = Math.imul(h ^ (h >>> 15), 2246822507); h ^= h >>> 13; return ((h >>> 0) % 100000) / 100000; };
+}
+
+/* L'involucro convesso di un insieme di punti (catena monotona). */
+function involucro(punti) {
+  if (punti.length < 3) return punti.slice();
+  const p = punti.slice().sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const croce = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+  const giu = [];
+  for (const q of p) { while (giu.length >= 2 && croce(giu[giu.length - 2], giu[giu.length - 1], q) <= 0) giu.pop(); giu.push(q); }
+  const su = [];
+  for (let i = p.length - 1; i >= 0; i--) { const q = p[i]; while (su.length >= 2 && croce(su[su.length - 2], su[su.length - 1], q) <= 0) su.pop(); su.push(q); }
+  su.pop(); giu.pop();
+  return giu.concat(su);
 }
 
 function montaGrafo(host, m, opz) {
@@ -2046,30 +2154,45 @@ function montaGrafo(host, m, opz) {
   let W = 0, H = 0, dpr = 1, vivo = true, rAF = 0;
   const ridotto = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
+  const gruppi = gruppiMappa(m);
+  const infoGruppo = new Map(gruppi.map((g) => [g.chiave, g]));
   const nodi = m.nodi.map((n) => ({
-    id: n.nome, n, tipo: n.tipo, x: 0, y: 0, vx: 0, vy: 0, fisso: false, vis: 1, visT: 1, r: 6,
+    id: n.nome, n, tipo: n.tipo, gruppo: gruppoNodo(n), x: 0, y: 0, vx: 0, vy: 0, fisso: false, vis: 1, visT: 1, r: 6,
     spento: false,
   }));
   const per = new Map(nodi.map((n) => [n.id, n]));
   const archi = m.archi.map((a) => ({ a: per.get(a.da), b: per.get(a.a) }))
     .filter((e) => e.a && e.b && e.a !== e.b);
+  archi.forEach((e) => { e.ponte = e.a.gruppo !== e.b.gruppo; });
   const vicini = new Map(nodi.map((n) => [n.id, new Set()]));
   archi.forEach((e) => { vicini.get(e.a.id).add(e.b.id); vicini.get(e.b.id).add(e.a.id); });
   nodi.forEach((n) => { n.grado = Math.max(n.n.grado || 0, vicini.get(n.id).size); n.r = 5.5 + Math.min(n.grado, 14) * 0.9; });
 
-  // un angolo per tipo presente
-  const tipi = TIPI_MEM.map(([k]) => k).filter((k) => nodi.some((n) => n.tipo === k));
-  nodi.forEach((n) => { if (!tipi.includes(n.tipo)) tipi.push(n.tipo); });
-  const R_CL = tipi.length > 1 ? 300 : 0;
-  const centro = {};
-  tipi.forEach((t, i) => {
-    const a = -Math.PI / 2 + (i / tipi.length) * Math.PI * 2 + 0.4;
-    centro[t] = { x: Math.cos(a) * R_CL, y: Math.sin(a) * R_CL * 0.8 };
-  });
-  nodi.forEach((n) => {
-    const r = seme(n.id), c = centro[n.tipo] || { x: 0, y: 0 };
-    n.x = c.x + (r() - 0.5) * 200; n.y = c.y + (r() - 0.5) * 200;
-  });
+  // ---- le posizioni di partenza: quelle del server, in unita' di mondo
+  const SCALA = Math.max(700, Math.min(7000, 150 * Math.sqrt(nodi.length)));
+  const conPosizioni = nodi.length > 1 && nodi.every((n) => typeof n.n.x === 'number' && typeof n.n.y === 'number');
+  const centro = {};     // l'àncora di ogni gruppo: dove sta la sua isola
+  const raggioGruppo = {};
+  if (conPosizioni) {
+    nodi.forEach((n) => { n.x = (n.n.x - 0.5) * SCALA; n.y = (n.n.y - 0.5) * SCALA; });
+    gruppi.forEach((g) => {
+      const dentro = nodi.filter((n) => n.gruppo === g.chiave);
+      if (!dentro.length) return;
+      const c = { x: dentro.reduce((s, n) => s + n.x, 0) / dentro.length, y: dentro.reduce((s, n) => s + n.y, 0) / dentro.length };
+      centro[g.chiave] = c;
+      raggioGruppo[g.chiave] = Math.max(...dentro.map((n) => Math.hypot(n.x - c.x, n.y - c.y))) * 1.1 + 24;
+    });
+  } else {
+    gruppi.forEach((g, i) => {
+      const a = -Math.PI / 2 + (i / gruppi.length) * Math.PI * 2 + 0.4;
+      centro[g.chiave] = { x: Math.cos(a) * SCALA * 0.32, y: Math.sin(a) * SCALA * 0.26 };
+      raggioGruppo[g.chiave] = 50 + 26 * Math.sqrt(g.memorie);
+    });
+    nodi.forEach((n) => {
+      const r = seme(n.id), c = centro[n.gruppo] || { x: 0, y: 0 }, s = raggioGruppo[n.gruppo] || 100;
+      n.x = c.x + (r() - 0.5) * s * 1.6; n.y = c.y + (r() - 0.5) * s * 1.6;
+    });
+  }
 
   let alpha = 1;
   const cam = { x: 0, y: 0, k: 1 }, mira = { x: 0, y: 0, k: 1 };
@@ -2087,38 +2210,69 @@ function montaGrafo(host, m, opz) {
     });
   };
   leggiColori();
-  const colore = (t) => colori[t] || colori.testo2;
+  // il colore di un gruppo: quello del server; il tipo (server vecchio) lo prende dal tema
+  const coloreDi = (chiave) => {
+    const g = infoGruppo.get(chiave);
+    if (g && g.colore && g.colore[0] === '#') return g.colore;
+    return colori[chiave.replace('tipo:', '')] || colori.testo2;
+  };
+  const colore = (n) => coloreDi(n.gruppo);
+  const rgba = (hex, a) => {
+    const h = hex.replace('#', '');
+    const v = h.length === 3 ? h.split('').map((c) => c + c).join('') : h;
+    return `rgba(${parseInt(v.slice(0, 2), 16) || 0},${parseInt(v.slice(2, 4), 16) || 0},${parseInt(v.slice(4, 6), 16) || 0},${a})`;
+  };
 
   const partecipa = (n) => n.visT > 0 || n.vis > 0.03;
 
-  function passo() {
-    const P = nodi.filter(partecipa);
-    for (let i = 0; i < P.length; i++) {
-      const a = P[i];
-      for (let j = i + 1; j < P.length; j++) {
-        const b = P[j];
-        let dx = b.x - a.x, dy = b.y - a.y, d2 = dx * dx + dy * dy;
-        if (d2 > 160000) continue;
-        if (d2 < 0.01) { dx = (Math.random() - 0.5); dy = (Math.random() - 0.5); d2 = dx * dx + dy * dy + 0.01; }
-        const d = Math.sqrt(d2);
-        let f = (6400 * alpha) / d2;
-        const min = a.r + b.r + 16;
-        if (d < min) f += (min - d) * 0.06;
-        const fx = (dx / d) * f, fy = (dy / d) * f;
-        a.vx -= fx; a.vy -= fy; b.vx += fx; b.vy += fy;
+  // la griglia della repulsione: ogni nodo guarda solo le celle attorno a se'
+  const CELLA = 400;
+  function repulsione(P) {
+    const celle = new Map();
+    for (const a of P) {
+      const chiave = (Math.floor(a.x / CELLA) + 4096) * 8192 + (Math.floor(a.y / CELLA) + 4096);
+      const l = celle.get(chiave);
+      if (l) l.push(a); else celle.set(chiave, [a]);
+    }
+    const spingi = (a, b) => {
+      let dx = b.x - a.x, dy = b.y - a.y, d2 = dx * dx + dy * dy;
+      if (d2 > 160000) return;
+      if (d2 < 0.01) { dx = (Math.random() - 0.5); dy = (Math.random() - 0.5); d2 = dx * dx + dy * dy + 0.01; }
+      const d = Math.sqrt(d2);
+      let f = (6400 * alpha) / d2;
+      const min = a.r + b.r + 16;
+      if (d < min) f += (min - d) * 0.06;
+      const fx = (dx / d) * f, fy = (dy / d) * f;
+      a.vx -= fx; a.vy -= fy; b.vx += fx; b.vy += fy;
+    };
+    for (const [chiave, lista] of celle) {
+      const cx = Math.floor(chiave / 8192), cy = chiave % 8192;
+      for (let i = 0; i < lista.length; i++) for (let j = i + 1; j < lista.length; j++) spingi(lista[i], lista[j]);
+      for (const [ox, oy] of [[1, 0], [1, 1], [0, 1], [-1, 1]]) {
+        const altra = celle.get((cx + ox) * 8192 + (cy + oy));
+        if (altra) for (const a of lista) for (const b of altra) spingi(a, b);
       }
     }
+  }
+
+  function passo() {
+    const P = nodi.filter(partecipa);
+    repulsione(P);
     for (const e of archi) {
       if (!partecipa(e.a) || !partecipa(e.b)) continue;
       const dx = e.b.x - e.a.x, dy = e.b.y - e.a.y, d = Math.sqrt(dx * dx + dy * dy) || 0.01;
-      const f = (d - (84 + e.a.r + e.b.r)) * 0.035 * (0.4 + alpha);
+      // un ponte tira solo se si allunga troppo: le isole stanno dove le ha messe il server
+      const f = e.ponte ? Math.max(0, d - (360 + e.a.r + e.b.r)) * 0.02 * (0.4 + alpha)
+                        : (d - (44 + e.a.r + e.b.r)) * 0.035 * (0.4 + alpha);
       const fx = (dx / d) * f, fy = (dy / d) * f;
       e.a.vx += fx; e.a.vy += fy; e.b.vx -= fx; e.b.vy -= fy;
     }
     for (const n of P) {
-      const c = centro[n.tipo] || { x: 0, y: 0 };
-      n.vx += (c.x - n.x) * 0.022 * (0.3 + alpha) - n.x * 0.0015;
-      n.vy += (c.y - n.y) * 0.022 * (0.3 + alpha) - n.y * 0.0015;
+      // la cintura: fuori dal disco del proprio gruppo si viene riportati dentro
+      const c = centro[n.gruppo] || { x: 0, y: 0 }, R = raggioGruppo[n.gruppo] || 150;
+      const dx = c.x - n.x, dy = c.y - n.y, d = Math.sqrt(dx * dx + dy * dy) || 0.01;
+      if (d > R) { const f = (d - R) * 0.07 * (0.4 + alpha); n.vx += (dx / d) * f; n.vy += (dy / d) * f; }
+      n.vx -= n.x * 0.0006; n.vy -= n.y * 0.0006;
       n.vx *= 0.8; n.vy *= 0.8;
       if (!n.fisso) { n.x += n.vx; n.y += n.vy; } else { n.vx = 0; n.vy = 0; }
     }
@@ -2143,17 +2297,24 @@ function montaGrafo(host, m, opz) {
     sveglia();
   }
 
-  function adatta(subito) {
-    const V = nodi.filter((n) => n.visT > 0);
-    if (!V.length || !W || !H) return;
+  function inquadra(V, margine) {
+    if (!V.length || !W || !H) return null;
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
     V.forEach((n) => { x0 = Math.min(x0, n.x - n.r); y0 = Math.min(y0, n.y - n.r); x1 = Math.max(x1, n.x + n.r); y1 = Math.max(y1, n.y + n.r); });
-    const bw = Math.max(80, x1 - x0) + 110, bh = Math.max(80, y1 - y0) + 100;
-    mira.k = Math.max(0.25, Math.min(2.2, Math.min(W / bw, H / bh)));
-    mira.x = (x0 + x1) / 2; mira.y = (y0 + y1) / 2;
+    const bw = Math.max(80, x1 - x0) + margine, bh = Math.max(80, y1 - y0) + margine * 0.9;
+    return { k: Math.max(0.05, Math.min(2.2, Math.min(W / bw, H / bh))), x: (x0 + x1) / 2, y: (y0 + y1) / 2 };
+  }
+
+  function adatta(subito) {
+    const tutti = inquadra(nodi, 260);
+    if (tutti) kTutto = tutti.k;
+    const v = inquadra(nodi.filter((n) => n.visT > 0), 260);
+    if (!v) return;
+    Object.assign(mira, v);
     if (subito) Object.assign(cam, mira);
   }
 
+  let kTutto = 1;     // l'ingrandimento che inquadra tutti i nodi, visibili o no
   const aSchermo = (x, y) => [(x - cam.x) * cam.k + W / 2, (y - cam.y) * cam.k + H / 2];
   const aMondo = (sx, sy) => [(sx - W / 2) / cam.k + cam.x, (sy - H / 2) / cam.k + cam.y];
 
@@ -2161,30 +2322,103 @@ function montaGrafo(host, m, opz) {
     if (!W || !H) return;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, W, H);
+    const k = cam.k;
+    const rel = k / kTutto;                                                      // 1 = tutto il grafo nella finestra
+    const aGruppi = Math.max(0, Math.min(1, (SOGLIA_GRUPPI - rel) / 0.9));  // pieno fino a 1.3: nome grande e nastri dei ponti
+    const aTitoli = Math.max(0, Math.min(1, (rel - SOGLIA_TITOLI) / 0.5));  // spento a 1.5, pieno da 2
     const vicSel = sel ? vicini.get(sel) : null;
     const fuoco = hov;                       // si sfuma il resto solo sotto il puntatore
     const evidenza = hov || (sel && per.get(sel)); // i legami del nodo scelto si accendono sempre
     const vicFuoco = fuoco ? vicini.get(fuoco.id) : null;
     const fioco = (n) => fuoco ? (n === fuoco || vicFuoco.has(n.id) ? 1 : 0.3) : 1;
 
+    // ---- i gruppi: chi c'e' dentro, dove stanno, come si legano
+    const info = [];
+    for (const g of gruppi) {
+      const dentro = nodi.filter((n) => n.gruppo === g.chiave && n.vis > 0.03);
+      if (!dentro.length) continue;
+      const vis = Math.max(...dentro.map((n) => n.vis));
+      info.push({ g, dentro, vis, cx: dentro.reduce((s, n) => s + n.x, 0) / dentro.length,
+                  cy: dentro.reduce((s, n) => s + n.y, 0) / dentro.length, col: coloreDi(g.chiave) });
+    }
+    const di = new Map(info.map((x) => [x.g.chiave, x]));
+
     ctx.save();
-    ctx.translate(W / 2, H / 2); ctx.scale(cam.k, cam.k); ctx.translate(-cam.x, -cam.y);
-    ctx.lineCap = 'round';
+    ctx.translate(W / 2, H / 2); ctx.scale(k, k); ctx.translate(-cam.x, -cam.y);
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    // le regioni: l'involucro dei nodi del gruppo, riempito e bordato con lo stesso colore
+    // trasparente (dentro il bordo si sovrappongono: un alone piu' chiaro fuori, piu' pieno dentro)
+    const pad = Math.max(30, 16 / k);
+    for (const x of info) {
+      const pts = involucro(x.dentro.map((n) => [n.x, n.y]));
+      ctx.beginPath();
+      if (pts.length === 1) ctx.arc(pts[0][0], pts[0][1], pad, 0, Math.PI * 2);
+      else { ctx.moveTo(pts[0][0], pts[0][1]); for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]); ctx.closePath(); }
+      ctx.globalAlpha = x.vis * 0.1; ctx.fillStyle = x.col; ctx.fill();
+      ctx.globalAlpha = x.vis * 0.07; ctx.strokeStyle = x.col; ctx.lineWidth = pad * 2; ctx.stroke();
+    }
+    // i ponti da lontano: un nastro fra i centri dei due gruppi, piu' largo con piu' legami
+    if (aGruppi > 0.02) {
+      const fatti = new Set();
+      for (const x of info) for (const l of x.g.legami || []) {
+        const y = di.get(l.gruppo);
+        const chiave = [x.g.chiave, l.gruppo].sort().join('|');
+        if (!y || fatti.has(chiave)) continue;
+        fatti.add(chiave);
+        const grad = ctx.createLinearGradient(x.cx, x.cy, y.cx, y.cy);
+        grad.addColorStop(0, rgba(x.col, 0.9)); grad.addColorStop(1, rgba(y.col, 0.9));
+        ctx.globalAlpha = aGruppi * Math.min(x.vis, y.vis) * 0.28; ctx.strokeStyle = grad;
+        ctx.lineWidth = (2 + Math.min(l.n, 6) * 0.8) / Math.min(k, 1);
+        ctx.beginPath(); ctx.moveTo(x.cx, x.cy); ctx.lineTo(y.cx, y.cy); ctx.stroke();
+      }
+    }
+    // i legami: dentro un gruppo discreti, fra gruppi (i ponti) piu' marcati e coi colori dei due
     for (const e of archi) {
       const v = Math.min(e.a.vis, e.b.vis);
       if (v < 0.03) continue;
       const evid = evidenza && (e.a === evidenza || e.b === evidenza);
-      ctx.globalAlpha = v * (evid ? 0.95 : (fuoco ? 0.12 : 0.5));
-      ctx.strokeStyle = evid ? colori.accento : colori.linea;
-      ctx.lineWidth = (evid ? 2 : 1.2) / cam.k * Math.min(cam.k, 1.4);
+      if (e.ponte && !evid) {
+        const grad = ctx.createLinearGradient(e.a.x, e.a.y, e.b.x, e.b.y);
+        grad.addColorStop(0, rgba(colore(e.a), 0.95)); grad.addColorStop(1, rgba(colore(e.b), 0.95));
+        ctx.globalAlpha = v * (fuoco ? 0.2 : 0.55); ctx.strokeStyle = grad;
+        ctx.lineWidth = 1.8 / Math.min(k, 1.4);
+      } else {
+        ctx.globalAlpha = v * (evid ? 0.95 : (fuoco ? 0.12 : 0.5));
+        ctx.strokeStyle = evid ? colori.accento : colori.linea;
+        ctx.lineWidth = (evid ? 2 : 1.2) / cam.k * Math.min(cam.k, 1.4);
+      }
       ctx.beginPath(); ctx.moveTo(e.a.x, e.a.y); ctx.lineTo(e.b.x, e.b.y); ctx.stroke();
     }
+    ctx.restore();
+
+    // ---- il nome di ogni gruppo, sopra la sua isola: grande da lontano (e' la prima cosa
+    // che si legge), piccolo da vicino, quando contano i titoli dei nodi. Sta sopra
+    // l'involucro, mai in mezzo ai nodi.
+    ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic'; ctx.lineJoin = 'round';
+    const intestazioni = [];
+    for (const x of info) {
+      const alto = Math.min(...x.dentro.map((n) => n.y - n.r));
+      const [sx, sy] = aSchermo(x.cx, alto);
+      if (sx < -200 || sx > W + 200 || sy < -60 || sy > H + 120) continue;
+      const grande = Math.round(Math.max(16, Math.min(34, 12 + Math.sqrt(x.g.memorie) * 5)));
+      const px = Math.round(13 + (grande - 13) * aGruppi);
+      ctx.font = `700 ${px}px ${colori.font}`;
+      const nome = nomeGruppo(x.g.chiave, x.g.nome);
+      const y = sy - pad * k - 8;
+      ctx.globalAlpha = x.vis * 0.95;
+      ctx.lineWidth = 6; ctx.strokeStyle = colori.bg; ctx.strokeText(nome, sx, y);
+      ctx.fillStyle = x.col; ctx.fillText(nome, sx, y);
+      intestazioni.push([sx - ctx.measureText(nome).width / 2 - 6, y - px, sx + ctx.measureText(nome).width / 2 + 6, y + 6]);
+    }
+
+    ctx.save();
+    ctx.translate(W / 2, H / 2); ctx.scale(k, k); ctx.translate(-cam.x, -cam.y);
     for (const n of nodi) {
       if (n.vis < 0.03) continue;
       ctx.globalAlpha = n.vis * fioco(n) * (n.spento ? 0.2 : 1);
       ctx.beginPath(); ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2);
-      if (n.n.richiamabile) { ctx.fillStyle = colore(n.tipo); ctx.fill(); }
-      else { ctx.fillStyle = colori.bg; ctx.fill(); ctx.lineWidth = 2; ctx.strokeStyle = colore(n.tipo); ctx.stroke(); }
+      if (n.n.richiamabile) { ctx.fillStyle = colore(n); ctx.fill(); }
+      else { ctx.fillStyle = colori.bg; ctx.fill(); ctx.lineWidth = 2; ctx.strokeStyle = colore(n); ctx.stroke(); }
       if (n.id === sel || n === hov) {
         ctx.beginPath(); ctx.arc(n.x, n.y, n.r + 4, 0, Math.PI * 2);
         ctx.lineWidth = 2; ctx.strokeStyle = n.id === sel ? colori.accento : colori.testo2; ctx.stroke();
@@ -2192,9 +2426,9 @@ function montaGrafo(host, m, opz) {
     }
     ctx.restore();
 
-    // le etichette in pixel di schermo, per restare nitide: prima chi conta
-    // (scelto, sotto il puntatore, vicino), poi per numero di legami; un nome
-    // che finirebbe sopra un altro non si scrive
+    // i titoli in pixel di schermo, per restare nitidi: prima chi conta (scelto, sotto il
+    // puntatore, vicino), poi per numero di legami; un titolo che finirebbe sopra un altro
+    // non si scrive. Da lontano non si scrive nessuno, tranne quelli di chi e' in evidenza.
     const candidati = nodi.filter((n) => n.vis > 0.5 && !n.spento).map((n) => {
       let prio = n.grado;
       if (n.id === sel) prio = 1000;
@@ -2202,7 +2436,7 @@ function montaGrafo(host, m, opz) {
       else if ((vicSel && vicSel.has(n.id)) || (hov && vicini.get(hov.id).has(n.id))) prio = 500 + n.grado;
       return { n, prio };
     }).sort((p, q) => q.prio - p.prio);
-    const presi = [];
+    const presi = intestazioni.slice();
     ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
     ctx.font = `12px ${colori.font}`;
     let scritte = 0;
@@ -2211,46 +2445,23 @@ function montaGrafo(host, m, opz) {
       // solo il nodo scelto o sotto il puntatore si scrive comunque: i suoi
       // vicini (a decine, in un grafo fitto) cedono il posto se si sovrapporrebbero
       const forte = prio >= 900;
-      if (!importante && cam.k < 0.55 && n.grado < 3) continue;
-      if (scritte > 80) break;
+      const a = importante ? 1 : aTitoli;
+      if (a < 0.05) continue;
+      if (scritte > 90) break;
       const [sx, sy] = aSchermo(n.x, n.y);
       if (sx < -40 || sx > W + 40 || sy < -20 || sy > H + 20) continue;
-      const nome = n.id.length > 26 ? n.id.slice(0, 25) + '…' : n.id;
-      // il riquadro e' piu' largo e alto della scritta: due nomi non si toccano
+      const titolo = n.n.titolo || n.id;
+      const nome = titolo.length > 30 ? titolo.slice(0, 29) + '…' : titolo;
+      // il riquadro e' piu' largo e alto della scritta: due titoli non si toccano
       const w = ctx.measureText(nome).width + 14, y = sy + n.r * cam.k + 15;
       const box = [sx - w / 2, y - 14, sx + w / 2, y + 6];
       if (!forte && presi.some((b) => box[0] < b[2] && box[2] > b[0] && box[1] < b[3] && box[3] > b[1])) continue;
       presi.push(box); scritte++;
-      ctx.globalAlpha = n.vis * fioco(n);
+      ctx.globalAlpha = n.vis * fioco(n) * a;
       ctx.lineWidth = 4; ctx.strokeStyle = colori.bg; ctx.lineJoin = 'round';
       ctx.strokeText(nome, sx, y);
       ctx.fillStyle = importante ? colori.testo : colori.testo2;
       ctx.fillText(nome, sx, y);
-    }
-    // nomi dei tipi sopra ogni nube: dicono cosa raggruppa. Si scrivono per ultimi,
-    // con l'alone del fondo, cosi' nessun nome di nodo li copre
-    if (tipi.length > 1) {
-      ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic'; ctx.lineJoin = 'round';
-      ctx.font = `700 11px ${colori.font}`;
-      tipi.forEach((t) => {
-        const gr = nodi.filter((n) => n.tipo === t && n.vis > 0.5);
-        if (!gr.length) return;
-        let cx = 0, alto = Infinity;
-        gr.forEach((n) => { cx += n.x; alto = Math.min(alto, n.y - n.r); });
-        cx /= gr.length;
-        const [sx, sy] = aSchermo(cx, alto);
-        const et = cap(T((TIPI_MEM.find(([k]) => k === t) || [0, 'memoria'])[1])).toUpperCase().split('').join('\u200a');
-        // se finirebbe sopra il nome di un nodo, sale finche' trova posto
-        const largo = ctx.measureText(et).width + 6;
-        let y = sy - 18;
-        for (let prova = 0; prova < 6; prova++) {
-          const box = [sx - largo / 2, y - 12, sx + largo / 2, y + 3];
-          if (!presi.some((p) => box[0] < p[2] && box[2] > p[0] && box[1] < p[3] && box[3] > p[1])) break;
-          y -= 14;
-        }
-        ctx.globalAlpha = 1; ctx.lineWidth = 5; ctx.strokeStyle = colori.bg; ctx.strokeText(et, sx, y);
-        ctx.fillStyle = colore(t); ctx.fillText(et, sx, y);
-      });
     }
     ctx.globalAlpha = 1;
   }
@@ -2287,8 +2498,9 @@ function montaGrafo(host, m, opz) {
   const suTema = () => { leggiColori(); disegna(); };
   window.addEventListener('plancia-tema', suTema);
 
-  // il primo disegno e' gia' assestato: si fa girare la fisica prima di mostrarla
-  const giri = ridotto ? 500 : 340;
+  // il primo disegno e' gia' assestato: con le posizioni del server bastano poche
+  // iterazioni per togliere le sovrapposizioni; senza, ne servono molte di piu'
+  const giri = conPosizioni ? (ridotto ? 120 : 70) : (ridotto ? 500 : 340);
   for (let i = 0; i < giri; i++) passo();
   alpha = ridotto ? 0.012 : 0.05;
 
@@ -2325,7 +2537,7 @@ function montaGrafo(host, m, opz) {
     if (punti.has(e.pointerId)) punti.set(e.pointerId, [sx, sy]);
     if (pinch && punti.size === 2) {
       const [p, q] = [...punti.values()];
-      const k = Math.max(0.15, Math.min(4, pinch.k * Math.hypot(p[0] - q[0], p[1] - q[1]) / pinch.d));
+      const k = Math.max(0.05, Math.min(4, pinch.k * Math.hypot(p[0] - q[0], p[1] - q[1]) / pinch.d));
       cam.k = mira.k = k; disegna(); return;
     }
     if (drag) {
@@ -2362,7 +2574,7 @@ function montaGrafo(host, m, opz) {
     e.preventDefault();
     const [sx, sy] = pos(e);
     const [wx, wy] = aMondo(sx, sy);
-    const k = Math.max(0.15, Math.min(4, cam.k * Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0018))));
+    const k = Math.max(0.05, Math.min(4, cam.k * Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0018))));
     cam.k = mira.k = k;
     cam.x = mira.x = wx - (sx - W / 2) / k;
     cam.y = mira.y = wy - (sy - H / 2) / k;
@@ -2383,8 +2595,16 @@ function montaGrafo(host, m, opz) {
     zoom(dir) {
       auto = false;
       if (dir === 0) { auto = true; adatta(false); sveglia(); return; }
-      const k = Math.max(0.15, Math.min(4, cam.k * (dir > 0 ? 1.3 : 1 / 1.3)));
+      const k = Math.max(0.05, Math.min(4, cam.k * (dir > 0 ? 1.3 : 1 / 1.3)));
       mira.k = k; mira.x = cam.x; mira.y = cam.y; sveglia();
+    },
+    // dalla legenda: la camera va sul gruppo e lo inquadra, coi titoli leggibili
+    focalizza(chiave) {
+      const v = inquadra(nodi.filter((n) => n.gruppo === chiave && n.visT > 0), 220);
+      if (!v) return;
+      auto = false;
+      Object.assign(mira, v);
+      sveglia();
     },
     // per le prove: dove sta un nodo sullo schermo, quanto e' ingrandito il disegno
     posizione(id) { const n = per.get(id); return n ? aSchermo(n.x, n.y) : null; },
@@ -2396,7 +2616,7 @@ function montaGrafo(host, m, opz) {
       window.removeEventListener('plancia-tema', suTema);
       cv.remove();
     },
-    nodi,
+    nodi, gruppi,
   };
   sel = opz.sel && per.has(opz.sel) ? opz.sel : null;
   if (opz.acceso) api_.lente(opz.acceso);
@@ -2693,10 +2913,10 @@ document.addEventListener('click', async (ev) => {
         const b = $('#prova-mem'); b.hidden = !b.hidden;
         if (!b.hidden) $('#mfrase').focus();
       } else if (name === 'mem-lente') {
-        const f = state.filters.memoria || (state.filters.memoria = { lente: '', modo: 'elenco', livello: 0 });
+        const f = state.filters.memoria || (state.filters.memoria = { lente: '', modo: MODO_MEMORIA, livello: 0 });
         f.lente = act.dataset.value; await route();
       } else if (name === 'mem-grafo') {
-        const f = state.filters.memoria || (state.filters.memoria = { lente: '', modo: 'elenco', livello: 0 });
+        const f = state.filters.memoria || (state.filters.memoria = { lente: '', modo: MODO_MEMORIA, livello: 0 });
         f.modo = 'grafo'; f.livello = 1; f.lente = ''; state.sel.memoria = act.dataset.nome; await route();
       } else if (name === 'grafo-livello') {
         const f = state.filters.memoria; f.livello = +act.dataset.v;
@@ -2704,6 +2924,8 @@ document.addEventListener('click', async (ev) => {
         if (state.grafo) state.grafo.setLivello(f.livello);
       } else if (name === 'grafo-zoom') {
         if (state.grafo) state.grafo.zoom(+act.dataset.v);
+      } else if (name === 'grafo-gruppo') {
+        if (state.grafo) state.grafo.focalizza(act.dataset.g);
       } else if (name === 'task-cycle') {
         const next = { aperto: 'in corso', 'in corso': 'fatto', bloccato: 'in corso' }[act.dataset.status] || 'aperto';
         await api('/api/tasks/' + id, { method: 'PATCH', body: { status: next } });
@@ -2838,9 +3060,19 @@ document.addEventListener('click', async (ev) => {
             progetto: act.dataset.progetto });
           return;
         }
+        const etichetta = act.textContent;
         act.disabled = true; act.textContent = '…';
-        const r = await api('/api/jarvis', { method: 'POST',
-          body: { testo: act.dataset.frase || 'fallo', lang: state.recap?.lang || '', voce: false } });
+        const lingua = state.recap?.lang || '';
+        let r = await api('/api/jarvis', { method: 'POST',
+          body: { testo: act.dataset.frase || 'fallo', lang: lingua, voce: false } });
+        if (r.proposta) {
+          // Niente parte da una frase: Jarvis ha preparato una scheda, e il lavoro
+          // parte solo dal suo Conferma. Annulla (o Esc) la butta.
+          const fatto = await schedaJarvis(r.proposta, lingua);
+          act.disabled = false; act.textContent = etichetta;
+          if (!fatto) return;
+          r = fatto;
+        }
         toast(r.risposta || T('riprendi_avviato'));
         // Consigliata dal critico (costa una riga): "vai" torna un'azione di
         // navigazione che finora restava ignorata - il bottone "Apri"

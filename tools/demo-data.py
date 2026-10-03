@@ -260,17 +260,401 @@ TURNI = [
      "comparison was measuring the duplicate rate as much as the embeddings."),
 ]
 
-MEMORIA = [
-    ("lumen-architecture", "How Lumen is put together and why the index is a single file",
-     "project", "lumen"),
-    ("apiary-budgets", "Budget ceilings are per project, enforced at the proxy, not the client",
-     "project", "apiary"),
-    ("writing-style", "Short sentences. Concrete nouns. No em dash.", "feedback", None),
-    ("thesis-scope", "Chapter three covers retrieval failure, not generation",
-     "project", "field-notes"),
-    ("machine-setup", "Where the models live and why the cache is on the external drive",
-     "reference", None),
-]
+# La memoria dimostrativa: 74 schede in inglese, dei quattro tipi di sempre, divise fra
+# sette progetti demo, una cartella di appunti di casa e le due memorie globali (chi
+# sei, preferenze). Ogni scheda ha un titolo umano (quello che l'indice MEMORY.md della
+# sua cartella dichiara; qualcuna ne e' senza, e il titolo si ricava dalla descrizione),
+# legami fitti dentro un progetto e qualche ponte fra progetti, alcuni orfani. Tutto
+# inventato: e' quello che la Mappa e il grafo mostrano negli screenshot.
+#
+# Per sezione: (nome, tipo, titolo | None, descrizione, dettaglio). Senza dettaglio la
+# scheda resta corta, e il richiamo la scarta (pallino vuoto nel grafo).
+_SEZIONI = {
+    "lumen": [
+        ("lumen-architecture", "project", "How Lumen is put together",
+         "Pages are parsed in parallel and rendered from one template; the search index is written last.",
+         "Nothing outside the output folder is ever touched. A failed page is reported at the end "
+         "instead of stopping the build, so one bad file never hides the other four hundred."),
+        ("lumen-index-format", "project", "Why the search index is a single file",
+         "The index is one file, written atomically and rebuilt only for the pages that changed.",
+         "Terms are sorted and prefix-compressed, postings are delta-encoded. The file is written next "
+         "to its final path and renamed, so a reader never sees half an index."),
+        ("lumen-release-checklist", "project", "The release ritual, in order",
+         "Tag, build the three targets, checksum, then write the changelog.",
+         "The changelog comes last because it quotes the checksums. The tag is created from the commit "
+         "that CI built, never from the working tree."),
+        ("lumen-markdown-quirks", "project", "Markdown edge cases that bit us",
+         "Front matter is optional, but tables need a header row or they render as plain text.",
+         "Nested lists use four spaces. A fenced block inside a list item must be indented to the item's "
+         "text, otherwise the renderer closes the list and the code escapes."),
+        ("lumen-anchor-collisions", "project", "Repeated headings and anchor ids",
+         "Two headings with the same text used to get the same anchor, and links jumped to the first one.",
+         "The fix numbers the later ones, but a link written against the old output still lands on the "
+         "first heading. A redirect table would solve it and has not been worth building."),
+        ("lumen-incremental-build", "project", None,
+         "Rebuild only the pages whose inputs changed, and say how many were skipped.",
+         "The key is a hash of the page source, the template and the tool version. A template change "
+         "invalidates everything, which is the correct behaviour and surprises people exactly once."),
+        ("lumen-theming", "project", "Themes are folders, not plugins",
+         "A theme is a folder with a template, a stylesheet and optional partials.",
+         "There is no plugin API on purpose. Anything a theme cannot express is a feature request for "
+         "the core, not a hook."),
+        ("lumen-no-runtime-deps", "project", "No runtime dependencies, and why",
+         "The binary has to run on a machine with nothing installed.", ""),
+        ("lumen-bench-numbers", "reference", "Build times on the reference corpus",
+         "Four thousand pages build in 2.1 seconds cold and 0.3 seconds when one page changed.",
+         "Measured on the small always-on box, release build, warm disk cache. The corpus is the "
+         "documentation of three other projects, concatenated, so it has realistic link density."),
+        ("style-guide-docs", "reference", "Docs style: headings, samples, prompts",
+         "Headings are sentence case, and every code sample can be pasted and run.",
+         "A sample that cannot run is marked as a sketch. Commands are shown without a prompt character "
+         "so they copy cleanly, and output is a separate block."),
+    ],
+    "apiary": [
+        ("apiary-budgets", "project", "Budgets are enforced at the proxy",
+         "A request over budget gets a 429 with the remaining amount in a header.",
+         "Budgets reset at midnight UTC. The counters live in memory and are written to disk every "
+         "minute, so a crash can lose at most a minute of spend."),
+        ("apiary-providers", "project", "Three providers behind one route table",
+         "Every route names an ordered list of providers; the first healthy one answers.",
+         "Latency is recorded but never used for routing, because routing on it made the choice flap "
+         "between two providers every few seconds."),
+        ("apiary-failover", "project", "Failover happens by error class",
+         "Timeouts and 5xx move to the next provider; a 4xx never does.",
+         "A 4xx means the request was understood and refused, so sending it elsewhere only repeats the "
+         "refusal and doubles the bill."),
+        ("apiary-key-rotation", "project", "Provider keys rotate on the first",
+         "Keys are replaced on the first of the month and read at start.",
+         "A rotation needs a restart, which takes two seconds. The old key stays valid for a day so "
+         "requests already in flight finish normally."),
+        ("apiary-logging", "project", "What the request log keeps",
+         "Logs keep the route and the token counts, never the prompt body.",
+         "Files rotate daily and are kept for two weeks. Anything that could identify a person is "
+         "dropped before the line is written, not after."),
+        ("apiary-rate-limits", "project", "Rate limits are per project",
+         "Each project has its own requests-per-minute ceiling, separate from its budget.",
+         "The two limits answer different questions: budget is about money, the rate limit is about "
+         "not starving the other projects that share a provider key."),
+        ("apiary-streaming", "project", None,
+         "Streamed responses pass through the proxy chunk by chunk and are counted at the end.",
+         "Counting at the end means a connection dropped halfway is billed for what was delivered. "
+         "The counter is written before the last chunk, not after it."),
+        ("apiary-incident-0412", "project", "The counter that reset twice",
+         "A restart during the midnight reset gave every project a second full budget.",
+         "The reset now writes the new window start before it clears the counters, and a restart reads "
+         "that marker. The incident cost eleven dollars and one evening."),
+        ("apiary-vault-layout", "reference", "Where the secrets live",
+         "Secrets sit under one prefix per project, and read access is per project.",
+         "The proxy can read its own prefix and nothing else. Adding a project means adding a prefix "
+         "and a policy, in that order."),
+        ("apiary-price-table", "reference", "Price per token, by provider",
+         "The table the budget counter multiplies by; it is edited by hand when a provider changes it.", ""),
+    ],
+    "field-notes": [
+        ("thesis-scope", "project", "What chapter three covers",
+         "Chapter three is about retrieval failure, not generation.",
+         "The claim is that most failures are decided before the model sees a token: in the query, the "
+         "chunking and the index. Generation quality is a separate chapter with its own evidence."),
+        ("thesis-replication-plan", "project", "Replicate two results before proposing anything",
+         "The first replication is done and matches within noise.",
+         "The second needs a dataset that has to be requested, and the request goes out this week. "
+         "Nothing new is proposed until both match."),
+        ("thesis-reading-list", "project", "Forty papers, twelve read in full",
+         "Each paper gets a note with the setup, the metric and one sentence on what would break it.",
+         "Notes live next to the PDF. The rest of the list is skimmed for the method section only, "
+         "and promoted to a full read when a note keeps being cited."),
+        ("thesis-committee", "project", "Committee dates and what they expect",
+         "The next committee meeting is the first week of December.",
+         "They want a one-page status and the plan for chapter four, not a draft of chapter three. "
+         "Chapters one and two are already with the supervisor."),
+        ("thesis-ablation-small", "project", "The small-split ablation",
+         "On the small split the second baseline loses 31 points; on the large split it stays flat.",
+         "That rules out sampling noise and points at the tokeniser. The full grid is in the results "
+         "folder next to the notebook that produced it."),
+        ("thesis-chunking-notes", "project", "Chunking is where recall is lost",
+         "Most missed documents were split in the middle of the sentence that answered the question.",
+         "Overlapping chunks recover about a third of them; splitting on headings recovers more, where "
+         "headings exist."),
+        ("thesis-writing-schedule", "project", "Writing schedule through December",
+         "One section a week, figures last, and no new experiments after the fifteenth.", ""),
+        ("thesis-dataset-request", "project", "Dataset request is pending",
+         "The form went in on a Tuesday; the answer takes up to three weeks.", ""),
+        ("glossary-retrieval", "reference", "Recall at k, MRR and nDCG, exactly",
+         "The three metrics as used in chapter three, with the cutoff written out for each.",
+         "Each metric is defined once, so a number quoted in the text can be recomputed from the "
+         "tables. Ties are broken by document id, which is stable across runs."),
+    ],
+    "harbour": [
+        ("harbour-config-format", "project", "One TOML file per environment",
+         "Environments differ by nine lines, and those nine lines are all that staging overrides.",
+         "A config that contains a literal secret fails validation. The previous setup spread the same "
+         "nine lines over three files of two hundred, which is why nobody could say what staging did."),
+        ("harbour-rollback", "project", "Rollback is a redeploy of the last manifest",
+         "A rollback deploys the manifest before the current one; the git history is left alone.",
+         "Every deploy stores its manifest, so the log shows both events and the history stays honest. "
+         "Reverting commits would hide the fact that the bad version ever ran."),
+        ("harbour-secrets", "project", "Secrets are references, never values",
+         "A reference looks like vault:project/name and is resolved at deploy time.",
+         "The resolver runs on the release machine, which is the only machine that can read the vault. "
+         "Developers never see a resolved value, including in logs."),
+        ("harbour-health-checks", "project", "Health checks before traffic moves",
+         "Traffic shifts only after three consecutive passing checks, five seconds apart.",
+         "A check that passes once and fails the next time is the common failure, which is why one "
+         "pass is not enough."),
+        ("harbour-manifest-store", "project", None,
+         "Deploy manifests are stored by hash, with the deploy time and the person who ran it.",
+         "The store is append-only. Garbage collection keeps the last fifty per environment and "
+         "anything referenced by a rollback in the last month."),
+        ("harbour-staging-diff", "project", "What staging really differs in",
+         "Staging uses a smaller instance, a different hostname and the same database schema.", ""),
+        ("harbour-drain-timeouts", "project", "Connection drain timeouts",
+         "Thirty seconds is enough for everything except the export job.", ""),
+        ("harbour-ci-machines", "reference", "Two self-hosted build machines",
+         "The second machine is only for releases and has the signing key and almost no network.",
+         "The first machine runs everything else and can be wiped freely. A job that needs the second "
+         "one has to say so in its manifest."),
+    ],
+    "atlas": [
+        ("atlas-corpus", "project", "Support tickets, anonymised",
+         "About forty thousand tickets from 2023 to 2025, with names and order numbers replaced.",
+         "Anonymisation runs before anything is embedded. The raw export is deleted after the "
+         "anonymised copy has been verified by hand on a sample of two hundred."),
+        ("atlas-embedding-models", "project", "Three embedding models compared",
+         "Recall at 10 is within two points across the three, and the smallest is four times faster.",
+         "The decision waits for the evaluation on long tickets, where the gap may be larger."),
+        ("atlas-eval-protocol", "project", "The fixed 300-query evaluation",
+         "The query set never changes between runs, so numbers stay comparable.",
+         "Judgements are made in two passes, and disagreements go to a third. Each judgement is stored "
+         "with the model name and the date."),
+        ("atlas-duplicates", "project", "Duplicate tickets skew every score",
+         "Two hundred and fourteen of two thousand documents were duplicates, mostly autoresponders.",
+         "Dropping them moved every model's score, so the first comparison measured the duplicate rate "
+         "as much as the embeddings."),
+        ("atlas-tokeniser-bug", "project", "The tokeniser explains the collapse",
+         "The second model lost accuracy because the tokeniser split ticket ids into single digits.",
+         "Normalising ids before tokenising brought it back within two points of the others."),
+        ("atlas-long-tickets", "project", "Long tickets need their own evaluation",
+         "Past 512 tokens every model truncates, and truncation hides the part with the answer.",
+         "A separate query set of long tickets is planned; until then the main numbers say nothing "
+         "about them."),
+        ("atlas-judging-rubric", "reference", "The rubric for two-pass judging",
+         "A result is relevant if it answers the question without needing another ticket.",
+         "Partial answers count as not relevant in the first pass and are re-judged in the second, "
+         "which is where most of the disagreements end up."),
+        ("atlas-dimension-sweep", "project", "Embedding dimension sweep",
+         "Halving the dimension costs one point of recall.", ""),
+    ],
+    "site": [
+        ("site-archive-page", "project", "The archive page is the missing piece",
+         "Everything else is rebuilt; the archive page needs tags before it can exist.",
+         "The design is a single list grouped by year, with tags as small labels. It is built from the "
+         "same data file as the landing page."),
+        ("site-tags", "project", "Tags come before the archive",
+         "Posts have no tags yet; adding them means touching every front matter block.",
+         "A script can propose tags from the headings, but they have to be reviewed by hand or the "
+         "archive fills with near-duplicates."),
+        ("site-feed-format", "project", "The feed and the one reader that breaks it",
+         "The feed validates, but one popular reader shows the full text twice.",
+         "The cause is a summary and a content element with identical text. Dropping the summary "
+         "fixes that reader and loses nothing in the others."),
+        ("site-writing-queue", "project", "Posts waiting to be finished",
+         "Four drafts: the retrieval post, the rollback post and two short notes.", ""),
+        ("site-image-pipeline", "project", "Images are resized at build time",
+         "Originals live outside the repository and are resized into three widths during the build.",
+         "The build fails if an original is missing, which is deliberate: a broken image is worse than "
+         "a failed deploy."),
+        ("site-hosting", "reference", "One small host behind a CDN",
+         "Static files only; the host serves nothing dynamic and exports go to object storage.",
+         "DNS changes are made by hand and written in the log, with the old value, before they are made."),
+    ],
+    "casa": [
+        ("machine-setup", "reference", "Where the models live",
+         "Models sit on the external drive, with a cache of the two in use on the internal one.",
+         "They are large and rarely change. The paths are set in one shell file, so moving them is a "
+         "one-line edit."),
+        ("backup-routine", "reference", "Nightly snapshot, weekly copy",
+         "The projects folder is snapshotted every night and copied to the external drive every week.",
+         "Snapshots are kept for thirty days. A restore is tested on the first of the month, on a "
+         "scratch folder, and the result goes in the log."),
+        ("editor-setup", "reference", None,
+         "Editor settings live in the dotfiles repository; formatters run on save.", ""),
+        ("release-calendar", "reference", "When things ship",
+         "Lumen ships on the first Tuesday of the month and Apiary whenever a provider changes.",
+         "Everything else ships when it is ready. Nothing goes out on a Friday or the day before a trip."),
+        ("network-notes", "reference", "The always-on box and how to reach it",
+         "It has no display and is reached over ssh; builds and the proxy run there.",
+         "Anything that needs a GPU runs on the laptop. Long jobs are started with a log file and a "
+         "name, so they can be found again."),
+        ("shell-aliases", "reference", "Shell shortcuts worth remembering",
+         "Eleven aliases, of which three are used daily: status, branch cleanup and the log tail.", ""),
+    ],
+    "chi-sei": [
+        ("user-role", "user", "Who I am and what I maintain",
+         "A solo maintainer of a handful of small tools, writing Rust and Python every day.",
+         "Mostly works alone and reviews their own diffs before merging. An explanation that starts "
+         "from the code that exists lands better than one that starts from theory."),
+        ("user-schedule", "user", "Mornings for deep work",
+         "Deep work in the morning; meetings and mail after two.",
+         "Anything that needs a decision is queued for the morning summary instead of interrupting the "
+         "afternoon. Weekends are for the thesis, not for the tools."),
+        ("user-thesis-status", "user", "Where the thesis stands",
+         "Third year of a part-time PhD on retrieval failure modes.",
+         "Chapter three is the current focus. The next committee meeting is in December, and chapters "
+         "one and two are with the supervisor."),
+        ("user-hardware", "user", "A laptop and a small always-on box",
+         "Laptop for daily work, a small always-on box for builds and the proxy.",
+         "The box has no display. Anything that needs a GPU runs on the laptop."),
+        ("user-reading-diffs", "user", "How a diff gets read",
+         "Reads the diff top to bottom, tests first; a diff without tests is read twice.",
+         "Prefers one commit per idea so that each can be read on its own and reverted on its own."),
+        ("user-languages", "user", None,
+         "Fluent in English and Italian; writes documentation in English.", ""),
+    ],
+    "preferenze": [
+        ("writing-style", "feedback", "Short sentences, no em dash",
+         "Short sentences, concrete nouns, and no em dash anywhere.",
+         "Applies to docs, commit messages and replies alike. If a sentence needs a semicolon it is "
+         "probably two sentences. Numbers go in as digits, with the unit."),
+        ("commit-messages", "feedback", "Commit message conventions",
+         "Imperative mood, a subject under sixty characters, and a body only when the why is not obvious.",
+         "The subject says what the change does and the body says why it was needed. No ticket numbers "
+         "in the subject, no trailing period."),
+        ("no-surprise-refactors", "feedback", "Do not touch what was not asked",
+         "A diff contains the requested change and nothing else.",
+         "If a nearby cleanup looks worth doing, mention it at the end instead of doing it. Renames and "
+         "reformatting are the usual offenders."),
+        ("test-first-on-bugs", "feedback", "Bugs start with a failing test",
+         "For a bug, write the failing test first and show it failing.",
+         "Then fix it and show the same test passing. A fix without a test that failed before the "
+         "change is treated as a guess."),
+        ("ask-before-deleting", "feedback", "Ask before deleting anything",
+         "Never delete data or branches without asking, even in scratch folders.",
+         "Moving to a trash folder is fine. Force pushes, dropped tables and removed directories always "
+         "need a yes first, in the same conversation."),
+        ("small-prs", "feedback", "Keep pull requests small",
+         "Under three hundred changed lines; split anything larger.",
+         "A large change goes in as a series where each step builds and passes on its own. The first "
+         "step is usually the refactor that makes the real change small."),
+        ("plain-status-updates", "feedback", "Status updates in two sentences",
+         "Say what changed and what is next, in two sentences.",
+         "No adjectives about how it went and no apologies for how long it took. If something is "
+         "blocked, the blocker goes first."),
+        ("dependency-policy", "feedback", "A new dependency needs a sentence",
+         "Prefer the standard library; a new dependency needs one sentence of justification.",
+         "The sentence names what it does that is not worth writing, who maintains it, and how many "
+         "transitive packages it pulls in."),
+        ("explain-tradeoffs", "feedback", "Name both options and the cost of each",
+         "When two options are reasonable, name both and the cost of each, then pick one.",
+         "The pick comes with the condition under which the other option would win, so the decision can "
+         "be revisited without redoing the analysis."),
+        ("dates-absolute", "feedback", None,
+         "Write absolute dates in notes and tasks, never 'next Friday'.", ""),
+        ("no-emoji", "feedback", None,
+         "No emoji in code, commit messages or docs.", ""),
+    ],
+}
+
+# Chi rimanda a chi: i `[[nome]]` che una scheda scrive. Ogni legame e' scritto una volta
+# sola (dal lato piu' vecchio): il grafo li tratta come archi non orientati. Le schede che
+# non compaiono in nessuna lista sono gli orfani della demo (user-languages, no-emoji,
+# dates-absolute, harbour-drain-timeouts).
+_DENTRO = {
+    # dentro un progetto: legami fitti, con una scheda perno
+    "lumen-architecture": ["lumen-index-format", "lumen-markdown-quirks", "lumen-incremental-build",
+                           "lumen-theming", "lumen-no-runtime-deps"],
+    "lumen-index-format": ["lumen-incremental-build", "lumen-bench-numbers"],
+    "lumen-release-checklist": ["lumen-bench-numbers", "lumen-architecture"],
+    "lumen-markdown-quirks": ["lumen-anchor-collisions", "style-guide-docs"],
+    "lumen-anchor-collisions": ["lumen-incremental-build"],
+    "lumen-theming": ["style-guide-docs"],
+    "apiary-budgets": ["apiary-providers", "apiary-logging", "apiary-rate-limits", "apiary-incident-0412"],
+    "apiary-providers": ["apiary-failover", "apiary-key-rotation", "apiary-price-table"],
+    "apiary-failover": ["apiary-streaming"],
+    "apiary-key-rotation": ["apiary-vault-layout", "apiary-incident-0412"],
+    "apiary-logging": ["apiary-streaming", "apiary-rate-limits"],
+    "apiary-price-table": ["apiary-budgets"],
+    "thesis-scope": ["thesis-replication-plan", "thesis-chunking-notes", "thesis-ablation-small",
+                     "thesis-reading-list", "thesis-committee"],
+    "thesis-replication-plan": ["thesis-dataset-request", "thesis-writing-schedule"],
+    "thesis-reading-list": ["glossary-retrieval"],
+    "thesis-committee": ["thesis-writing-schedule"],
+    "thesis-ablation-small": ["thesis-chunking-notes", "glossary-retrieval"],
+    "harbour-config-format": ["harbour-rollback", "harbour-secrets", "harbour-staging-diff",
+                              "harbour-manifest-store"],
+    "harbour-rollback": ["harbour-manifest-store", "harbour-health-checks"],
+    "harbour-secrets": ["harbour-ci-machines"],
+    "harbour-health-checks": ["harbour-staging-diff"],
+    "harbour-ci-machines": ["harbour-manifest-store"],
+    "atlas-corpus": ["atlas-embedding-models", "atlas-eval-protocol", "atlas-duplicates"],
+    "atlas-embedding-models": ["atlas-tokeniser-bug", "atlas-long-tickets", "atlas-dimension-sweep"],
+    "atlas-eval-protocol": ["atlas-judging-rubric", "atlas-long-tickets"],
+    "atlas-duplicates": ["atlas-embedding-models"],
+    "atlas-tokeniser-bug": ["atlas-dimension-sweep"],
+    "site-archive-page": ["site-tags", "site-image-pipeline", "site-writing-queue"],
+    "site-tags": ["site-writing-queue", "site-feed-format"],
+    "site-feed-format": ["site-hosting"],
+    "site-image-pipeline": ["site-hosting"],
+    "machine-setup": ["backup-routine", "network-notes", "shell-aliases"],
+    "backup-routine": ["network-notes"],
+    "editor-setup": ["shell-aliases"],
+    "release-calendar": ["machine-setup"],
+    "user-role": ["user-schedule", "user-hardware", "user-reading-diffs", "user-thesis-status"],
+    "user-schedule": ["user-thesis-status"],
+    "user-hardware": ["user-reading-diffs"],
+    "writing-style": ["commit-messages", "plain-status-updates", "explain-tradeoffs"],
+    "commit-messages": ["small-prs", "no-surprise-refactors", "test-first-on-bugs"],
+    "no-surprise-refactors": ["small-prs", "dependency-policy"],
+    "test-first-on-bugs": ["ask-before-deleting"],
+    "plain-status-updates": ["explain-tradeoffs"],
+}
+
+# i ponti fra gruppi
+_PONTI = {
+    "user-role": ["user-schedule", "user-hardware", "user-reading-diffs", "user-thesis-status",
+                  "writing-style", "explain-tradeoffs", "lumen-architecture"],
+    "user-schedule": ["user-thesis-status", "plain-status-updates", "release-calendar"],
+    "user-thesis-status": ["thesis-scope", "thesis-committee"],
+    "user-hardware": ["user-reading-diffs", "machine-setup", "network-notes", "harbour-ci-machines"],
+    "small-prs": ["lumen-release-checklist"],
+    "dependency-policy": ["lumen-no-runtime-deps", "harbour-config-format"],
+    "test-first-on-bugs": ["ask-before-deleting", "lumen-markdown-quirks", "apiary-incident-0412"],
+    "ask-before-deleting": ["backup-routine", "harbour-rollback"],
+    "explain-tradeoffs": ["plain-status-updates", "atlas-embedding-models", "apiary-failover"],
+    "apiary-vault-layout": ["harbour-secrets"],
+    "atlas-eval-protocol": ["atlas-judging-rubric", "atlas-long-tickets", "glossary-retrieval"],
+    "thesis-ablation-small": ["thesis-chunking-notes", "glossary-retrieval", "atlas-tokeniser-bug"],
+    "site-hosting": ["backup-routine"],
+    "site-image-pipeline": ["site-hosting", "lumen-theming"],
+    "lumen-bench-numbers": ["machine-setup"],
+}
+
+LEGAMI_MEMORIA = {}
+for _parte in (_DENTRO, _PONTI):
+    for _da, _verso in _parte.items():
+        _lista = LEGAMI_MEMORIA.setdefault(_da, [])
+        _lista.extend(v for v in _verso if v not in _lista)
+
+# Dove sta ogni sezione: (progetto Plancia o None, cartella di memoria alla Claude Code).
+# Le due globali e gli appunti di casa non hanno un progetto: i gruppi vengono dal tipo
+# (chi sei, preferenze) e dalla cartella (gli appunti di casa).
+CARTELLE_MEMORIA = {
+    "lumen": ("lumen", "-opt-dev-lumen"),
+    "apiary": ("apiary", "-opt-dev-apiary"),
+    "field-notes": ("field-notes", "-opt-dev-field-notes"),
+    "harbour": ("harbour", "-opt-dev-harbour"),
+    "atlas": ("atlas", "-opt-dev-atlas"),
+    "site": ("site", "-opt-dev-site"),
+    "casa": (None, "-opt-dev-workshop"),
+    "chi-sei": (None, "-opt-me"),
+    "preferenze": (None, "-opt-me"),
+}
+
+# L'elenco piatto: (nome, tipo, progetto, titolo, descrizione, dettaglio, cartella).
+MEMORIA = [(nome, tipo, CARTELLE_MEMORIA[sezione][0], titolo, descrizione, dettaglio,
+            CARTELLE_MEMORIA[sezione][1])
+           for sezione, schede in _SEZIONI.items()
+           for nome, tipo, titolo, descrizione, dettaglio in schede]
+
 
 
 # La lavagna: quello che i tre agenti hanno aperto in questo momento.
@@ -539,13 +923,38 @@ def main():
             (stato, testo, "https://x.com/example/status/1" if stato == "pubblicato" else None,
              ids[key], fonte, ts if stato == "pubblicato" else None, ts, ts))
 
-    for nome, descrizione, tipo, key in MEMORIA:
+    # Un generatore a parte: aggiungere o togliere schede non deve spostare i numeri
+    # casuali di tutto quello che viene dopo nell'archivio.
+    caso_memoria = random.Random(41)
+    nomi_memoria = {m[0] for m in MEMORIA}
+    # I file veri, come li scrive Claude Code: una cartella per progetto con le sue
+    # schede e il suo indice MEMORY.md. Stanno nella casa dell'archivio finto (mai in
+    # quella del server vero) e il titolo delle schede si legge da li', come si fa
+    # con le memorie vere.
+    radice_memoria = store.config.DATA_DIR / "memoria-demo"
+    shutil.rmtree(radice_memoria, ignore_errors=True)
+    indici = {}
+    for nome, tipo, key, titolo, descrizione, dettaglio, cartella in MEMORIA:
+        vicini = [v for v in LEGAMI_MEMORIA.get(nome, []) if v in nomi_memoria and v != nome]
+        corpo = f"# {titolo or nome}\n\n{descrizione}\n"
+        if dettaglio:
+            corpo += f"\n{dettaglio}\n"
+        if vicini:
+            corpo += "\nSee also " + ", ".join(f"[[{v}]]" for v in vicini) + ".\n"
+        cartella_file = radice_memoria / cartella / "memory"
+        cartella_file.mkdir(parents=True, exist_ok=True)
+        file = cartella_file / f"{nome}.md"
+        file.write_text(f"---\nname: {nome}\ndescription: {descrizione}\nmetadata:\n  type: {tipo}\n---\n\n"
+                        + corpo, encoding="utf-8")
+        if titolo:
+            indici.setdefault(cartella_file, []).append(f"- [{titolo}]({nome}.md) - {descrizione}")
         conn.execute(
             "INSERT INTO knowledge(name, path, scope, description, type, body, links, "
             "project_id, updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
-            (nome, f"/demo/{nome}.md", "demo", descrizione, tipo,
-             f"# {nome}\n\n{descrizione}\n", "[]",
-             ids.get(key), quando(random.randint(1, 20))))
+            (nome, str(file), cartella, descrizione, tipo, corpo,
+             json.dumps(vicini), ids.get(key), quando(caso_memoria.randint(1, 20))))
+    for cartella_file, righe in indici.items():
+        (cartella_file / "MEMORY.md").write_text("\n".join(righe) + "\n", encoding="utf-8")
 
     for nome, kind, descrizione in [
             ("plancia", "skill", "Read and update Plancia from any session"),

@@ -247,8 +247,16 @@ Meglio perdere un richiamo che darne uno sbagliato.
 `#/memoria` nella dashboard. L'elenco delle memorie stava già in Archivio e
 diceva cosa c'è; questa vista dice com'è messo.
 
-La mappa disegna il grafo dei `[[link]]`, un colore per tipo e la dimensione per
-quanti legami ha. Il riempimento porta l'unica affermazione che conta: **pieno
+La mappa disegna il grafo dei `[[link]]` a isole. Ogni nota sta nel suo gruppo: il
+progetto a cui appartiene (quello di Plancia o la cartella da cui viene il file),
+oppure, per chi sei e le preferenze, il gruppo del suo tipo. Un gruppo è una regione
+colorata col nome grande; i legami fra gruppi, i ponti, si vedono dall'altra parte
+della mappa. Da lontano si leggono i gruppi, da vicino i titoli delle note (il testo
+del collegamento nel `MEMORY.md` della cartella, o la prima frase della descrizione:
+mai la sigla). La dimensione dice quanti legami ha una nota, la legenda porta la
+camera su un gruppo con un clic. Il server calcola la disposizione una volta per
+impronta della memoria, in un processo a parte, e la riusa finché le schede e i
+legami non cambiano. Il riempimento porta l'unica affermazione che conta: **pieno
 vuol dire che il richiamo può portarla in contesto**. Su questa macchina sono 13
 su 44, e vedere quarantaquattro pallini di cui trentuno vuoti dice in un colpo
 d'occhio una cosa che nessun elenco diceva.
@@ -398,10 +406,15 @@ testo e ti dice dove scaricarne una.
 Il campo di testo in fondo serve quando il microfono non è disponibile.
 
 ```bash
-plancia jarvis "ricordami di scrivere la nota di migrazione"   # scritto: l'hai scritto tu, parte
+plancia jarvis "ricordami di scrivere la nota di migrazione"   # mostra la scheda e chiede [s/N]
 ```
 
-Il Jarvis della dashboard (Windows e Linux) funziona come prima.
+Il terminale e la dashboard (Windows e Linux) seguono le stesse regole. Di Jarvis ce
+n'è uno solo, in sola lettura: il secondo di prima, che teneva un modello con i tool
+di scrittura aperti ed eseguiva quello che scrivevi, non c'è più. `plancia jarvis`
+stampa la scheda e chiede la conferma da tastiera; senza un terminale vero (uno
+script, una pipe, un altro agente che lo lancia) non conferma mai. Nella dashboard la
+scheda compare con Conferma e Annulla, e anche il pulsante Rilancia passa da lì.
 
 Claude Code ha la voce [da marzo 2026](https://claudefa.st/blog/guide/mechanics/voice-mode):
 tieni premuta la barra spaziatrice e detti. È solo dettatura in ingresso, e una
@@ -747,7 +760,7 @@ git config core.hooksPath .githooks
 ```
 
 Accende il gancio che fa girare `python3 tools/prova.py` prima di ogni push:
-4341 controlli in pochi minuti, su un archivio finto che non tocca
+4483 controlli in pochi minuti, su un archivio finto che non tocca
 il tuo.
 
 ## Licenza

@@ -359,6 +359,47 @@ class Handler(BaseHTTPRequestHandler):
     def _authorised(self) -> bool:
         return self.headers.get("X-Plancia-Token") == config.get_token()
 
+    # Un corpo che nessuno leggera' resta nel socket, e la richiesta dopo sulla
+    # stessa connessione (HTTP/1.1, keep-alive) lo legge come se fosse la sua
+    # riga di richiesta: esce un 501 sporco ("Unsupported method"). Succede a
+    # ogni risposta data senza aver letto il corpo, il 403 del token per primo.
+    # Fino a questo tetto il corpo si legge e si butta; oltre (o se non ha una
+    # lunghezza) e' piu' onesto chiudere la connessione che leggerlo tutto.
+    CORPO_MAX_SCARTATO = 1 << 20
+
+    def _scarta_corpo(self) -> bool:
+        """Legge e butta il corpo della richiesta. Torna False se non si e' potuto
+        (troppo grande, senza lunghezza): allora la connessione va chiusa."""
+        if (self.headers.get("Transfer-Encoding") or "").lower() not in ("", "identity"):
+            return False
+        try:
+            lunghezza = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            return False
+        if lunghezza <= 0:
+            return True
+        if lunghezza > self.CORPO_MAX_SCARTATO:
+            return False
+        try:
+            restano = lunghezza
+            while restano > 0:
+                pezzo = self.rfile.read(min(restano, 65536))
+                if not pezzo:
+                    return False
+                restano -= len(pezzo)
+        except OSError:
+            return False
+        return True
+
+    def _rifiuta(self, code, msg):
+        """Una risposta d'errore data senza aver usato il corpo: lo svuota prima,
+        o chiude la connessione se non puo'."""
+        if self._scarta_corpo():
+            return self._error(code, msg)
+        self.close_connection = True
+        self._send(code, json.dumps({"errore": msg}, ensure_ascii=False),
+                   extra={"Connection": "close"})
+
     # --- rotte -----------------------------------------------------------
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
@@ -388,7 +429,7 @@ class Handler(BaseHTTPRequestHandler):
     def _write_request(self, method):
         parsed = urllib.parse.urlparse(self.path)
         if not self._authorised():
-            return self._error(403, "token mancante o non valido")
+            return self._rifiuta(403, "token mancante o non valido")
         try:
             q = urllib.parse.parse_qs(parsed.query)
             self._scelta = (q.get("compartimento") or [None])[0]
@@ -490,11 +531,8 @@ class Handler(BaseHTTPRequestHandler):
                     row = conn.execute("SELECT * FROM knowledge WHERE name=?",
                                        (first("name"),)).fetchone()
                     return self._json(dict(row)) if row else self._error(404, "non trovata")
-                return self._json([dict(r) for r in conn.execute(
-                    "SELECT k.id, k.name, k.description, k.type, k.updated_at, k.links, "
-                    "p.name AS progetto, p.key AS project_key FROM knowledge k "
-                    "LEFT JOIN projects p ON p.id=k.project_id ORDER BY k.updated_at DESC"
-                ).fetchall()])
+                from . import mappa as _mappa
+                return self._json(_mappa.schede(conn))
             if path == "/api/memoria/mappa":
                 from . import mappa as _mappa
                 return self._json(_mappa.mappa(conn))

@@ -188,6 +188,7 @@ PY
 scarica_dom() {  # scarica_dom <vista> <file-di-uscita>
   local profilo; profilo="$(mktemp -d)"
   "$CHROME" --headless=new --disable-gpu --hide-scrollbars \
+    --use-mock-keychain --disable-features=MacAppCodeSignClone \
     --no-first-run --no-default-browser-check --user-data-dir="$profilo" \
     --virtual-time-budget=4000 --dump-dom \
     "http://127.0.0.1:$PORTA/?ui=it#/$1" >"$2" 2>/dev/null &

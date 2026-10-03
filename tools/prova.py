@@ -733,6 +733,10 @@ def main():
     chiamate = {m.split("?")[0].rstrip("/") for m in re.findall(r"/api/[a-z/_]+", js)}
     serve = set(re.findall(r'path == "(/api/[a-z_/]+)"', api_py))
     serve |= {m.rstrip("/") for m in re.findall(r'\^(/api/[a-z_/]+)/', api_py)}
+    # Le rotte di Jarvis (`/api/jarvis/...`) le smista `jarvis.rotta`, che le
+    # confronta una per una con `percorso == "..."`: si contano anche quelle.
+    jarvis_py = (RADICE / "plancia" / "jarvis.py").read_text(encoding="utf-8")
+    serve |= set(re.findall(r'percorso == "(/api/[a-z_/]+)"', jarvis_py))
     fantasma = sorted(chiamate - serve - {"/api"})
     prova("il front non chiama rotte che non esistono",
           not fantasma, ", ".join(fantasma))

@@ -116,7 +116,9 @@ def _codifica(p) -> str:
 #: gli argomenti non c'e' un prompt, il prompt e' lo stdin (su Windows Plancia lo passa cosi':
 #: un `claude.cmd` di npm taglia un argomento alla prima riga a capo). Lo stdin si legge solo
 #: quando la riga di comando finisce con un'opzione o con il valore di una opzione, e mai
-#: per piu' di 5 secondi: gli altri chiamanti (il filo del cantiere, Jarvis) hanno un
+#: per piu' di 5 secondi. Anche quando ci sono `--allowedTools` o `--disallowedTools`
+#: (liste che si mangiano qualunque argomento dopo: Jarvis passa il prompt dallo stdin,
+#: 22-SERVER) e non c'e' un processo caldo a flusso (`--input-format`). Gli altri chiamanti (il filo del cantiere, Jarvis) hanno un
 #: prompt-argomento o uno stdin che chiudono da soli, e restano come prima.
 _FINTO_CLAUDE = (
     "import sys, threading\n"
@@ -124,7 +126,9 @@ _FINTO_CLAUDE = (
     "con_valore = ('--model', '--output-format', '--input-format', '--resume',\n"
     "              '--permission-mode', '--append-system-prompt')\n"
     "senza_prompt = (not args or args[-1].startswith('-')\n"
-    "                or (len(args) > 1 and args[-2] in con_valore))\n"
+    "                or (len(args) > 1 and args[-2] in con_valore)\n"
+    "                or (('--disallowedTools' in args or '--allowedTools' in args)\n"
+    "                    and '--input-format' not in args))\n"
     "letto = []\n"
     "if '-p' in args and senza_prompt and not sys.stdin.isatty():\n"
     "    try:\n"
@@ -1493,6 +1497,52 @@ def _cli(fix, args, comp=None, sid=None, cwd=None, umano=False, extra=None):
     return p.returncode, p.stdout, p.stderr
 
 
+def _cli_pty(fix, args, comp=None, risposte=(), timeout=120):
+    """Come `_cli`, ma a un TERMINALE VERO (uno pseudo-terminale): il comando trova
+    `isatty()` vero e chiede la conferma; `risposte` sono le righe che una persona
+    scriverebbe, una alla volta, quando il comando ha finito di stampare. Torna
+    `(codice, tutto quello che e' stato stampato)`. Solo macOS e Linux."""
+    import pty
+    import select
+    env = dict(_env_sub(fix["env"]))
+    if comp:
+        env["CLAUDE_CODE_SESSION_ID"] = fix["ids"][comp]
+    run_cwd = str(fix["dirs"][comp] if comp else fix["w"])
+    pid, fd = pty.fork()
+    if pid == 0:
+        try:
+            os.chdir(run_cwd)
+            os.execve(PYTHON, [PYTHON, str(RADICE / "bin" / "plancia")] + list(args), env)
+        finally:
+            os._exit(127)
+    uscita = b""
+    da_dare = list(risposte)
+    fine = time.time() + timeout
+    codice = None
+    try:
+        while time.time() < fine:
+            pronti, _, _ = select.select([fd], [], [], 0.3)
+            if pronti:
+                try:
+                    pezzo = os.read(fd, 4096)
+                except OSError:
+                    pezzo = b""
+                if not pezzo:
+                    break
+                uscita += pezzo
+                # il comando ha fatto la sua domanda (finisce con "[s/N] " o "[y/N] ")
+                if da_dare and (uscita.endswith(b"[s/N] ") or uscita.endswith(b"[y/N] ")):
+                    os.write(fd, da_dare.pop(0).encode("utf-8"))
+        _, stato = os.waitpid(pid, 0)
+        codice = os.waitstatus_to_exitcode(stato) if hasattr(os, "waitstatus_to_exitcode") else stato
+    finally:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+    return codice, uscita.decode("utf-8", "replace")
+
+
 _SCRIPT_REGISTRO = r'''
 import json, os, secrets, sys
 sys.path.insert(0, "__RADICE__")
@@ -1663,15 +1713,28 @@ def _prova_terzo_giro(prova, base: Path) -> None:
     prova("CLI jarvis da una sessione di alfa: la risposta libera si costruisce con i dati "
           "del compartimento nel prompt, senza tool e senza processo caldo",
           "Dati di oggi:" in passato and _senza(passato, altri("alfa"))
-          and "stream-json" not in passato and "allowedTools" not in passato,
+          and "stream-json" not in passato and "--allowedTools" not in passato
+          and "--disallowedTools" in passato,
           passato[:500] + err[:200])
+    # 22-SERVER: niente parte da una frase. Senza un terminale vero (qui una pipe) la
+    # scheda si mostra e non si conferma; con un terminale vero (uno pseudo-terminale)
+    # chi e' davanti risponde "s" e il task nasce, nel compartimento della sessione.
     code, out, err = _cli(fix, ["jarvis", "aggiungi un task provare JARVISALFA"], comp="alfa")
     con = _apri(env)
     riga = con.execute("SELECT compartimento FROM tasks WHERE title LIKE '%JARVISALFA%'"
                        ).fetchone()
     con.close()
-    prova("CLI jarvis da una sessione di alfa: il task che crea e' di alfa",
-          code == 0 and riga is not None and riga[0] == "alfa", (out + err)[:300] + str(riga))
+    prova("CLI jarvis da una sessione di alfa, senza terminale: la scheda si mostra e il task NON nasce",
+          code == 0 and riga is None and "JARVISALFA" in out and "non eseguito" in out,
+          (out + err)[:300] + str(riga))
+    code, out = _cli_pty(fix, ["jarvis", "aggiungi un task provare JARVISALFA"], comp="alfa",
+                         risposte=["s\n"])
+    con = _apri(env)
+    riga = con.execute("SELECT compartimento FROM tasks WHERE title LIKE '%JARVISALFA%'"
+                       ).fetchone()
+    con.close()
+    prova("CLI jarvis da una sessione di alfa, a un terminale vero, confermando: il task che crea e' di alfa",
+          code == 0 and riga is not None and riga[0] == "alfa", out[-300:] + str(riga))
     code, out, err = _cli(fix, ["task", "list", "--status", "tutti"], comp="predefinito")
     prova("CLI: quel task non compare al predefinito", "JARVISALFA" not in out, out[:300])
     code, out, err = _cli(fix, ["task", "list", "--status", "tutti"], comp="alfa")
@@ -1871,10 +1934,25 @@ def _prova_terzo_giro(prova, base: Path) -> None:
         c, d = srv.scrivi("POST", "/api/jarvis?compartimento=alfa",
                           {"testo": "aggiungi un task provare JARVISDASH", "voce": False})
         con = _apri(env)
+        riga_prima = con.execute("SELECT compartimento FROM tasks WHERE title LIKE '%JARVISDASH%'"
+                                 ).fetchone()
+        con.close()
+        prova("dashboard: jarvis dalla vista di alfa prepara la scheda e non crea niente",
+              c == 200 and riga_prima is None and (d.get("proposta") or {}).get("id"), str((c, d))[:300])
+        pid_alfa = (d.get("proposta") or {}).get("id", "x")
+        c2, d2 = srv.scrivi("POST", "/api/jarvis/conferma?compartimento=beta", {"id": pid_alfa})
+        con = _apri(env)
+        riga_beta = con.execute("SELECT compartimento FROM tasks WHERE title LIKE '%JARVISDASH%'"
+                                ).fetchone()
+        con.close()
+        prova("dashboard: la scheda di alfa non si conferma dalla vista di beta",
+              c2 == 200 and not d2.get("eseguita") and riga_beta is None, str((c2, d2))[:200])
+        c, d = srv.scrivi("POST", "/api/jarvis/conferma?compartimento=alfa", {"id": pid_alfa})
+        con = _apri(env)
         riga = con.execute("SELECT compartimento FROM tasks WHERE title LIKE '%JARVISDASH%'"
                            ).fetchone()
         con.close()
-        prova("dashboard: jarvis dalla vista di alfa crea un task di alfa",
+        prova("dashboard: confermata dalla vista di alfa, il task nasce ed e' di alfa",
               c == 200 and riga is not None and riga[0] == "alfa", str((c, d, riga))[:300])
         if segnale.exists():
             segnale.unlink()

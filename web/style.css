@@ -404,11 +404,13 @@ table.tabella { width: 100%; border-collapse: collapse; font-size: var(--t-md); 
 .grafo-legenda { position: absolute; left: 14px; bottom: 12px; display: flex; gap: 12px; flex-wrap: wrap;
   font-size: var(--t-sm); color: var(--text-2); background: var(--bg); padding: 4px 8px; border-radius: 8px;
   border: 1px solid var(--line); max-width: calc(100% - 28px); }
-.grafo-legenda i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 5px; }
-.grafo-legenda .feedback i { background: var(--t-feedback); }
-.grafo-legenda .user i { background: var(--t-user); }
-.grafo-legenda .reference i { background: var(--t-reference); }
-.grafo-legenda .project i { background: var(--t-project); }
+.grafo-legenda i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 5px; flex: none; }
+/* un gruppo, con il suo colore: un clic porta la camera sul gruppo */
+.grafo-legenda .grafo-gruppo { display: inline-flex; align-items: center; border: 0; background: transparent;
+  padding: 2px 6px; border-radius: 6px; font: inherit; color: var(--text); cursor: pointer; }
+.grafo-legenda .grafo-gruppo:hover { background: var(--hover); }
+.grafo-legenda .grafo-gruppo .n { margin-left: 5px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.grafo-legenda .nota { flex-basis: 100%; padding: 0 6px; color: var(--text-3); font-size: var(--t-xs); }
 
 .prova-mem { padding: 12px 20px; border-bottom: 1px solid var(--line); background: var(--bg-2); flex: none; }
 .prova-mem .inline-form { display: flex; gap: 8px; }
@@ -497,6 +499,24 @@ table.tabella { width: 100%; border-collapse: collapse; font-size: var(--t-md); 
   color: var(--bg); padding: 9px 18px; border-radius: 999px; box-shadow: var(--ombra); z-index: 90;
   font-size: var(--t-sm); max-width: 90vw; }
 .toast.bad { background: var(--danger); color: #fff; }
+
+/* ------------------------------------------------------------ scheda di Jarvis */
+/* La scheda di una proposta (schedaJarvis in app.js): cosa succede, con Conferma e
+   Annulla. Sopra il cassetto e sotto il toast. */
+.jscheda { position: fixed; inset: 0; background: var(--scrim); z-index: 80; display: flex;
+  align-items: center; justify-content: center; padding: 16px; }
+.jscheda-box { width: min(460px, 100%); background: var(--bg); border: 1px solid var(--line-strong);
+  border-radius: var(--r-group); box-shadow: var(--ombra); padding: 20px 22px 18px; }
+.jscheda-box h2 { font-size: var(--t-lg); font-weight: 700; margin-bottom: 12px; }
+.jscheda-box dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; margin: 0 0 12px;
+  font-size: var(--t-sm); }
+.jscheda-box dt { color: var(--text-2); }
+.jscheda-box dd { margin: 0; overflow-wrap: anywhere; }
+.jscheda-avviso { font-size: var(--t-sm); color: var(--text-2); margin: 0 0 14px;
+  padding: 8px 10px; border-radius: var(--r-row); background: var(--fill); }
+.jscheda-box.rischio-lancia_scrive .jscheda-avviso, .jscheda-box.rischio-scrive .jscheda-avviso {
+  background: var(--warn-soft); color: var(--warn); }
+.jscheda-az { display: flex; justify-content: flex-end; gap: 8px; }
 
 /* ------------------------------------------------------------ guida */
 .guida { max-width: 660px; margin: 6vh auto 0; padding: 0 20px 48px; }

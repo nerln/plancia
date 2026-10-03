@@ -671,6 +671,7 @@ def _dinamica(radice, chrome):
         chrome_proc = subprocess.Popen([
             chrome, "--headless=new", "--disable-gpu", "--hide-scrollbars",
             "--no-first-run", "--no-default-browser-check",
+            "--use-mock-keychain", "--disable-features=MacAppCodeSignClone",
             f"--remote-debugging-port={porta_cdp}", f"--user-data-dir={profilo}",
             "about:blank"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=_ambiente_chrome())
         pronto = False

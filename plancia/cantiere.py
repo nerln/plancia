@@ -233,8 +233,14 @@ def _comando(agente: str, scrive=False, cwd: str = "", sessione=None, modo=None,
     if not exe:
         raise RuntimeError("Claude Code non è installato")
     cfg = config.load_config()
-    cmd = [exe, "-p", "--model", cfg.get("modello_cantiere", "sonnet"),
-           "--output-format", "stream-json", "--verbose"]
+    # Una conversazione dell'utente si riprende col SUO modello: `--model` la
+    # cambierebbe a meta' (l'utente la aveva aperta con Opus, e il lavoro
+    # ripartirebbe con Sonnet senza dirglielo). Il modello del cantiere serve
+    # solo alle sessioni nuove, che un modello lo devono scegliere.
+    cmd = [exe, "-p"]
+    if not sessione:
+        cmd += ["--model", cfg.get("modello_cantiere", "sonnet")]
+    cmd += ["--output-format", "stream-json", "--verbose"]
     if sessione:
         # Senza `--fork-session` claude riprende la sessione con lo stesso id
         # (letto in `claude --help`: "--fork-session: When resuming, create a
