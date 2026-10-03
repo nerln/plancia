@@ -364,25 +364,51 @@ def _dinamica(radice):
                                and rr.get("valore") == "" and rr.get("tornata") is True, repr(rr))
 
         # ---- Impostazioni
+        # Si parte sempre dalla stessa condizione, la peggiore, su ogni macchina: sistema in
+        # tema chiaro (altrimenti su un Mac scuro "scegli scuro" non cambia niente e la prova
+        # passa senza provare) e movimento ridotto. Con il movimento ridotto il foglio di stile
+        # (`* { transition-duration: .01ms }`) fa durare ogni cambio un attimo, e un
+        # getComputedStyle subito dopo il click vede ancora il valore di prima: e' quello che
+        # succede sul runner macOS di GitHub, dove l'impostazione e' accesa (visto sul run
+        # 37155444167: sfondo ancora bianco e testo ancora a 14 px dopo i click). Per questo
+        # la pagina non legge subito: aspetta la condizione, fino a un tetto.
+        cdp("Emulation.setEmulatedMedia", {"features": [
+            {"name": "prefers-color-scheme", "value": "light"},
+            {"name": "prefers-reduced-motion", "value": "reduce"}]})
         apri("#/oggi")
         _attendi(sock, 207, JS_PRONTA, vista_pronta)
         s = val("""(async function(){
           localStorage.clear();
-          var px0 = parseFloat(getComputedStyle(document.documentElement).fontSize);
+          async function finche(leggi, vale, tetto){
+            var t0 = Date.now(), v = leggi();
+            while (!vale(v) && Date.now() - t0 < tetto){
+              await new Promise(function(r){ setTimeout(r, 30); });
+              v = leggi();
+            }
+            return v;
+          }
+          function sfondo(){ return getComputedStyle(document.body).backgroundColor; }
+          function pixel(){ return parseFloat(getComputedStyle(document.documentElement).fontSize); }
           document.getElementById('btn-imp').click();
           var aperto = !document.getElementById('menu-imp').hidden;
+          document.querySelector('[data-tema="light"]').click();
+          var chiaro = await finche(sfondo, function(v){ return v === 'rgb(255, 255, 255)'; }, 3000);
+          var px0 = pixel();
           document.querySelector('[data-tema="dark"]').click();
           var scuro = document.documentElement.dataset.resolved;
-          var fondo = getComputedStyle(document.body).backgroundColor;
+          var fondo = await finche(sfondo, function(v){ return v !== chiaro; }, 3000);
           document.querySelector('[data-scala="1"]').click();
-          var px1 = parseFloat(getComputedStyle(document.documentElement).fontSize);
+          var px1 = await finche(pixel, function(v){ return v > px0; }, 3000);
           document.querySelector('[data-lingua="en"]').click();
-          await new Promise(function(r){ setTimeout(r, 1200); });
-          return {aperto: aperto, scuro: scuro, fondo: fondo, px0: px0, px1: px1,
-                  titolo: document.getElementById('tb-titolo').textContent, lang: document.documentElement.lang};
+          var titolo = await finche(function(){ return document.getElementById('tb-titolo').textContent; },
+                                    function(v){ return v === 'Today'; }, 6000);
+          return {aperto: aperto, chiaro: chiaro, scuro: scuro, fondo: fondo, px0: px0, px1: px1,
+                  titolo: titolo, lang: document.documentElement.lang};
         })()""", True) or {}
-        ris[_CONTROLLI[13]] = (s.get("aperto") is True and s.get("scuro") == "dark" and s.get("fondo") != "rgb(255, 255, 255)"
-                               and s.get("px1", 0) > s.get("px0", 99) and s.get("titolo") == "Today" and s.get("lang") == "en", repr(s))
+        ris[_CONTROLLI[13]] = (s.get("aperto") is True and s.get("chiaro") == "rgb(255, 255, 255)"
+                               and s.get("scuro") == "dark" and s.get("fondo") != s.get("chiaro")
+                               and s.get("px1", 0) > s.get("px0", 99) and s.get("titolo") == "Today"
+                               and s.get("lang") == "en", repr(s))
     finally:
         if sock:
             try:

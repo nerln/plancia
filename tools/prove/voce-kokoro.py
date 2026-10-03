@@ -378,11 +378,19 @@ def _esegui(prova) -> None:
         pocket = subprocess.Popen(
             [sys.executable, str(QUI / "_pocket_finto.py"), str(porta_pocket), str(reg_pocket)],
             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        _attendi(lambda: _risponde("http://127.0.0.1:%d/health" % porta_pocket), 6)
+        # Si aspetta che il Pocket finto risponda davvero (la condizione, non un tempo): su un
+        # runner macOS di CI il suo bind restava senza ascolto per decine di secondi (DNS
+        # inverso di HTTPServer.server_bind, ora tolto da _pocket_finto.py), e con 6 secondi di
+        # attesa ignorata la frase del ripiego trovava "Pocket non risponde". E il risultato
+        # entra nel controllo dell'ordine: senza, "Pocket non riceve niente" passava anche con
+        # un Pocket che non era mai partito.
+        pocket_su = _attendi(lambda: _risponde("http://127.0.0.1:%d/health" % porta_pocket), 40, 0.25)
         azzera(pocket_url="http://127.0.0.1:%d" % porta_pocket, kokoro_riprova_secondi=5)
         info = sintesi("Frase con Kokoro e Pocket.")
         prova("ORDINE: con Kokoro e Pocket accesi parla Kokoro, e Pocket non riceve niente",
-              info["motore"] == "kokoro" and not reg_pocket.exists(), str((info, reg_pocket.exists())))
+              pocket_su and info["motore"] == "kokoro" and not reg_pocket.exists(),
+              str((info, "pocket_su=%s" % pocket_su, "pocket_uscito=%s" % pocket.poll(),
+                   reg_pocket.exists())))
         prova("...e voce_neurale() dice kokoro", voice.voce_neurale("it") == "kokoro")
         controllo(muori_alla_richiesta=1)  # gia' 1 richiesta fatta: la prossima uccide
         info = sintesi("Ora Kokoro cade.")

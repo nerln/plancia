@@ -16,6 +16,7 @@ import http.server
 import io
 import math
 import re
+import socketserver
 import sys
 import time
 import wave
@@ -70,4 +71,18 @@ class Gestore(http.server.BaseHTTPRequestHandler):
         self.wfile.write(dati)
 
 
-http.server.ThreadingHTTPServer(("127.0.0.1", PORTA), Gestore).serve_forever()
+class Server(http.server.ThreadingHTTPServer):
+    """Il server di sempre, senza la risoluzione inversa dell'indirizzo.
+
+    `HTTPServer.server_bind` chiama `socket.getfqdn()` (un DNS inverso) DOPO aver preso la
+    porta e PRIMA di metterla in ascolto. Su un runner macOS di CI quel DNS ci mette decine di
+    secondi (e' lo stesso difetto di `plancia.api._Server`, vedi li'): la porta e' occupata
+    ma nessuno ascolta, e un Pocket "acceso" da una prova non risponde a nessuno per tutto
+    quel tempo. Il nome del server qui non lo legge nessuno."""
+
+    def server_bind(self):
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
+
+
+Server(("127.0.0.1", PORTA), Gestore).serve_forever()
