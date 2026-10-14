@@ -20,8 +20,12 @@ Without Plancia installed they have nothing to talk to. Install Plancia first,
 as described in the [main README](../README.md#install).
 
 `plancia install` also writes these two skills into `~/.claude/skills/` for
-you. The versions in this folder are for reading, for copying by hand, and for
-anyone who wants to change them.
+you, but it writes the text kept in `plancia/setup_claude.py`, not the files in
+this folder: in the language set in your Plancia configuration (Italian unless
+you chose English), and without the Italian trigger phrases in the English
+version. The two texts use the same tool and action names, and a test in
+`tools/prova.py` fails if they drift apart. The files in this folder are for
+reading, for copying by hand, and for anyone who wants to change them.
 
 ## Install by hand
 

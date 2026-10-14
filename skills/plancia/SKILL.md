@@ -3,7 +3,7 @@ name: plancia
 description: >-
   Reads and updates Plancia, the control centre for the user's work with AI:
   projects, tasks, social posts, past sessions, memory. Use it when the user
-  asks "where was I", "what did I leave off", "what should I do today", "where
+  asks "where was I", "what I had left open", "what should I do today", "where
   did we do this", when they open one of their projects, when a piece of work
   is finished and needs recording, and before writing social posts. Also for
   "update plancia", "mark this", "open the dashboard". Italian triggers:

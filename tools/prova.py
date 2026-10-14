@@ -1016,6 +1016,24 @@ def main():
         prova(f"la skill {nome} ha il suo frontmatter",
               costante.lstrip().startswith("---") and "description:" in costante)
 
+    # Le skill in skills/ (quelle che si leggono su GitHub) e le costanti EN di
+    # setup_claude.py (quelle che `plancia install` scrive) sono due testi: i
+    # nomi di strumenti e di azioni, che un agente scrive alla lettera, devono
+    # restare gli stessi, o una delle due versioni chiama cose che non esistono.
+    import re as _re  # noqa: E402
+
+    def _nomi(testo):
+        strumenti = set(_re.findall(r"plancia_[a-z_]+", testo))
+        azioni = set(_re.findall(r'azione="([a-z_]+)"', testo))
+        return strumenti, azioni
+
+    for nome, costante in (("plancia", _sc.SKILL_EN), ("riepilogo", _sc.RIEPILOGO_SKILL_EN)):
+        file_skill = RADICE / "skills" / nome / "SKILL.md"
+        testo_file = file_skill.read_text(encoding="utf-8")
+        da_file, da_costante = _nomi(testo_file), _nomi(costante)
+        prova(f"skills/{nome} e la versione inglese di setup_claude nominano gli stessi strumenti e azioni",
+              da_file == da_costante, f"file {da_file} costante {da_costante}")
+
     # -------------------------------------------------------------------- front
     esito = subprocess.run([sys.executable, "-X", "utf8",
                             str(RADICE / "tools" / "prova-front.py")],

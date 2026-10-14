@@ -17,7 +17,9 @@ this program. If not, see <https://www.gnu.org/licenses/>.
 
 Versions up to and including 0.2.0 were released under the MIT licence and
 remain available under those terms. From 0.3.0 on the project is GPL-3.0-or-later.
-Both licences are the work of the same single copyright holder.
+Both licences are the work of the same single copyright holder. The skills/
+folder is the exception to the GPL: its two Claude Code skills are MIT licensed
+(see skills/LICENSE), by the same copyright holder.
 
 Paying for a prebuilt binary is not a licence fee. The GPL lets anyone charge
 for distributing a program; what the price covers is the Apple Developer ID
