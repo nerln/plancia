@@ -84,6 +84,14 @@ cd ~/dev/plancia
 
 `plancia uninstall` puts everything back. Your data stays in `~/.plancia/`.
 
+## Skills for Claude Code
+
+Two skills, `plancia` and `riepilogo`, tell Claude Code when to read from
+Plancia and when to write back. `plancia install` puts them in
+`~/.claude/skills/`; the English text, with triggers in English and Italian,
+is also in [skills/](skills/README.md), where you can read it or copy it by
+hand. Those two skills are MIT licensed; the rest of this repository is GPL-3.0.
+
 ## Windows and Linux
 
 macOS comes first: that is where the native app lives. The rest of Plancia is
@@ -720,7 +728,8 @@ the hook, the skills and a full install and uninstall into a fake home.
 ## Licence and price
 
 GPL-3.0-or-later. See [LICENSE](LICENSE) and [COPYRIGHT](COPYRIGHT). Versions up
-to 0.2.0 were MIT and stay MIT.
+to 0.2.0 were MIT and stay MIT. The skills in [skills/](skills/) are MIT, see
+[skills/LICENSE](skills/LICENSE).
 
 Building from source is free and always will be. A signed and notarised build,
 which opens with a double click, is pay what you want from €5 on the

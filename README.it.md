@@ -84,6 +84,14 @@ cd ~/dev/plancia
 
 `plancia uninstall` rimette tutto com'era. I dati restano in `~/.plancia/`.
 
+## Skill per Claude Code
+
+Due skill, `plancia` e `riepilogo`, dicono a Claude Code quando leggere da
+Plancia e quando scriverci. `plancia install` le mette in `~/.claude/skills/`;
+il testo in inglese, con i trigger in inglese e in italiano, sta anche in
+[skills/](skills/README.md), da leggere o da copiare a mano. Quelle due skill
+sono con licenza MIT; il resto di questo repository è GPL-3.0.
+
 ## Windows e Linux
 
 Prima viene macOS: è lì che vive l'app nativa. Tutto il resto di Plancia è Python
@@ -836,7 +844,8 @@ il tuo.
 ## Licenza
 
 GPL-3.0-or-later. Vedi [LICENSE](LICENSE) e [COPYRIGHT](COPYRIGHT). Le versioni
-fino alla 0.2.0 erano MIT e restano MIT.
+fino alla 0.2.0 erano MIT e restano MIT. Le skill in [skills/](skills/) sono MIT,
+vedi [skills/LICENSE](skills/LICENSE).
 
 Compilarlo dal sorgente è gratis e lo resterà. Una build firmata e notarizzata,
 che si apre con un doppio clic, si paga quanto vuoi da 5 euro sul
