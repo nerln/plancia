@@ -306,3 +306,207 @@ def log_event(conn, title, kind="nota", detail="", project=None, ref=None,
         store.touch_project(conn, pid, ts)
     _after_write(conn)
     return {"ts": ts, "kind": kind, "title": title, "project_id": pid}
+
+
+# --------------------------------------------------------------------------
+# collegare una cartella (e la sessione che ci lavora) a un progetto
+# --------------------------------------------------------------------------
+
+def _progetto_esatto(conn, ident):
+    """Id, chiave o nome esatti: niente somiglianze. Collegare una cartella al
+    progetto sbagliato sposta in silenzio tutte le sue sessioni future."""
+    if ident in (None, ""):
+        return None
+    s = str(ident).strip()
+    if s.isdigit():
+        r = conn.execute("SELECT * FROM projects WHERE id=?", (int(s),)).fetchone()
+        if r:
+            return r
+    return conn.execute(
+        "SELECT * FROM projects WHERE key=? OR key=? OR lower(name)=lower(?) "
+        "ORDER BY key=? DESC LIMIT 1", (s, store.slugify(s), s, s)).fetchone()
+
+
+def _progetto_della_cartella(conn, cartella, vietate):
+    """Il progetto legato alla cartella o alla piu' vicina sopra di lei, senza
+    mai contare i contenitori: `~/dev` legata al progetto "dev" non fa di ogni
+    cartella sotto `~/dev` una cartella di "dev"."""
+    import os
+    from . import attribuzione
+    for r in conn.execute("SELECT project_id, value FROM project_links WHERE kind='path' "
+                          "ORDER BY length(value) DESC").fetchall():
+        base = os.path.normpath(r["value"] or "")
+        if not r["value"] or base in vietate:
+            continue
+        if cartella == base or cartella.startswith(base + os.sep) or \
+                attribuzione.e_dentro(base, cartella):
+            return conn.execute("SELECT * FROM projects WHERE id=?",
+                                (r["project_id"],)).fetchone()
+    for r in conn.execute("SELECT project_id, local_path FROM repos WHERE project_id IS NOT NULL "
+                          "AND local_path IS NOT NULL AND local_path != '' "
+                          "ORDER BY length(local_path) DESC").fetchall():
+        base = os.path.normpath(r["local_path"])
+        if base not in vietate and (cartella == base or cartella.startswith(base + os.sep)):
+            return conn.execute("SELECT * FROM projects WHERE id=?",
+                                (r["project_id"],)).fetchone()
+    return None
+
+
+def _candidati(conn, cartella, vietate, quanti=5) -> list:
+    """I progetti che con ogni probabilita' sono quelli di questa cartella, dal
+    piu' sicuro: il repo GitHub del suo remote git, poi le parole del suo
+    percorso sotto il contenitore (`~/dev/plancia-copie/plugin` dice "plancia")."""
+    import os
+    import re
+    import subprocess
+    trovati, visti = [], set()
+
+    def aggiungi(riga, perche):
+        if riga is not None and riga["id"] not in visti and not riga["hidden"]:
+            visti.add(riga["id"])
+            trovati.append({"key": riga["key"], "name": riga["name"], "perche": perche})
+
+    from . import piattaforma
+    try:
+        url = subprocess.run(["git", "-C", cartella, "config", "--get", "remote.origin.url"],
+                             capture_output=True, text=True, timeout=3,
+                             **piattaforma.opzioni_figlio(),
+                             **piattaforma.opzioni_utf8()).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        url = ""
+    if url:
+        nome_repo = re.sub(r"\.git$", "", url.rstrip("/").split("/")[-1].split(":")[-1])
+        r = conn.execute("SELECT project_id FROM repos WHERE name=? AND project_id IS NOT NULL",
+                         (nome_repo,)).fetchone()
+        if r:
+            aggiungi(conn.execute("SELECT * FROM projects WHERE id=?", (r[0],)).fetchone(),
+                     f"remote git {nome_repo}")
+        aggiungi(store.find_project_by_link(conn, "repo", nome_repo), f"remote git {nome_repo}")
+        aggiungi(conn.execute("SELECT * FROM projects WHERE key=?",
+                              (store.slugify(nome_repo),)).fetchone(), f"remote git {nome_repo}")
+    # le parole del percorso, sotto il contenitore piu' vicino
+    sopra = max((v for v in vietate if cartella.startswith(v + os.sep)), key=len, default="")
+    resto = cartella[len(sopra):].strip(os.sep) if sopra else os.path.basename(cartella)
+    vuote = {"copie", "copia", "plugin", "src", "app", "web", "site", "main", "dev", "tmp",
+             "build", "test", "prove", "nuovo", "new", "old", "vecchio", "worktree"}
+    parole = [w for w in re.split(r"[^a-z0-9]+", resto.lower()) if len(w) >= 3 and w not in vuote]
+    for w in parole:
+        for r in conn.execute("SELECT * FROM projects WHERE hidden=0 AND (key=? OR lower(name)=?)",
+                              (w, w)):
+            aggiungi(r, f"cartella: {w}")
+    for w in parole:
+        for r in conn.execute("SELECT * FROM projects WHERE hidden=0 AND (key LIKE ? OR "
+                              "lower(name) LIKE ?) ORDER BY last_activity DESC LIMIT 3",
+                              (f"%{w}%", f"%{w}%")):
+            aggiungi(r, f"cartella: {w}")
+    return trovati[:quanti]
+
+
+def collega(conn, cartella, progetto=None, crea=False, nome=None, session_id=None,
+            compartimento="", lettura=None) -> dict:
+    """Lega `cartella` a un progetto e ci porta la sessione `session_id`.
+
+    - cartella gia' legata (lei o una che la contiene) e nessun progetto
+      chiesto, o lo stesso: non scrive niente, dice a chi e' legata;
+    - progetto chiesto che non esiste: con `crea` lo crea, senza propone i
+      simili e non scrive;
+    - un contenitore (~/dev, la radice del Drive, la casa) non si lega mai:
+      sotto ci stanno tanti progetti.
+
+    Con i compartimenti `lettura` e' la connessione con le viste di chi chiama:
+    tutto quello che si cerca e si propone passa da li', e un progetto o una
+    cartella che da li' non si vedono non si nominano e non si toccano.
+    """
+    lett = lettura if lettura is not None else conn
+    import os
+    from . import attribuzione, ingest
+    if not cartella:
+        raise BadInput("serve la cartella")
+    cartella = os.path.normpath(os.path.expanduser(str(cartella)))
+    if not os.path.isabs(cartella):
+        raise BadInput("la cartella va data con il percorso assoluto")
+    drive = ingest.drive_root()
+    vietate = set(attribuzione.radici_generiche(drive=drive)) | set(
+        attribuzione.contenitori_avviso(drive=drive)) | {os.path.normpath(os.sep)}
+    if cartella in vietate:
+        raise BadInput(
+            f"{cartella} e' un contenitore, non un progetto: sotto ci stanno tanti "
+            "progetti. Collega la cartella del progetto su cui si lavora.")
+
+    attuale = _progetto_della_cartella(lett, cartella, vietate)
+    esatto = conn.execute(
+        "SELECT project_id FROM project_links WHERE kind='path' AND value=?",
+        (cartella,)).fetchone()
+    if esatto and lett is not conn and lett.execute(
+            "SELECT 1 FROM projects WHERE id=?", (esatto["project_id"],)).fetchone() is None:
+        raise BadInput("questa cartella e' legata a un progetto che da qui non si vede: "
+                       "da questa sessione non si sposta")
+
+    voluto = None
+    if progetto not in (None, ""):
+        voluto = _progetto_esatto(lett, progetto)
+        if voluto is None and lett is not conn and _progetto_esatto(conn, progetto) is not None:
+            raise BadInput(f"il progetto '{progetto}' da qui non si vede")
+        if voluto is None and not crea:
+            simili = [dict(key=r["key"], name=r["name"]) for r in lett.execute(
+                "SELECT key, name FROM projects WHERE hidden=0 AND (key LIKE ? OR "
+                "lower(name) LIKE lower(?)) ORDER BY last_activity DESC LIMIT 5",
+                (f"%{store.slugify(str(progetto))}%", f"%{progetto}%"))]
+            return {"collegata": False, "cartella": cartella,
+                    "motivo": f"nessun progetto si chiama '{progetto}'",
+                    "simili": simili,
+                    "come": "richiama con il nome esatto, o con crea=true per crearlo"}
+        if voluto is None:
+            voluto_id = store.upsert_project(
+                conn, str(progetto), (nome or str(progetto)).strip(),
+                auto=0, _force=True)
+            if compartimento:
+                conn.execute("UPDATE projects SET compartimento=? WHERE id=?",
+                             (compartimento, voluto_id))
+            voluto = conn.execute("SELECT * FROM projects WHERE id=?",
+                                  (voluto_id,)).fetchone()
+    elif attuale is None:
+        return {"collegata": False, "cartella": cartella,
+                "motivo": "questa cartella non e' legata a nessun progetto",
+                "candidati": _candidati(lett, cartella, vietate),
+                "come": "richiama con progetto=<chiave>: il primo candidato se e' chiaro, "
+                        "altrimenti chiedi; crea=true per un progetto nuovo"}
+
+    bersaglio = voluto or attuale
+    scritto = False
+    if esatto and esatto["project_id"] != bersaglio["id"]:
+        # La cartella esatta e' di un altro: si sposta, e lo si dice.
+        conn.execute("UPDATE project_links SET project_id=? WHERE kind='path' AND value=?",
+                     (bersaglio["id"], cartella))
+        scritto = True
+    elif not esatto and (attuale is None or attuale["id"] != bersaglio["id"]):
+        store.link_project(conn, bersaglio["id"], "path", cartella)
+        scritto = True
+
+    sessione_spostata = False
+    if session_id:
+        riga = conn.execute("SELECT id, project_id FROM sessions WHERE session_id=?",
+                            (session_id,)).fetchone()
+        if riga and riga["project_id"] != bersaglio["id"]:
+            conn.execute("UPDATE sessions SET project_id=? WHERE id=?",
+                         (bersaglio["id"], riga["id"]))
+            conn.execute("UPDATE events SET project_id=? WHERE ref=? AND kind='sessione'",
+                         (bersaglio["id"], session_id))
+            sessione_spostata = True
+    if scritto or sessione_spostata:
+        store.touch_project(conn, bersaglio["id"], store.now())
+        _after_write(conn)
+    in_archivio = bool(session_id and conn.execute(
+        "SELECT 1 FROM sessions WHERE session_id=?", (session_id,)).fetchone())
+    return {
+        "collegata": True,
+        "progetto": bersaglio["key"],
+        "nome": bersaglio["name"],
+        "cartella": cartella,
+        "era_di": (attuale["key"] if attuale and attuale["id"] != bersaglio["id"] else None),
+        "gia_legata": not scritto,
+        "sessione": session_id,
+        "sessione_spostata": sessione_spostata,
+        "nota": (None if in_archivio or not session_id
+                 else "la sessione non e' ancora nell'archivio: la porta il prossimo sync"),
+    }

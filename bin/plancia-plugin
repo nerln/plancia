@@ -1,0 +1,906 @@
+#!/usr/bin/env python3
+"""Il plugin di Plancia per Claude Code: un ingresso solo per server, hook e controlli.
+
+    plancia-plugin mcp [argomenti]   il server MCP, dietro una sentinella che lo tiene vivo
+    plancia-plugin hook [argomenti]  bin/plancia-hook: il briefing all'avvio, la coda a fine sessione
+    plancia-plugin richiamo          bin/plancia-richiamo
+    plancia-plugin guardiano         bin/plancia-guardiano
+    plancia-plugin avvio             hook SessionStart: una riga solo se qualcosa non va, e ripara
+    plancia-plugin salute [--json]   controlla database, server MCP, dashboard, doppioni
+    plancia-plugin migra [--prova]   toglie le vecchie registrazioni globali, con copia di sicurezza
+
+Solo libreria standard, e niente `import plancia`: se il codice di Plancia ha un
+errore, questo file deve restare in piedi per dirlo invece di cadere con lui.
+
+Il codice che gira e' quello del plugin, a meno che la chiave `codice` di
+~/.plancia/config.json non indichi un checkout di Plancia: chi lo sviluppa lo
+tiene li', e il server della dashboard gira da li'. Meglio un codice solo per
+lo stesso database.
+"""
+
+import json
+import os
+import queue
+import re
+import shutil
+import signal
+import sqlite3
+import subprocess
+import sys
+import threading
+import time
+from collections import deque
+from pathlib import Path
+
+PLUGIN = Path(__file__).resolve().parent.parent
+CASA = Path.home()
+DATI = Path(os.environ.get("PLANCIA_HOME") or CASA / ".plancia")
+CLAUDE = Path(os.environ.get("CLAUDE_CONFIG_DIR") or CASA / ".claude")
+LOG = DATI / "sentinella-mcp.log"
+CACHE_TOOLS = DATI / "cache" / "mcp-tools.json"
+ETICHETTA_SERVER = "com.plancia.server"
+
+#: Quanto puo' durare una chiamata prima che la sentinella consideri il server
+#: bloccato e lo riavvii. Il sync rilegge tutto e ha il suo tempo.
+ATTESA_CHIAMATA = float(os.environ.get("PLANCIA_MCP_ATTESA") or 120)
+ATTESA_SYNC = 900.0
+ATTESA_INIT = 10.0
+ATTESA_ELENCO = 20.0
+#: Quante cadute in un minuto prima di fermarsi un attimo invece di riavviare a vuoto.
+CADUTE_MAX = 4
+PAUSA = 30.0
+
+#: Gli hook globali che il plugin sostituisce. Il guardiano dei compartimenti
+#: (plancia-guardiano) no: resta in settings.json, dove un plugin disattivato non
+#: lo spegne, ed e' lui stesso a proteggere quel file.
+SOSTITUITI_DAL_PLUGIN = ("plancia-hook", "plancia-richiamo")
+
+#: Le chiamate che solo leggono: se il server cade mentre ne serve una, la si
+#: rifa' da sola. Una scrittura no: potrebbe essere gia' arrivata in fondo, e
+#: rifarla vorrebbe dire un task doppio.
+LETTURE = {"plancia_search", "plancia_briefing", "plancia_projects", "plancia_tasks",
+           "plancia_posts", "plancia_sessions", "plancia_memory", "plancia_lavagna",
+           "plancia_lanci", "plancia_eventi"}
+AZIONI_LETTURA = {"briefing", "projects", "tasks", "posts", "sessions", "memory",
+                  "lavagna", "lanci", "eventi", "aiuto"}
+
+ISTRUZIONI = (
+    "Plancia is the user's control centre for their AI work. Call plancia_briefing "
+    "at the start of a session about their projects, and record tasks, decisions and "
+    "social posts as they happen.")
+
+
+# --------------------------------------------------------------------------
+# dove sta il codice
+# --------------------------------------------------------------------------
+
+def radice() -> Path:
+    """Da dove prendere il codice di Plancia. In ordine: PLANCIA_ROOT
+    nell'ambiente (le prove), la chiave `codice` di config.json (chi sviluppa
+    Plancia e ne tiene un checkout), il plugin stesso. Una cartella che non ha
+    bin/plancia-mcp non vale e si passa alla successiva."""
+    scelte = [os.environ.get("PLANCIA_ROOT")]
+    try:
+        scelte.append(json.loads((DATI / "config.json").read_text("utf-8")).get("codice"))
+    except (OSError, ValueError, AttributeError):
+        pass
+    for scelta in scelte:
+        if isinstance(scelta, str) and scelta.strip():
+            p = Path(scelta).expanduser()
+            if (p / "bin" / "plancia-mcp").is_file():
+                return p
+    return PLUGIN
+
+
+def versione(r: Path = None) -> str:
+    try:
+        testo = ((r or radice()) / "plancia" / "__init__.py").read_text("utf-8")
+        m = re.search(r'__version__\s*=\s*"([^"]+)"', testo)
+        return m.group(1) if m else "?"
+    except OSError:
+        return "?"
+
+
+def scrivi_log(evento: str, dettaglio: str = "") -> None:
+    try:
+        LOG.parent.mkdir(parents=True, exist_ok=True)
+        if LOG.exists() and LOG.stat().st_size > 512 * 1024:
+            os.replace(LOG, LOG.with_name(LOG.name + ".1"))
+        riga = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "pid": os.getpid(),
+                "evento": evento}
+        if dettaglio:
+            riga["dettaglio"] = dettaglio[-1500:]
+        with open(LOG, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(riga, ensure_ascii=False) + "\n")
+    except OSError:
+        pass
+
+
+def esegui_script(nome: str, argomenti: list) -> int:
+    """Passa la mano a uno script di bin/ (gli hook), con lo stesso stdin."""
+    script = radice() / "bin" / nome
+    if not script.is_file():
+        return 0  # un hook che manca non deve mai fermare la sessione
+    argv = [sys.executable, str(script)] + argomenti
+    if os.name == "posix":
+        os.execv(sys.executable, argv)
+    return subprocess.call(argv)
+
+
+# --------------------------------------------------------------------------
+# la sentinella del server MCP
+# --------------------------------------------------------------------------
+
+def _e_lettura(richiesta: dict) -> bool:
+    metodo = richiesta.get("method")
+    if metodo in ("tools/list", "initialize", "ping", "resources/list",
+                  "prompts/list", "resources/templates/list"):
+        return True
+    if metodo != "tools/call":
+        return False
+    params = richiesta.get("params") or {}
+    nome = params.get("name")
+    argomenti = params.get("arguments") or {}
+    if nome in LETTURE:
+        return True
+    if nome == "plancia":
+        return str(argomenti.get("azione", "")) in AZIONI_LETTURA
+    return False
+
+
+def _attesa(richiesta: dict) -> float:
+    metodo = richiesta.get("method")
+    if metodo == "initialize":
+        return ATTESA_INIT
+    if metodo == "tools/list":
+        return ATTESA_ELENCO
+    if metodo == "tools/call":
+        params = richiesta.get("params") or {}
+        nome = params.get("name")
+        azione = str((params.get("arguments") or {}).get("azione", ""))
+        if nome == "plancia_sync" or (nome == "plancia" and azione == "sync"):
+            return ATTESA_SYNC
+    return ATTESA_CHIAMATA
+
+
+class Sentinella:
+    """Sta fra Claude Code e il server vero (bin/plancia-mcp) e non cade mai.
+
+    Claude Code lancia un server MCP su stdio una volta per sessione: se quel
+    processo muore, i tool spariscono fino al riavvio della sessione. Qui il
+    processo che Claude Code vede e' questo, che non tocca il database e non
+    importa niente di Plancia; il server vero e' un figlio, e se cade o si
+    blocca lo si riavvia alla chiamata dopo, rifacendo da soli le letture rimaste
+    a meta'.
+    """
+
+    def __init__(self, argomenti):
+        self.argomenti = argomenti
+        self.uscita = threading.Lock()
+        self.stato = threading.RLock()
+        self.proc = None
+        self.attese = {}          # id verso il figlio -> voce
+        self.prossimo = 0
+        self.init_cliente = None  # i params dell'initialize di Claude Code
+        self.cadute = deque(maxlen=20)
+        self.coda_err = deque(maxlen=40)
+        self.pausa_fino = 0.0
+        self.finito = False
+        # Si scrive al figlio da un filo solo, in ordine: chi inoltra non
+        # aspetta mai una pipe piena tenendo il lucchetto.
+        self.da_scrivere = queue.Queue()
+        threading.Thread(target=self._scrittore, daemon=True).start()
+
+    # ---- verso Claude Code -------------------------------------------------
+
+    def manda(self, msg: dict) -> None:
+        dati = (json.dumps(msg, ensure_ascii=False) + "\n").encode("utf-8")
+        with self.uscita:
+            try:
+                sys.stdout.buffer.write(dati)
+                sys.stdout.buffer.flush()
+            except (BrokenPipeError, OSError):
+                self.finito = True
+
+    def rispondi(self, cid, risultato=None, errore=None) -> None:
+        msg = {"jsonrpc": "2.0", "id": cid}
+        if errore is not None:
+            msg["error"] = errore
+        else:
+            msg["result"] = risultato
+        self.manda(msg)
+
+    def fallisci(self, voce: dict, motivo: str) -> None:
+        richiesta = voce["richiesta"]
+        cid = richiesta.get("id")
+        metodo = richiesta.get("method")
+        if metodo == "initialize":
+            self.rispondi(cid, self._init_di_riserva(richiesta))
+        elif metodo == "tools/list":
+            tools = self._tools_in_cache()
+            if tools is not None:
+                self.rispondi(cid, {"tools": tools})
+            else:
+                self.rispondi(cid, errore={"code": -32603, "message": f"Plancia: {motivo}"})
+        elif metodo == "tools/call":
+            self.rispondi(cid, {"content": [{"type": "text", "text": f"Plancia: {motivo}"}],
+                                "isError": True})
+        else:
+            self.rispondi(cid, errore={"code": -32603, "message": f"Plancia: {motivo}"})
+
+    def _init_di_riserva(self, richiesta: dict) -> dict:
+        chiesta = (richiesta.get("params") or {}).get("protocolVersion")
+        noti = {"2024-11-05", "2025-03-26", "2025-06-18"}
+        return {"protocolVersion": chiesta if chiesta in noti else "2025-06-18",
+                "capabilities": {"tools": {"listChanged": False}},
+                "serverInfo": {"name": "plancia", "version": versione()},
+                "instructions": ISTRUZIONI}
+
+    def _tools_in_cache(self):
+        try:
+            return json.loads(CACHE_TOOLS.read_text("utf-8"))["tools"]
+        except (OSError, ValueError, KeyError, TypeError):
+            return None
+
+    # ---- il figlio ---------------------------------------------------------
+
+    def _avvia(self) -> bool:
+        """Lancia il server vero. Da chiamare con `self.stato` preso."""
+        if time.monotonic() < self.pausa_fino:
+            return False
+        r = radice()
+        env = dict(os.environ)
+        # Il server riconosce la sua sessione dal pid di Claude Code
+        # (plancia/sessione.py): qui il genitore e' la sentinella, quindi il
+        # pid giusto glielo si dice.
+        env.setdefault("CLAUDE_PID", str(os.getppid()))
+        env["PLANCIA_SENTINELLA"] = "1"
+        try:
+            proc = subprocess.Popen(
+                [sys.executable, str(r / "bin" / "plancia-mcp")] + self.argomenti,
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                env=env)
+        except OSError as exc:
+            scrivi_log("non-parte", str(exc))
+            self.coda_err.append(str(exc))
+            self.cadute.append(time.monotonic())
+            return False
+        self.proc = proc
+        threading.Thread(target=self._leggi_figlio, args=(proc,), daemon=True).start()
+        threading.Thread(target=self._leggi_err, args=(proc,), daemon=True).start()
+        # La stretta di mano la fa la sentinella per conto di Claude Code, con
+        # gli stessi parametri: al primo avvio e a ogni riavvio.
+        if self.init_cliente is not None:
+            self._scrivi_figlio({"jsonrpc": "2.0", "id": "sentinella:init",
+                                 "method": "initialize", "params": self.init_cliente})
+            self._scrivi_figlio({"jsonrpc": "2.0", "method": "notifications/initialized"})
+        return True
+
+    def _scrivi_figlio(self, msg: dict) -> None:
+        proc = self.proc
+        if proc is not None:
+            self.da_scrivere.put((proc, msg))
+
+    def _scrittore(self) -> None:
+        while True:
+            proc, msg = self.da_scrivere.get()
+            if proc.poll() is not None:
+                continue  # morto: le sue richieste le ripesca _caduto
+            try:
+                proc.stdin.write((json.dumps(msg, ensure_ascii=False) + "\n").encode("utf-8"))
+                proc.stdin.flush()
+            except (BrokenPipeError, OSError, ValueError):
+                pass
+
+    def _leggi_err(self, proc) -> None:
+        for riga in proc.stderr:
+            testo = riga.decode("utf-8", errors="replace").rstrip()
+            self.coda_err.append(testo)
+            try:
+                sys.stderr.write(testo + "\n")
+                sys.stderr.flush()
+            except OSError:
+                pass
+
+    def _leggi_figlio(self, proc) -> None:
+        for riga in proc.stdout:
+            riga = riga.strip()
+            if not riga:
+                continue
+            try:
+                msg = json.loads(riga)
+            except ValueError:
+                self.coda_err.append("uscita non JSON: " + riga[:200].decode("utf-8", "replace"))
+                continue
+            self._dal_figlio(msg)
+        proc.wait()
+        self._caduto(proc)
+
+    def _dal_figlio(self, msg: dict) -> None:
+        if "id" not in msg or "method" in msg:
+            self.manda(msg)  # una notifica o una richiesta del server: passa com'e'
+            return
+        wid = msg.get("id")
+        if wid == "sentinella:init":
+            return
+        with self.stato:
+            voce = self.attese.pop(wid, None)
+        if voce is None:
+            return  # gia' risposta (scaduta, o data con la riserva)
+        richiesta = voce["richiesta"]
+        risposta = dict(msg)
+        risposta["id"] = richiesta.get("id")
+        if richiesta.get("method") == "tools/list" and "result" in msg:
+            try:
+                CACHE_TOOLS.parent.mkdir(parents=True, exist_ok=True)
+                tmp = CACHE_TOOLS.with_name(CACHE_TOOLS.name + ".tmp")
+                tmp.write_text(json.dumps(msg["result"], ensure_ascii=False), "utf-8")
+                os.replace(tmp, CACHE_TOOLS)
+            except OSError:
+                pass
+        self.manda(risposta)
+
+    def _caduto(self, proc) -> None:
+        with self.stato:
+            if proc is not self.proc:
+                return
+            self.proc = None
+            if self.finito:
+                return
+            codice = proc.returncode
+            ora = time.monotonic()
+            self.cadute.append(ora)
+            coda = "\n".join(list(self.coda_err)[-12:])
+            recenti = [t for t in self.cadute if ora - t < 60]
+            if len(recenti) >= CADUTE_MAX:
+                self.pausa_fino = ora + PAUSA
+                scrivi_log("in-pausa", f"{len(recenti)} cadute in un minuto, codice {codice}\n{coda}")
+            else:
+                scrivi_log("caduto", f"codice {codice}\n{coda}")
+            # In ordine di arrivo: il figlio le serve una alla volta, quindi
+            # la prima puo' essere stata a meta', le altre non erano partite.
+            voci = sorted(self.attese.values(), key=lambda v: v["n"])
+            self.attese.clear()
+            da_rifare = []
+            for i, voce in enumerate(voci):
+                if voce.get("scaduta"):
+                    self.fallisci(voce, (
+                        f"la chiamata ha superato {int(voce['attesa'])} secondi e il server "
+                        "si e' bloccato: l'ho riavviato. Se era una scrittura, controlla "
+                        "se e' arrivata prima di rifarla."))
+                elif i == 0 and not voce["lettura"]:
+                    self.fallisci(voce, (
+                        "il server si e' fermato mentre scriveva e l'ho riavviato. "
+                        "Controlla se la scrittura e' arrivata prima di rifarla."
+                        + (f" Ultima riga d'errore: {self.coda_err[-1]}" if self.coda_err else "")))
+                elif voce["tentativi"] >= 2:
+                    self.fallisci(voce, "il server e' caduto due volte su questa chiamata.")
+                else:
+                    da_rifare.append(voce)
+            for voce in da_rifare:
+                voce["tentativi"] += 1
+                self._inoltra(voce)
+
+    # ---- il giro delle richieste -------------------------------------------
+
+    def _inoltra(self, voce: dict) -> None:
+        """Manda una richiesta al figlio, avviandolo se serve. Con `self.stato`."""
+        if self.proc is None or self.proc.poll() is not None:
+            if not self._avvia():
+                resta = max(0, int(self.pausa_fino - time.monotonic()))
+                ultima = self.coda_err[-1] if self.coda_err else "nessun messaggio"
+                self.fallisci(voce, (
+                    f"il server non parte (ultima riga d'errore: {ultima}). Riprovo da solo "
+                    f"fra {resta} secondi; /plancia:doctor dice cosa non va."))
+                return
+            if voce["tentativi"] or self.cadute:
+                scrivi_log("riavviato", f"per {voce['richiesta'].get('method')}")
+        self.prossimo += 1
+        wid = self.prossimo
+        voce["n"] = wid
+        voce["scadenza"] = time.monotonic() + voce["attesa"]
+        msg = dict(voce["richiesta"])
+        msg["id"] = wid
+        self.attese[wid] = voce
+        self._scrivi_figlio(msg)
+
+    def _sorveglia(self) -> None:
+        while not self.finito:
+            time.sleep(0.5)
+            ora = time.monotonic()
+            da_uccidere = None
+            with self.stato:
+                for wid, voce in list(self.attese.items()):
+                    if ora < voce["scadenza"] or voce.get("scaduta"):
+                        continue
+                    if voce["richiesta"].get("method") == "initialize":
+                        # Claude Code non aspetta: risponde la sentinella, il
+                        # figlio continua ad avviarsi e servira' le chiamate dopo.
+                        self.attese.pop(wid, None)
+                        self.fallisci(voce, "avvio lento")
+                        continue
+                    voce["scaduta"] = True
+                    da_uccidere = self.proc
+                    scrivi_log("bloccato", f"{voce['richiesta'].get('method')} oltre "
+                               f"{int(voce['attesa'])} s: riavvio")
+            if da_uccidere is not None:
+                try:
+                    da_uccidere.kill()
+                except OSError:
+                    pass
+
+    def _dal_cliente(self, msg: dict) -> None:
+        metodo = msg.get("method")
+        if "id" not in msg:
+            with self.stato:
+                if metodo == "notifications/cancelled":
+                    params = dict(msg.get("params") or {})
+                    for wid, voce in self.attese.items():
+                        if voce["richiesta"].get("id") == params.get("requestId"):
+                            params["requestId"] = wid
+                    msg = dict(msg, params=params)
+                self._scrivi_figlio(msg)
+            return
+        if metodo == "ping":
+            self.rispondi(msg.get("id"), {})
+            return
+        voce = {"richiesta": msg, "lettura": _e_lettura(msg), "attesa": _attesa(msg),
+                "tentativi": 0}
+        with self.stato:
+            if metodo == "initialize":
+                self.init_cliente = msg.get("params") or {}
+                if self.proc is not None and self.proc.poll() is None:
+                    # gia' vivo (un secondo initialize): basta rinnovare la stretta
+                    pass
+                elif not self._avvia_senza_stretta():
+                    self.fallisci(voce, "avvio")
+                    return
+            self._inoltra(voce)
+
+    def _avvia_senza_stretta(self) -> bool:
+        """Al primo initialize la stretta di mano e' quella di Claude Code, che
+        si inoltra cosi' com'e': la sentinella non ne manda una sua."""
+        cliente, self.init_cliente = self.init_cliente, None
+        try:
+            return self._avvia()
+        finally:
+            self.init_cliente = cliente
+
+    def gira(self) -> int:
+        scrivi_log("avvio", f"codice {radice()} versione {versione()}")
+        threading.Thread(target=self._sorveglia, daemon=True).start()
+
+        def basta(*_):
+            self.chiudi()
+            os._exit(0)
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            try:
+                signal.signal(sig, basta)
+            except (ValueError, OSError):
+                pass
+        for riga in sys.stdin.buffer:
+            riga = riga.strip()
+            if not riga:
+                continue
+            try:
+                msg = json.loads(riga)
+            except ValueError:
+                continue
+            for m in (msg if isinstance(msg, list) else [msg]):
+                if isinstance(m, dict):
+                    try:
+                        self._dal_cliente(m)
+                    except Exception as exc:  # la sentinella non cade per una richiesta
+                        scrivi_log("errore-sentinella", repr(exc))
+                        if m.get("id") is not None:
+                            self.rispondi(m.get("id"), errore={"code": -32603,
+                                                               "message": f"Plancia: {exc}"})
+        self.chiudi()
+        return 0
+
+    def chiudi(self) -> None:
+        self.finito = True
+        proc = self.proc
+        if proc is None:
+            return
+        try:
+            proc.stdin.close()
+            proc.wait(timeout=2)
+        except Exception:
+            try:
+                proc.kill()
+            except OSError:
+                pass
+
+
+# --------------------------------------------------------------------------
+# salute
+# --------------------------------------------------------------------------
+
+def _porta() -> int:
+    try:
+        return int(json.loads((DATI / "config.json").read_text("utf-8")).get("port") or 7773)
+    except (OSError, ValueError, TypeError, AttributeError):
+        return 7773
+
+
+def _dashboard_viva(attesa: float = 0.8) -> bool:
+    import socket
+    try:
+        with socket.create_connection(("127.0.0.1", _porta()), timeout=attesa):
+            return True
+    except OSError:
+        return False
+
+
+def _plist_server() -> Path:
+    return CASA / "Library" / "LaunchAgents" / f"{ETICHETTA_SERVER}.plist"
+
+
+def ripara_dashboard() -> str:
+    """Se la dashboard e' installata come servizio (macOS) e non risponde, la
+    riavvia. Non installa niente che non ci fosse."""
+    if sys.platform != "darwin" or not _plist_server().exists():
+        return ""
+    if _dashboard_viva():
+        return ""
+    uid = os.getuid()
+    subprocess.run(["launchctl", "kickstart", "-k", f"gui/{uid}/{ETICHETTA_SERVER}"],
+                   capture_output=True, timeout=5)
+    for _ in range(10):
+        time.sleep(0.3)
+        if _dashboard_viva(0.3):
+            scrivi_log("dashboard-riavviata")
+            return "riavviata"
+    # forse non era nemmeno caricata
+    subprocess.run(["launchctl", "bootstrap", f"gui/{uid}", str(_plist_server())],
+                   capture_output=True, timeout=5)
+    return "riavvio chiesto"
+
+
+def controlla_db(scrittura: bool = False) -> dict:
+    db = DATI / "plancia.db"
+    esito = {"percorso": str(db), "esiste": db.exists()}
+    if not db.exists():
+        esito["errore"] = "il database non c'e' ancora: lo crea il primo avvio"
+        return esito
+    t0 = time.monotonic()
+    try:
+        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=2)
+        try:
+            v = con.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
+            esito["schema"] = v[0] if v else None
+            esito["progetti"] = con.execute("SELECT COUNT(*) FROM projects").fetchone()[0]
+            esito["ultimo_sync"] = (con.execute(
+                "SELECT value FROM meta WHERE key='last_sync_end'").fetchone() or [None])[0]
+        finally:
+            con.close()
+        esito["lettura_ms"] = round((time.monotonic() - t0) * 1000)
+    except sqlite3.Error as exc:
+        esito["errore"] = f"lettura: {exc}"
+        return esito
+    if scrittura:
+        # Prende il blocco di scrittura e lo lascia subito, senza scrivere niente:
+        # dice se in questo momento qualcuno lo tiene.
+        try:
+            con = sqlite3.connect(str(db), timeout=0, isolation_level=None)
+            try:
+                con.execute("BEGIN IMMEDIATE")
+                con.execute("ROLLBACK")
+                esito["scrittura"] = "libera"
+            finally:
+                con.close()
+        except sqlite3.OperationalError as exc:
+            esito["scrittura"] = f"occupata adesso ({exc})"
+    return esito
+
+
+def prova_mcp(attesa: float = 8.0) -> dict:
+    """Avvia il server vero, gli chiede initialize, l'elenco dei tool e i
+    progetti, e misura. E' quello che fa Claude Code, senza Claude Code."""
+    t0 = time.monotonic()
+    r = radice()
+    try:
+        proc = subprocess.Popen([sys.executable, str(r / "bin" / "plancia-mcp")],
+                                stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE)
+    except OSError as exc:
+        return {"ok": False, "errore": str(exc)}
+    richieste = [
+        {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+         "params": {"protocolVersion": "2025-06-18", "capabilities": {},
+                    "clientInfo": {"name": "plancia-plugin", "version": "1"}}},
+        {"jsonrpc": "2.0", "method": "notifications/initialized"},
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+        {"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+         "params": {"name": "plancia", "arguments": {"azione": "projects"}}},
+    ]
+    dati = "".join(json.dumps(x) + "\n" for x in richieste).encode()
+    try:
+        out, err = proc.communicate(dati, timeout=attesa)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        out, err = proc.communicate()
+        return {"ok": False, "errore": f"nessuna risposta in {attesa:.0f} s",
+                "stderr": err.decode("utf-8", "replace")[-600:]}
+    risposte = {}
+    for riga in out.decode("utf-8", "replace").splitlines():
+        try:
+            m = json.loads(riga)
+            risposte[m.get("id")] = m
+        except ValueError:
+            pass
+    ms = round((time.monotonic() - t0) * 1000)
+    n_tools = len(((risposte.get(2) or {}).get("result") or {}).get("tools") or [])
+    chiamata = (risposte.get(3) or {}).get("result") or {}
+    ok = 1 in risposte and n_tools > 0 and not chiamata.get("isError", True)
+    esito = {"ok": ok, "ms": ms, "tools": n_tools}
+    if not ok:
+        testo = ((chiamata.get("content") or [{}])[0]).get("text", "")
+        esito["errore"] = testo[:400] or "risposta incompleta"
+        esito["stderr"] = err.decode("utf-8", "replace")[-600:]
+    return esito
+
+
+def cadute_recenti(ore: float = 24) -> dict:
+    """Cosa ha visto la sentinella nelle ultime `ore`."""
+    conto = {"caduto": 0, "bloccato": 0, "in-pausa": 0, "riavviato": 0, "ultima": None}
+    limite = time.time() - ore * 3600
+    try:
+        righe = LOG.read_text("utf-8").splitlines()[-2000:]
+    except OSError:
+        return conto
+    for riga in righe:
+        try:
+            d = json.loads(riga)
+            t = time.mktime(time.strptime(d["ts"], "%Y-%m-%dT%H:%M:%S"))
+        except (ValueError, KeyError):
+            continue
+        if t < limite or d.get("evento") not in conto:
+            continue
+        conto[d["evento"]] += 1
+        if d["evento"] in ("caduto", "bloccato", "in-pausa"):
+            conto["ultima"] = {"ts": d["ts"], "evento": d["evento"],
+                               "dettaglio": (d.get("dettaglio") or "").splitlines()[-1:]}
+    return conto
+
+
+def doppioni() -> list:
+    """Le registrazioni globali di prima del plugin, che col plugin attivo fanno
+    girare due server e stampano due volte il briefing."""
+    trovati = []
+    try:
+        dati = json.loads((CASA / ".claude.json").read_text("utf-8"))
+        srv = (dati.get("mcpServers") or {}).get("plancia")
+        if isinstance(srv, dict) and "plancia-mcp" in json.dumps(srv):
+            trovati.append("server MCP `plancia` in ~/.claude.json")
+    except (OSError, ValueError):
+        pass
+    try:
+        imp = json.loads((CLAUDE / "settings.json").read_text("utf-8"))
+        for evento, voci in (imp.get("hooks") or {}).items():
+            for voce in voci or []:
+                for h in voce.get("hooks") or []:
+                    c = (h.get("command") or "").rstrip().rstrip("'\"")
+                    if c.endswith(SOSTITUITI_DAL_PLUGIN):
+                        trovati.append(f"hook {evento} in settings.json ({Path(c).name})")
+    except (OSError, ValueError, AttributeError):
+        pass
+    return trovati
+
+
+def salute(completa: bool = True) -> dict:
+    r = radice()
+    esito = {"codice": str(r), "versione": versione(r),
+             "da": "config.json (codice)" if r != PLUGIN else "plugin",
+             "database": controlla_db(scrittura=completa),
+             "sentinella": cadute_recenti(),
+             "doppioni": doppioni()}
+    if sys.platform == "darwin" and _plist_server().exists():
+        esito["dashboard"] = "viva" if _dashboard_viva() else "ferma"
+    elif _dashboard_viva(0.3):
+        esito["dashboard"] = "viva"
+    if completa:
+        esito["mcp"] = prova_mcp()
+    return esito
+
+
+def stampa_salute(e: dict) -> None:
+    def riga(ok, testo):
+        print(("  ok  " if ok else "  !!  ") + testo)
+    print(f"Plancia {e['versione']}, codice da {e['da']}: {e['codice']}")
+    db = e["database"]
+    riga("errore" not in db, f"database {db['percorso']}: " + (
+        db.get("errore") or f"schema {db.get('schema')}, {db.get('progetti')} progetti, "
+        f"letto in {db.get('lettura_ms')} ms, scrittura {db.get('scrittura', '?')}, "
+        f"ultimo sync {db.get('ultimo_sync') or 'mai'}"))
+    if "mcp" in e:
+        m = e["mcp"]
+        riga(m.get("ok"), "server MCP: " + (
+            f"{m['tools']} tool, risponde in {m['ms']} ms" if m.get("ok")
+            else f"{m.get('errore')} {m.get('stderr', '')[-300:]}"))
+    s = e["sentinella"]
+    guai = s["caduto"] + s["bloccato"] + s["in-pausa"]
+    riga(guai == 0, f"sentinella, ultime 24 ore: {s['caduto']} cadute, {s['bloccato']} "
+         f"blocchi, {s['riavviato']} riavvii" + (
+             f"; l'ultima {s['ultima']['ts']}: {' '.join(s['ultima']['dettaglio'])}"
+             if s.get("ultima") else ""))
+    if "dashboard" in e:
+        riga(e["dashboard"] == "viva", f"dashboard su 127.0.0.1:{_porta()}: {e['dashboard']}")
+    if e["doppioni"]:
+        riga(False, "registrazioni di prima del plugin ancora attive: "
+             + "; ".join(e["doppioni"]) + ". Le toglie `plancia-plugin migra`.")
+    else:
+        riga(True, "nessuna registrazione doppia")
+
+
+def avvio() -> int:
+    """Hook SessionStart: veloce, silenzioso se va tutto bene. Ripara quello
+    che si ripara da solo (la dashboard ferma) e dice in una riga il resto."""
+    try:
+        sys.stdin.read()
+    except Exception:
+        pass
+    avvisi = []
+    try:
+        db = controlla_db()
+        if "errore" in db and db.get("esiste"):
+            avvisi.append(f"il database non si legge ({db['errore']})")
+        riparata = ripara_dashboard()
+        if riparata:
+            avvisi.append(f"la dashboard era ferma: {riparata}")
+        s = cadute_recenti(ore=1)
+        if s["caduto"] + s["bloccato"] + s["in-pausa"] >= 2:
+            avvisi.append(f"il server MCP e' caduto {s['caduto'] + s['bloccato']} volte "
+                          "nell'ultima ora (la sentinella l'ha riavviato)")
+        d = doppioni()
+        if d and os.environ.get("CLAUDE_PLUGIN_ROOT"):
+            avvisi.append("restano le registrazioni di prima del plugin (" + "; ".join(d)
+                          + "): /plancia:doctor le toglie")
+    except Exception as exc:
+        avvisi.append(f"controllo non riuscito: {exc}")
+    if avvisi:
+        testo = "Plancia, stato del collegamento: " + "; ".join(avvisi) + "."
+        print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart",
+                                                 "additionalContext": testo}},
+                         ensure_ascii=False))
+    return 0
+
+
+# --------------------------------------------------------------------------
+# migrazione dalle registrazioni globali al plugin
+# --------------------------------------------------------------------------
+
+def _copia(p: Path) -> Path:
+    dest = p.with_name(p.name + time.strftime(".plancia-prima-del-plugin-%Y%m%d-%H%M%S"))
+    shutil.copy2(p, dest)
+    return dest
+
+
+def migra(prova: bool = False) -> list:
+    """Toglie le registrazioni globali di Plancia che il plugin sostituisce:
+    il server MCP in ~/.claude.json e gli hook del briefing e del richiamo in
+    settings.json (il guardiano resta dov'e'). Prima una
+    copia di ciascun file accanto all'originale. Le skill personali si
+    spostano solo se sono la copia installata da `plancia install` (cominciano
+    con lo stesso nome e descrizione): una skill scritta a mano resta."""
+    fatto = []
+    cj = CASA / ".claude.json"
+    try:
+        dati = json.loads(cj.read_text("utf-8"))
+        srv = (dati.get("mcpServers") or {}).get("plancia")
+        if isinstance(srv, dict) and "plancia-mcp" in json.dumps(srv):
+            if not prova:
+                copia = _copia(cj)
+                # Claude Code riscrive questo file di continuo: lo toglie lui, con
+                # il suo comando, e a mano solo se il comando non c'e' o non riesce
+                claude = shutil.which("claude")
+                esito = None
+                if claude:
+                    esito = subprocess.run([claude, "mcp", "remove", "plancia", "--scope", "user"],
+                                           capture_output=True, text=True, timeout=60)
+                if esito is None or esito.returncode != 0:
+                    dati = json.loads(cj.read_text("utf-8"))
+                    dati["mcpServers"].pop("plancia", None)
+                    tmp = cj.with_name(cj.name + ".plancia-tmp")
+                    tmp.write_text(json.dumps(dati, indent=2, ensure_ascii=False), "utf-8")
+                    os.replace(tmp, cj)
+                fatto.append(f"tolto il server MCP `plancia` da {cj} (copia: {copia.name})")
+            else:
+                fatto.append(f"toglierei il server MCP `plancia` da {cj}")
+    except (OSError, ValueError) as exc:
+        fatto.append(f"{cj} non letto: {exc}")
+    st = CLAUDE / "settings.json"
+    try:
+        imp = json.loads(st.read_text("utf-8"))
+        tolti = []
+        hooks = imp.get("hooks") or {}
+        for evento in list(hooks):
+            nuove = []
+            for voce in hooks[evento] or []:
+                resto = [h for h in voce.get("hooks") or []
+                         if not (h.get("command") or "").rstrip().rstrip("'\"").endswith(
+                             SOSTITUITI_DAL_PLUGIN)]
+                if len(resto) != len(voce.get("hooks") or []):
+                    tolti.append(evento)
+                if resto:
+                    nuove.append(dict(voce, hooks=resto))
+            if nuove:
+                hooks[evento] = nuove
+            else:
+                hooks.pop(evento)
+        if tolti:
+            if not prova:
+                copia = _copia(st)
+                tmp = st.with_name(st.name + ".plancia-tmp")
+                tmp.write_text(json.dumps(imp, indent=2, ensure_ascii=False) + "\n", "utf-8")
+                os.replace(tmp, st)
+                fatto.append(f"tolti gli hook di Plancia da {st} ({', '.join(sorted(set(tolti)))}; "
+                             f"copia: {copia.name})")
+            else:
+                fatto.append(f"toglierei gli hook di Plancia da {st}: {', '.join(sorted(set(tolti)))}")
+    except (OSError, ValueError) as exc:
+        fatto.append(f"{st} non letto: {exc}")
+    for nome, inizio in (("plancia", "name: plancia"), ("riepilogo", "name: riepilogo")):
+        cartella = CLAUDE / "skills" / nome
+        f = cartella / "SKILL.md"
+        try:
+            testo = f.read_text("utf-8")
+        except OSError:
+            continue
+        installata = inizio in testo[:200] and "Plancia" in testo
+        if not installata:
+            fatto.append(f"lasciata {cartella}: non e' la copia di `plancia install`")
+            continue
+        dest = CLAUDE / f"skills-prima-del-plugin-{time.strftime('%Y%m%d')}" / nome
+        if prova:
+            fatto.append(f"sposterei {cartella} in {dest} (il plugin porta la sua)")
+            continue
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        if dest.exists():
+            shutil.rmtree(dest)
+        shutil.move(str(cartella), str(dest))
+        fatto.append(f"spostata {cartella} in {dest}: il plugin porta la sua")
+    if not fatto:
+        fatto.append("niente da togliere: nessuna registrazione di prima del plugin")
+    return fatto
+
+
+# --------------------------------------------------------------------------
+
+def main(argv) -> int:
+    if not argv:
+        print(__doc__)
+        return 0
+    comando, resto = argv[0], argv[1:]
+    if comando == "mcp":
+        return Sentinella(resto).gira()
+    if comando == "hook":
+        return esegui_script("plancia-hook", resto)
+    if comando == "richiamo":
+        return esegui_script("plancia-richiamo", resto)
+    if comando == "guardiano":
+        return esegui_script("plancia-guardiano", resto)
+    if comando == "avvio":
+        return avvio()
+    if comando in ("salute", "doctor"):
+        e = salute(completa="--veloce" not in resto)
+        if "--json" in resto:
+            print(json.dumps(e, ensure_ascii=False, indent=2))
+        else:
+            stampa_salute(e)
+        if "--ripara" in resto:
+            r = ripara_dashboard()
+            if r:
+                print(f"  ->  dashboard: {r}")
+        return 0
+    if comando == "migra":
+        for riga in migra(prova="--prova" in resto):
+            print(riga)
+        return 0
+    print(f"comando sconosciuto: {comando}\n{__doc__}", file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

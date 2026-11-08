@@ -197,7 +197,10 @@ def corrente(argv=None):
         return {"session_id": env_sid, "cwd": cwd, "agent": "claude",
                 "host": host, "origine": "env"}
 
-    dal_file = _file_session_id(os.getppid())
+    # CLAUDE_PID prima del ppid anche qui: con il plugin il server non e'
+    # figlio diretto di Claude Code ma del suo guardiano (bin/plancia-plugin),
+    # che passa il pid di Claude Code in CLAUDE_PID.
+    dal_file = _file_session_id(os.environ.get("CLAUDE_PID") or os.getppid())
     if dal_file:
         return {"session_id": dal_file, "cwd": cwd, "agent": "claude",
                 "host": host, "origine": "file"}

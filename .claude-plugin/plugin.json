@@ -1,0 +1,19 @@
+{
+  "name": "plancia",
+  "version": "1.0.0",
+  "description": "Connect Claude Code to Plancia, the local board for your work with AI: projects, tasks, social drafts, past sessions and memory. Registers the MCP server behind a sentinel that restarts it if it falls over, prints the briefing when a session starts, and adds /plancia:briefing and /plancia:doctor.",
+  "author": {
+    "name": "Eugenio Nerelli",
+    "url": "https://github.com/nerln"
+  },
+  "homepage": "https://github.com/nerln/plancia",
+  "repository": "https://github.com/nerln/plancia",
+  "license": "GPL-3.0-or-later",
+  "keywords": ["plancia", "mcp", "projects", "tasks", "sessions", "memory", "briefing"],
+  "mcpServers": {
+    "plancia": {
+      "command": "python3",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/bin/plancia-plugin", "mcp"]
+    }
+  }
+}

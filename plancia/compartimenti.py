@@ -4122,9 +4122,12 @@ def _voce_efficace(v: dict) -> bool:
 # e parte con il python che trova in PATH. PLANCIA_PIATTAFORMA fa fingere una
 # piattaforma alle prove di Plancia: gli script del guardiano e dell'hook non la
 # guardano (decidono da `os.name`), ma resta fra le negate, perche' una riga che
-# la mette in `env` non ha altro scopo che spegnere i confini.
+# la mette in `env` non ha altro scopo che spegnere i confini. PLANCIA_ROOT dice al
+# plugin per Claude Code da quale cartella prendere il codice del server MCP e
+# degli hook: in un settings farebbe girare codice qualunque al loro posto (chi
+# sviluppa Plancia lo dice con la chiave `codice` di config.json, che e' protetta).
 _ENV_PERICOLOSE = frozenset((
-    "PLANCIA_HOME", "PLANCIA_PIATTAFORMA", "HOME", "CLAUDE_CONFIG_DIR", "PYTHONPATH",
+    "PLANCIA_HOME", "PLANCIA_PIATTAFORMA", "PLANCIA_ROOT", "HOME", "CLAUDE_CONFIG_DIR", "PYTHONPATH",
     "PYTHONHOME", "PYTHONSTARTUP", "PYTHONUSERBASE", "PYTHONEXECUTABLE",
     "PYTHONINSPECT", "PYTHONBREAKPOINT", "PATH", "LD_PRELOAD", "LD_LIBRARY_PATH"))
 

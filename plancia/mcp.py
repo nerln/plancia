@@ -192,6 +192,17 @@ _TUTTI = [
         "inputSchema": _s("", full={"type": "boolean"}, skip_git={"type": "boolean"}),
     },
     {
+        "name": "plancia_collega",
+        "description": (
+            "Link a folder to a project, and move this session to it. Pass cartella "
+            "(the absolute path of the folder you are working in, not a container like "
+            "~/dev) and progetto (exact key or name). Without progetto it says which "
+            "project the folder already belongs to. crea=true creates the project "
+            "when no project has that name; without it you get the similar ones."),
+        "inputSchema": _s("", cartella=STR, progetto=STR, crea={"type": "boolean"},
+                          nome=STR),
+    },
+    {
         "name": "plancia_riprendi",
         "description": (
             "Resume a Plancia task from where its own session left off (viva/chiusa/"
@@ -290,7 +301,7 @@ def _fmt(data) -> str:
 # stato, ed è un'azione di lettura come le altre.
 _SCRITTURE = {"plancia_task_add", "plancia_task_update", "plancia_post_add",
               "plancia_post_update", "plancia_log", "plancia_project_update",
-              "plancia_manda"}
+              "plancia_manda", "plancia_collega"}
 
 
 def _sessione_bloccata(conn):
@@ -337,6 +348,21 @@ def _oggetto_scrivibile(conn, lettura, ombra, leggi, chiave, nome):
     viste.oggetto_scrivibile(conn, lettura, ombra, leggi, chiave, nome)
 
 
+_SCHEMA_OK = False
+
+
+def _schema_pronto(conn) -> None:
+    """Lo schema si controlla alla prima chiamata, non all'avvio e non a ogni
+    chiamata. Se e' gia' aggiornato `init_db` non scrive niente; se manca
+    qualcosa scrive una volta, e se il database e' occupato la chiamata
+    fallisce con un messaggio, ma il server resta vivo per la prossima."""
+    global _SCHEMA_OK
+    if _SCHEMA_OK:
+        return
+    store.init_db(conn)
+    _SCHEMA_OK = True
+
+
 def call_tool(name: str, args: dict) -> str:
     # Il dispatcher: `plancia` con un'azione diventa il tool di prima che aveva
     # quel nome, e da li' in giu' non cambia niente. Tenere una catena sola vuol
@@ -356,7 +382,7 @@ def call_tool(name: str, args: dict) -> str:
         name = f"plancia_{azione}"
 
     conn = store.connect()
-    store.init_db(conn)
+    _schema_pronto(conn)
     # Compartimenti (plancia/compartimenti_viste.py): se in config ce ne sono di
     # nominati, questo server sa di che compartimento e' la sessione che lo ha
     # lanciato (`sessione.corrente()`: l'id e la cwd di partenza; l'id si
@@ -621,6 +647,19 @@ def call_tool(name: str, args: dict) -> str:
                 modo=args.get("modo", "proposta"), compartimento=tag_comp,
                 lett=lettura))
 
+        if name == "plancia_collega":
+            try:
+                s_ = sessione.corrente()
+            except Exception:
+                s_ = {}
+            # le letture passano dalle viste del compartimento (`lettura`): un
+            # progetto o una cartella di un altro non si nominano e non si toccano
+            return _fmt(actions.collega(
+                conn, args.get("cartella") or s_.get("cwd"), args.get("progetto"),
+                crea=bool(args.get("crea")), nome=args.get("nome"),
+                session_id=s_.get("session_id"), compartimento=tag_comp,
+                lettura=lettura if ombra is not None else None))
+
         if name == "plancia_lanci":
             if args.get("id"):
                 return _fmt(cantiere.dettaglio(lettura, int(args["id"])))
@@ -750,9 +789,18 @@ def handle(req: dict) -> None:
 def main() -> int:
     piattaforma.stdio_utf8()
     config.ensure_dirs()
-    conn = store.connect()
-    store.init_db(conn)
-    conn.close()
+    # Niente database qui. Fino a novembre 2026 l'avvio apriva il database e
+    # ci scriveva (init_db), prima ancora di rispondere a `initialize`: con un
+    # sync che teneva il blocco, il processo aspettava quindici secondi e poi
+    # moriva con "database is locked", e Claude Code segnava il server come
+    # CONNECTION_CLOSED per tutta la sessione. Ora l'avvio risponde subito e
+    # lo schema si controlla alla prima chiamata (`_schema_pronto`).
+    #
+    # E una scrittura di Claude che trova un sync in corso aspetta fino a
+    # 45 secondi invece di 15: il sync tiene il blocco per decimi di secondo
+    # (plancia/turni.py, `_scrivi_lotto`), ma una chiamata che fallisce per
+    # averlo incrociato e' un task perso.
+    store.ATTESA_MS = 45000
     for line in sys.stdin:
         line = line.strip()
         if not line:

@@ -86,6 +86,25 @@ DEFAULTS = {
 }
 
 
+#: I due nomi con cui Claude Code vede i tool di Plancia: con il server
+#: registrato a mano (`plancia install`, server "plancia") e con il plugin
+#: (server "plancia" del plugin "plancia"). Le liste di ammessi e negati di chi
+#: lancia `claude -p` (Jarvis, il cantiere) li devono dire tutti e due: un tool
+#: con il nome del plugin che non sta in una lista di negati e' un tool ammesso
+#: con un `defaultMode` aperto.
+PREFISSI_MCP = ("mcp__plancia__", "mcp__plugin_plancia_plancia__")
+
+
+def nomi_mcp(nomi) -> list:
+    """Ogni `mcp__plancia__x` della lista, piu' lo stesso tool col nome del plugin."""
+    fuori = []
+    for n in nomi:
+        fuori.append(n)
+        if n.startswith(PREFISSI_MCP[0]):
+            fuori.append(PREFISSI_MCP[1] + n[len(PREFISSI_MCP[0]):])
+    return fuori
+
+
 def ensure_dirs() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     QUEUE_DIR.mkdir(parents=True, exist_ok=True)

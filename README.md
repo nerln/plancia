@@ -74,6 +74,48 @@ See [docs/NOVITA.md](docs/NOVITA.md) for what changed recently and why.
 
 ## Install
 
+### The Claude Code plugin
+
+One line connects Claude Code to Plancia:
+
+```bash
+claude plugin marketplace add nerln/plancia && claude plugin install plancia@plancia
+```
+
+Inside Claude Code the same is `/plugin marketplace add nerln/plancia` and then
+`/plugin install plancia@plancia`. New sessions pick it up. The archive is
+`~/.plancia/plancia.db`, created on first use. The plugin needs Python 3.9+ as
+`python3`, on macOS or Linux; on Windows `plancia install` (below) stays the way in.
+
+What it brings:
+
+- **The MCP server, behind a sentinel.** Claude Code talks to a small process
+  that never touches the database. The real server runs behind it: if it crashes
+  or hangs, the sentinel starts a new one at the next call and repeats a read
+  that was cut off. A write that was cut off comes back as an error that says to
+  check before retrying, so a task is never written twice. Restarts go to
+  `~/.plancia/sentinella-mcp.log`.
+- **The briefing when a session starts**, plus one line of warning only when
+  something is wrong: the archive cannot be read, the dashboard stopped (on
+  macOS it is restarted), the server fell over more than once in the last hour.
+- **The `plancia` and `riepilogo` skills.**
+- **`/plancia:briefing [project]`** links the folder you are working in, and the
+  session, to its project, then gives that project's briefing. For a folder
+  Plancia has never seen it lists the likely projects (from the git remote, then
+  from the words of the path) and links nothing until one is picked. A container
+  such as `~/dev` is never linked.
+- **`/plancia:doctor`** reads the archive, starts the MCP server once and times
+  it, reads the sentinel's log, and repairs what it can.
+
+Coming from `plancia install`: run `/plancia:doctor`. It finds the old
+registrations (the `plancia` server in `~/.claude.json`, the hooks in
+`settings.json`) and, once you say yes, removes them and keeps a dated copy of
+each file. If you work on Plancia itself, set `codice` in
+`~/.plancia/config.json` to the path of your checkout and the plugin runs that
+code, the same the dashboard runs.
+
+### Dashboard, Mac app and project map
+
 ```bash
 git clone https://github.com/nerln/plancia.git ~/dev/plancia
 cd ~/dev/plancia
@@ -82,15 +124,17 @@ cd ~/dev/plancia
 ./mac/build.sh --install   # builds Plancia.app into /Applications (macOS 26 or later)
 ```
 
-`plancia uninstall` puts everything back. Your data stays in `~/.plancia/`.
+With the plugin installed, `plancia install` is only needed for the `plancia`
+command and the dashboard autostart. `plancia uninstall` puts everything back.
+Your data stays in `~/.plancia/`.
 
 ## Skills for Claude Code
 
 Two skills, `plancia` and `riepilogo`, tell Claude Code when to read from
-Plancia and when to write back. `plancia install` puts them in
-`~/.claude/skills/`; the English text, with triggers in English and Italian,
-is also in [skills/](skills/README.md), where you can read it or copy it by
-hand. Those two skills are MIT licensed; the rest of this repository is GPL-3.0.
+Plancia and when to write back. The plugin carries them, and `plancia install`
+puts them in `~/.claude/skills/`. The English text, with triggers in English
+and Italian, is in [skills/](skills/README.md), where you can read it or copy it
+by hand. Those two skills are MIT licensed; the rest of this repository is GPL-3.0.
 
 ## Windows and Linux
 

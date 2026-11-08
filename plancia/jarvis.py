@@ -459,23 +459,23 @@ def esegui(testo: str, lang=None, conn=None, vista=None) -> dict:
 #    questo codice, con i dati veri (agente, cartella, modo), e ogni campo si
 #    controlla contro l'archivio prima di mostrarlo.
 
-TOOL_LETTURA = [
+TOOL_LETTURA = config.nomi_mcp([
     "mcp__plancia__plancia_briefing", "mcp__plancia__plancia_search",
     "mcp__plancia__plancia_projects", "mcp__plancia__plancia_tasks",
     "mcp__plancia__plancia_posts", "mcp__plancia__plancia_sessions",
     "mcp__plancia__plancia_memory", "mcp__plancia__plancia_lavagna",
     "mcp__plancia__plancia_lanci", "mcp__plancia__plancia_eventi",
-]
+])
 
-TOOL_NEGATI = [
+TOOL_NEGATI = config.nomi_mcp([
     "mcp__plancia__plancia_task_add", "mcp__plancia__plancia_task_update",
     "mcp__plancia__plancia_project_update", "mcp__plancia__plancia_post_add",
     "mcp__plancia__plancia_post_update", "mcp__plancia__plancia_log",
     "mcp__plancia__plancia_manda", "mcp__plancia__plancia_riprendi",
     "mcp__plancia__plancia_sync", "mcp__plancia__plancia_speak",
-    "mcp__plancia__plancia_recap",
+    "mcp__plancia__plancia_recap", "mcp__plancia__plancia_collega",
     "Bash", "Write", "Edit", "MultiEdit", "NotebookEdit", "WebFetch", "WebSearch", "Task",
-]
+])
 
 MARCA_PROPOSTA = "@@PROPOSTA"
 SCADENZA_PROPOSTA = 300

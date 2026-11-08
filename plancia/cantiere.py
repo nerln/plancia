@@ -40,7 +40,7 @@ AGENTI = ("claude", "codex")
 # controllo di appartenenza a un elenco di modi validi.
 
 # Cosa può toccare l'agente nei due modi.
-TOOL_LETTURA = ["Read", "Glob", "Grep", "WebSearch", "WebFetch",
+TOOL_LETTURA = config.nomi_mcp(["Read", "Glob", "Grep", "WebSearch", "WebFetch",
                 # git per intero: con i permessi per singolo sottocomando
                 # `git -C ...` non passa e l'agente resta cieco
                 "Bash(git:*)", "Bash(ls:*)", "Bash(rg:*)", "Bash(cat:*)",
@@ -50,13 +50,12 @@ TOOL_LETTURA = ["Read", "Glob", "Grep", "WebSearch", "WebFetch",
                 # I post mancavano da tutte e due le liste, e senza di loro il
                 # lato social del cantiere non era raggiungibile: un lancio a cui
                 # si chiede una bozza si fermava a chiedere il permesso.
-                "mcp__plancia__plancia_posts", "mcp__plancia__plancia_lavagna"]
-TOOL_SCRITTURA = TOOL_LETTURA + ["Edit", "Write", "MultiEdit", "NotebookEdit", "Bash",
-                                 "mcp__plancia__plancia_task_update",
-                                 "mcp__plancia__plancia_log",
-                                 "mcp__plancia__plancia_project_update",
-                                 "mcp__plancia__plancia_post_add",
-                                 "mcp__plancia__plancia_post_update"]
+                "mcp__plancia__plancia_posts", "mcp__plancia__plancia_lavagna"])
+TOOL_SCRITTURA = TOOL_LETTURA + config.nomi_mcp([
+    "Edit", "Write", "MultiEdit", "NotebookEdit", "Bash",
+    "mcp__plancia__plancia_task_update", "mcp__plancia__plancia_log",
+    "mcp__plancia__plancia_project_update", "mcp__plancia__plancia_post_add",
+    "mcp__plancia__plancia_post_update"])
 
 
 def codex_bin() -> str:

@@ -144,14 +144,56 @@ def _progetto(percorso: Path, radice: Path) -> str:
     return _etichetta(parti[0]) if len(parti) > 1 else "casa"
 
 
-def _leggi(percorso: Path, radice: Path):
-    """I turni di un file, con il numero di riga a cui stanno."""
+#: Quanti byte prima del punto letto si confrontano per capire se un file e'
+#: cresciuto in coda (si riprende da li') o e' stato riscritto (si rilegge).
+IMPRONTA_BYTE = 256
+
+
+def _impronta(fh, fino: int) -> str:
+    import hashlib
+    da = max(0, fino - IMPRONTA_BYTE)
+    fh.seek(da)
+    return hashlib.sha1(fh.read(fino - da)).hexdigest()
+
+
+def _leggi(percorso: Path, radice: Path, da: int = 0, riga0: int = 0,
+           chiuso: bool = False):
+    """I turni di un file dal byte `da` in poi, con il numero di riga a cui stanno.
+
+    Torna `(turni, letto_fino, righe, impronta)`: `letto_fino` e' il byte dopo
+    l'ultima riga completa, `righe` quante righe complete ci sono fino a li'.
+    Una riga senza a capo in fondo che non si legge come oggetto JSON e' una
+    riga che Claude Code sta ancora scrivendo: non si legge e non si conta, la
+    prende il giro dopo. Se pero' il file e' fermo da un pezzo (`chiuso`),
+    quella riga non finira' mai: si conta.
+    """
     sessione = percorso.stem
-    with percorso.open(encoding="utf-8", errors="replace") as fh:
-        for n, riga in enumerate(fh, 1):
+    progetto = _progetto(percorso, radice)
+    turni = []
+    n = riga0
+    letto = da
+    with percorso.open("rb") as fh:
+        fh.seek(da)
+        if da > 0:
+            # l'a capo di una riga letta quando era gia' intera ma senza a capo
+            if fh.read(1) == b"\n":
+                letto += 1
+            else:
+                fh.seek(da)
+        for grezza in fh:
             try:
-                d = json.loads(riga)
+                d = json.loads(grezza.decode("utf-8", errors="replace"))
             except Exception:
+                d = None
+            if not grezza.endswith(b"\n") and not chiuso and not isinstance(d, dict):
+                # un record a meta' non si legge come oggetto JSON: Claude Code
+                # lo sta ancora scrivendo, lo prende il giro dopo
+                break
+            n += 1
+            letto += len(grezza)
+            if d is None:
+                continue
+            if not isinstance(d, dict):
                 continue
             msg = d.get("message")
             if not isinstance(msg, dict) or msg.get("role") not in ("assistant", "user"):
@@ -159,35 +201,121 @@ def _leggi(percorso: Path, radice: Path):
             testo = _testo(msg).strip()
             if len(testo) < MINIMO:
                 continue
-            yield {
+            turni.append({
                 "testo": testo,
                 "sessione": sessione,
                 "ruolo": msg["role"],
                 "ts": d.get("timestamp") or "",
-                "progetto": _progetto(percorso, radice),
+                "progetto": progetto,
                 "percorso": str(percorso),
                 "riga": n,
-            }
+            })
+        impronta = _impronta(fh, letto)
+    return turni, letto, n, impronta
+
+
+def _colonne_coda(conn) -> None:
+    """Le tre colonne che permettono di riprendere un file da dove si era
+    arrivati (aggiunte a novembre 2026). Una volta sola, e solo da chi scrive
+    l'indice: la ricerca chiama `prepara` e non deve mai chiedere il blocco."""
+    presenti = {r[1] for r in conn.execute("PRAGMA table_info(turni_file)")}
+    aggiunte = [(c, d) for c, d in (("letto_fino", "INTEGER"), ("righe", "INTEGER"),
+                                     ("impronta", "TEXT")) if c not in presenti]
+    for colonna, definizione in aggiunte:
+        conn.execute(f"ALTER TABLE turni_file ADD COLUMN {colonna} {definizione}")
+    if aggiunte:
+        conn.commit()
+
+
+#: Un lotto si scrive quando ha almeno tanti turni o tanti file: abbastanza da
+#: non pagare un fsync per file in una ricostruzione completa, abbastanza poco
+#: da tenere il blocco di scrittura per qualche decimo di secondo.
+LOTTO_TURNI = 2000
+LOTTO_FILE = 50
+
+
+def _scrivi_lotto(conn, lotto: list, stato: dict) -> None:
+    """Scrive un lotto di file gia' letti, in una transazione corta.
+
+    La lettura e il parsing stanno fuori, prima: fino a novembre 2026 un file
+    cambiato si rileggeva tutto DENTRO la transazione (un transcript attivo da
+    60 MB, o un subagente da 500 MB, ogni due minuti) e i suoi turni vecchi si
+    cancellavano con `WHERE percorso = ?`, che su una colonna UNINDEXED di FTS5
+    vuol dire leggere tutto l'indice. Misurato su una copia del database vero:
+    10,5 secondi di blocco in un sync qualunque, e chi voleva scrivere nel
+    frattempo (il server MCP di ogni sessione) aspettava o falliva.
+    """
+    if not lotto:
+        return
+    for voce in lotto:
+        chiave, turni = voce["chiave"], voce["turni"]
+        if voce["sostituisci"]:
+            intervalli = conn.execute(
+                "SELECT rid_da, rid_a FROM turni_mappa WHERE percorso = ?",
+                (chiave,)).fetchall() if stato["mappa"] else None
+            if intervalli is None:
+                conn.execute("DELETE FROM turni_fts WHERE percorso = ?", (chiave,))
+            else:
+                for da, a in intervalli:
+                    conn.execute("DELETE FROM turni_fts WHERE rowid BETWEEN ? AND ?", (da, a))
+            conn.execute("DELETE FROM turni_mappa WHERE percorso = ?", (chiave,))
+        if turni:
+            ultimo = _ultimo_id(conn)
+            conn.executemany(
+                "INSERT INTO turni_fts(testo, sessione, ruolo, ts, progetto, percorso, riga) "
+                "VALUES(:testo, :sessione, :ruolo, :ts, :progetto, :percorso, :riga)", turni)
+            nuovo = _ultimo_id(conn)
+            # le righe di un file si scrivono di seguito: se cosi' non e' stato,
+            # l'intervallo non si registra e la mappa risulta incompleta (sotto).
+            # Un file che cresce in coda ha piu' intervalli, uno per giro.
+            if nuovo - ultimo == len(turni):
+                conn.execute(
+                    "INSERT OR REPLACE INTO turni_mappa(rid_da, rid_a, percorso, sessione, progetto) "
+                    "VALUES(?,?,?,?,?)",
+                    (ultimo + 1, nuovo, chiave, turni[0]["sessione"], turni[0]["progetto"]))
+            else:
+                # da qui in poi la mappa non dice piu' tutto: chi cancella
+                # torna alla strada lenta, che non sbaglia
+                stato["mappa"] = False
+        conn.execute(
+            "INSERT INTO turni_file(percorso, mtime, dimensione, turni, letto_fino, righe, impronta) "
+            "VALUES(?,?,?,?,?,?,?) "
+            "ON CONFLICT(percorso) DO UPDATE SET mtime=excluded.mtime, "
+            "dimensione=excluded.dimensione, turni=excluded.turni, "
+            "letto_fino=excluded.letto_fino, righe=excluded.righe, impronta=excluded.impronta",
+            (chiave, voce["mtime"], voce["dimensione"], voce["totale"], voce["letto_fino"],
+             voce["righe"], voce["impronta"]))
+    conn.commit()
+    lotto.clear()
 
 
 def indicizza(conn, completo: bool = False, radice: Path | None = None, escl: dict | None = None) -> dict:
-    """Aggiorna l'indice. Incrementale: un file già visto e non cambiato si salta.
+    """Aggiorna l'indice. Incrementale: un file già visto e non cambiato si salta,
+    uno cresciuto in coda si legge solo nella parte nuova.
 
     Torna il conto di cosa è successo, perché un indicizzatore che dice solo
     "fatto" non permette di accorgersi che ha saltato tutto.
     """
     prepara(conn)
+    _colonne_coda(conn)
     radice = radice or (config.CLAUDE_DIR / "projects")
     escl = escl if escl is not None else esclusi.carica()
     if completo:
         conn.execute("DELETE FROM turni_fts")
         conn.execute("DELETE FROM turni_file")
         conn.execute("DELETE FROM turni_mappa")
+        conn.commit()
 
-    visti = {r[0]: (r[1], r[2]) for r in
-             conn.execute("SELECT percorso, mtime, dimensione FROM turni_file")}
+    visti = {r[0]: r[1:] for r in conn.execute(
+        "SELECT percorso, mtime, dimensione, turni, letto_fino, righe, impronta "
+        "FROM turni_file")}
+    stato = {"mappa": mappa(conn) is not None}
+    import time as _time
+    fermo_da = _time.time() - 120
 
-    esito = {"file_nuovi": 0, "file_aggiornati": 0, "file_saltati": 0, "turni": 0}
+    esito = {"file_nuovi": 0, "file_aggiornati": 0, "file_in_coda": 0,
+             "file_saltati": 0, "turni": 0}
+    lotto = []
     for percorso in sorted(radice.rglob("*.jsonl")):
         # Cartella o sessione privata: fuori dall'indice a testo pieno prima
         # ancora di guardare mtime/dimensione. `radice` è la stessa che
@@ -205,33 +333,48 @@ def indicizza(conn, completo: bool = False, radice: Path | None = None, escl: di
             esito["file_saltati"] += 1
             continue
 
-        if prima:
-            conn.execute("DELETE FROM turni_fts WHERE percorso = ?", (chiave,))
-            conn.execute("DELETE FROM turni_mappa WHERE percorso = ?", (chiave,))
+        # Cresciuto in coda: i byte prima del punto letto sono gli stessi di
+        # allora. Si legge solo il pezzo nuovo e i turni vecchi restano.
+        # L'impronta porta con se' la dimensione a cui e' stata presa: se la
+        # riga e' stata riscritta da un codice che non conosce queste colonne
+        # (un server partito prima dell'aggiornamento), la dimensione non torna
+        # e il file si rilegge da capo invece di raddoppiare dei turni.
+        in_coda = False
+        dim_impronta, _, sha_impronta = (prima[5] or "").partition(":") if prima else ("", "", "")
+        if prima and prima[3] is not None and prima[4] is not None and sha_impronta \
+                and dim_impronta == str(prima[1]) and st.st_size >= prima[3]:
+            try:
+                with percorso.open("rb") as fh:
+                    in_coda = _impronta(fh, prima[3]) == sha_impronta
+            except OSError:
+                continue
+        try:
+            chiuso = st.st_mtime < fermo_da
+            if in_coda:
+                turni, letto, righe, impronta = _leggi(percorso, radice, prima[3], prima[4],
+                                                       chiuso=chiuso)
+            else:
+                turni, letto, righe, impronta = _leggi(percorso, radice, chiuso=chiuso)
+        except OSError:
+            continue
+
+        if in_coda:
+            esito["file_in_coda"] += 1
+            esito["file_aggiornati"] += 1
+        elif prima:
             esito["file_aggiornati"] += 1
         else:
             esito["file_nuovi"] += 1
-
-        righe = list(_leggi(percorso, radice))
-        if righe:
-            ultimo = _ultimo_id(conn)
-            conn.executemany(
-                "INSERT INTO turni_fts(testo, sessione, ruolo, ts, progetto, percorso, riga) "
-                "VALUES(:testo, :sessione, :ruolo, :ts, :progetto, :percorso, :riga)", righe)
-            nuovo = _ultimo_id(conn)
-            # le righe di un file si scrivono di seguito: se cosi' non e' stato,
-            # l'intervallo non si registra e la mappa risulta incompleta (sotto)
-            if nuovo - ultimo == len(righe):
-                conn.execute(
-                    "INSERT OR REPLACE INTO turni_mappa(rid_da, rid_a, percorso, sessione, progetto) "
-                    "VALUES(?,?,?,?,?)",
-                    (ultimo + 1, nuovo, chiave, righe[0]["sessione"], righe[0]["progetto"]))
-        conn.execute(
-            "INSERT INTO turni_file(percorso, mtime, dimensione, turni) VALUES(?,?,?,?) "
-            "ON CONFLICT(percorso) DO UPDATE SET mtime=excluded.mtime, "
-            "dimensione=excluded.dimensione, turni=excluded.turni",
-            (chiave, st.st_mtime, st.st_size, len(righe)))
-        esito["turni"] += len(righe)
+        lotto.append({
+            "chiave": chiave, "turni": turni, "sostituisci": bool(prima) and not in_coda,
+            "mtime": st.st_mtime, "dimensione": st.st_size,
+            "totale": (prima[2] or 0) + len(turni) if in_coda else len(turni),
+            "letto_fino": letto, "righe": righe, "impronta": f"{st.st_size}:{impronta}",
+        })
+        esito["turni"] += len(turni)
+        if len(lotto) >= LOTTO_FILE or sum(len(v["turni"]) for v in lotto) >= LOTTO_TURNI:
+            _scrivi_lotto(conn, lotto, stato)
+    _scrivi_lotto(conn, lotto, stato)
 
     # La mappa dei rowid e' un indice dell'indice: se non copre tutte le righe
     # (primo giro dopo l'aggiornamento, righe cancellate dalla purga dei percorsi

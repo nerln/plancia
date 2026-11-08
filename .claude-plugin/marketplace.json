@@ -1,0 +1,17 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "plancia",
+  "description": "One board for the work you do with AI: projects, tasks, social drafts, past sessions and memory, read and written by Claude Code from a local SQLite file.",
+  "owner": {
+    "name": "Eugenio Nerelli",
+    "url": "https://github.com/nerln"
+  },
+  "plugins": [
+    {
+      "name": "plancia",
+      "description": "Connects Claude Code to Plancia: the MCP server behind a sentinel that restarts it when it crashes or hangs, the briefing at session start, the plancia and riepilogo skills, and /plancia:briefing to link the current session to its project.",
+      "category": "productivity",
+      "source": "./"
+    }
+  ]
+}

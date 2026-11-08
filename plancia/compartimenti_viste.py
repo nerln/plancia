@@ -732,13 +732,20 @@ def chiudi(conn, o):
         return
     try:
         suffisso = "@" + o.visore
-        for k, v in conn.execute("SELECT key, value FROM temp.meta").fetchall():
-            if not k.startswith(_META_PER_COMP):
-                continue
-            conn.execute(
-                "INSERT INTO main.meta(key, value) VALUES(?, ?) "
-                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                (k + suffisso, v))
+        # Solo le chiavi cambiate davvero. Prima si riscrivevano tutte a ogni
+        # richiesta, anche di sola lettura: ogni chiamata del server MCP
+        # chiedeva il blocco di scrittura, e con un sync in corso aspettava lui
+        # (misurato l'8/11/2026 su una copia: una ricerca ferma 24 secondi).
+        prima = dict(conn.execute(
+            "SELECT key, value FROM main.meta WHERE key LIKE ?", ("%" + suffisso,)).fetchall())
+        cambiate = [(k + suffisso, v) for k, v in
+                    conn.execute("SELECT key, value FROM temp.meta").fetchall()
+                    if k.startswith(_META_PER_COMP) and prima.get(k + suffisso) != v]
+        if not cambiate:
+            return
+        conn.executemany(
+            "INSERT INTO main.meta(key, value) VALUES(?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value", cambiate)
         conn.commit()
     except Exception:  # noqa: BLE001 - sola lettura o base bloccata: niente cache
         pass

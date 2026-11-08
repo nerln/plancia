@@ -826,8 +826,10 @@ def sync_sessions(conn, keywords, progress=None, full=False, escl=None) -> int:
                         dedup=f"sessione:{sid}")
         store.touch_project(conn, pid, ended)
         updated += 1
-        if updated % 5 == 0:
-            conn.commit()
+        # Una sessione alla volta: fra una e l'altra c'e' la lettura del
+        # transcript, e farla con la transazione aperta teneva il blocco di
+        # scrittura per tutto il tempo del parsing.
+        conn.commit()
     reassign_generic(conn, keywords)
     conn.commit()
     log(f"sessioni aggiornate: {updated}", progress)
@@ -984,6 +986,9 @@ def sync_repos(conn, progress=None) -> int:
         if owner and changed and (repo.get("pushedAt") or "") > cutoff and fresh < 12:
             fresh += 1
             log(f"commit di {name}", progress)
+            # Prima di andare in rete si chiude la transazione: una chiamata a
+            # GitHub puo' metterci secondi, e intanto nessun altro scriverebbe.
+            conn.commit()
             data = run(["gh", "api", f"repos/{owner}/{name}/commits?per_page=20"], timeout=30)
             try:
                 commits = json.loads(data) if data else []

@@ -230,13 +230,19 @@ def slugify(text: str) -> str:
     return text or "senza-nome"
 
 
+#: Quanto aspetta una scrittura che trova il database occupato da un'altra,
+#: in millisecondi. Il server MCP la alza (vedi plancia/mcp.py): una chiamata
+#: di Claude che aspetta un sync e poi scrive e' meglio di una che fallisce.
+ATTESA_MS = 15000
+
+
 def connect() -> sqlite3.Connection:
     config.ensure_dirs()
-    conn = sqlite3.connect(config.DB_PATH, timeout=15.0)
+    conn = sqlite3.connect(config.DB_PATH, timeout=ATTESA_MS / 1000)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
-    conn.execute("PRAGMA busy_timeout=15000")
+    conn.execute(f"PRAGMA busy_timeout={int(ATTESA_MS)}")
     return conn
 
 
@@ -307,18 +313,73 @@ def migrate(conn: sqlite3.Connection) -> None:
                 conn.execute(f"ALTER TABLE {tabella} ADD COLUMN {colonna} {definizione}")
 
 
+_NOMI_SCHEMA = re.compile(
+    r"CREATE\s+(?:VIRTUAL\s+)?(?:TABLE|INDEX)\s+IF\s+NOT\s+EXISTS\s+(\w+)", re.I)
+
+
+def _fts5_disponibile(conn) -> bool:
+    try:
+        return any("FTS5" in r[0] for r in conn.execute("PRAGMA compile_options"))
+    except sqlite3.Error:
+        return False
+
+
+def schema_aggiornato(conn: sqlite3.Connection) -> bool:
+    """Il database ha gia' tutto quello che questo codice si aspetta?
+
+    Solo letture: sqlite_master, PRAGMA table_info e una riga di meta. Costa
+    meno di un millisecondo e non chiede il blocco di scrittura a nessuno.
+    """
+    try:
+        nomi = {r[0] for r in conn.execute("SELECT name FROM sqlite_master")}
+        attesi = set(_NOMI_SCHEMA.findall(SCHEMA))
+        if _fts5_disponibile(conn):
+            attesi |= set(_NOMI_SCHEMA.findall(FTS_SCHEMA))
+        if not attesi <= nomi:
+            return False
+        for tabella, colonne in AGGIUNTE.items():
+            presenti = {r[1] for r in conn.execute(f"PRAGMA table_info({tabella})")}
+            if any(c not in presenti for c, _ in colonne):
+                return False
+        row = conn.execute(
+            "SELECT value FROM meta WHERE key='schema_version'").fetchone()
+        return bool(row) and int(row[0]) >= SCHEMA_VERSION
+    except (sqlite3.Error, ValueError, TypeError):
+        return False
+
+
 def init_db(conn: sqlite3.Connection) -> None:
+    """Crea o aggiorna lo schema. Se e' gia' aggiornato non scrive niente.
+
+    Fino a novembre 2026 scriveva sempre `meta.schema_version`, anche quando
+    non cambiava niente, e lo chiamavano tutti: il server MCP a ogni avvio e a
+    ogni chiamata, il briefing, il riepilogo, il sync. Ogni lettura chiedeva
+    quindi il blocco di scrittura, e quando un sync lo teneva piu' di quindici
+    secondi il server MCP moriva all'avvio con "database is locked": nei log
+    di Claude Code, dal primo ottobre all'8 novembre, 75 sessioni con
+    CONNECTION_CLOSED e 89 con CONNECT_TIMEOUT, tutte con quel traceback.
+    """
+    if schema_aggiornato(conn):
+        return
     conn.executescript(SCHEMA)
     migrate(conn)
     try:
         conn.executescript(FTS_SCHEMA)
     except sqlite3.OperationalError:
         pass  # SQLite senza FTS5: la ricerca ripiega su LIKE
-    conn.execute(
-        "INSERT INTO meta(key, value) VALUES('schema_version', ?) "
-        "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-        (str(SCHEMA_VERSION),),
-    )
+    # Mai all'indietro: un codice piu' vecchio che apre un database gia'
+    # portato avanti da uno piu' nuovo non deve riscriverne la versione.
+    row = conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
+    try:
+        attuale = int(row[0]) if row else 0
+    except (ValueError, TypeError):
+        attuale = 0
+    if attuale < SCHEMA_VERSION:
+        conn.execute(
+            "INSERT INTO meta(key, value) VALUES('schema_version', ?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (str(SCHEMA_VERSION),),
+        )
     conn.commit()
 
 

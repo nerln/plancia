@@ -1,0 +1,43 @@
+{
+  "description": "Plancia: the briefing when a session starts, a one-line warning only if the connection is broken, the session queued for the archive when it ends, and recall of related past work on each prompt.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/bin/plancia-plugin\" hook",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/bin/plancia-plugin\" avvio",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/bin/plancia-plugin\" hook",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/bin/plancia-plugin\" richiamo",
+            "timeout": 3
+          }
+        ]
+      }
+    ]
+  }
+}
