@@ -85,7 +85,10 @@ def esegui(prova) -> None:
     try:
         elenco = subprocess.run(["git", "-C", str(RADICE), "grep", "-il", "euge" + "nio", "--", "."],
                                 capture_output=True, text=True, timeout=60)
-        righe = [r for r in elenco.stdout.split() if r not in ("COPYRIGHT", "LICENSE", "skills/LICENSE", "pyproject.toml", "site/index.html")]
+        # i due manifest del plugin per Claude Code dicono l'autore come pyproject.toml
+        righe = [r for r in elenco.stdout.split() if r not in (
+            "COPYRIGHT", "LICENSE", "skills/LICENSE", "pyproject.toml", "site/index.html",
+            ".claude-plugin/plugin.json", ".claude-plugin/marketplace.json")]
         if elenco.returncode in (0, 1):
             prova("repo: nessun nome proprio nei commenti e nelle prove (restano copyright e firma del sito)",
                   not righe, ", ".join(righe[:6]))
