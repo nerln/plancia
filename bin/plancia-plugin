@@ -544,18 +544,18 @@ def ripara_dashboard() -> str:
         return ""
     if _dashboard_viva():
         return ""
-    uid = os.getuid()
-    subprocess.run(["launchctl", "kickstart", "-k", f"gui/{uid}/{ETICHETTA_SERVER}"],
-                   capture_output=True, timeout=5)
+    servizio = f"gui/{os.getuid()}/{ETICHETTA_SERVER}"
+    # Un servizio scaricato l'ha fermato qualcuno apposta: non si riaccende.
+    if subprocess.run(["launchctl", "print", servizio], capture_output=True,
+                      timeout=5).returncode != 0:
+        return ""
+    subprocess.run(["launchctl", "kickstart", "-k", servizio], capture_output=True, timeout=5)
     for _ in range(10):
         time.sleep(0.3)
         if _dashboard_viva(0.3):
             scrivi_log("dashboard-riavviata")
             return "riavviata"
-    # forse non era nemmeno caricata
-    subprocess.run(["launchctl", "bootstrap", f"gui/{uid}", str(_plist_server())],
-                   capture_output=True, timeout=5)
-    return "riavvio chiesto"
+    return "riavvio chiesto, non risponde ancora"
 
 
 def controlla_db(scrittura: bool = False) -> dict:
