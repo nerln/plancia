@@ -266,6 +266,7 @@ INDIZI = {
     "eventi": "append-only event log, what shipped since",
     "sync": "re-scan sessions, memory, repos",
     "riprendi": "resume a task's own session, or check its state",
+    "collega": "link a folder and this session to a project",
 }
 
 TOOLS = [t for t in _TUTTI if t["name"] in PRIMI] + [{
